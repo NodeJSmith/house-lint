@@ -1,7 +1,7 @@
 ---
 task_id: "T01"
 title: "Create package core and result contracts"
-status: "planned"
+status: "done"
 depends_on: []
 implements: ["FR#12", "FR#13"]
 ---

@@ -1,0 +1,43 @@
+[project]
+name = "house-lint"
+version = "0.1.0"
+description = "Jessica's opinionated Python house-style linter"
+requires-python = ">=3.11"
+dependencies = ["cyclopts>=3.0", "pathspec>=0.12"]
+
+[project.scripts]
+house-lint = "house_lint.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.9",
+  "pyright>=1.1",
+  "flake8>=7.0",
+  "flake8-async>=24.0",
+  "Flake8-pyproject>=1.2",
+  "typos>=1.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.0,<0.9"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = ["design"]
+
+[tool.ruff.format]
+exclude = ["design"]
+
+[tool.pyright]
+include = ["src"]
+typeCheckingMode = "strict"
+
+[tool.flake8]
+exclude = [".venv", ".git"]
+max-line-length = 100
