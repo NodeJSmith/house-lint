@@ -1,7 +1,7 @@
 ---
 task_id: "T02"
 title: "Implement configuration and file discovery"
-status: "planned"
+status: "done"
 depends_on: ["T01"]
 implements: ["FR#2", "FR#3", "FR#4", "FR#20", "AC#6"]
 ---
