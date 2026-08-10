@@ -1,7 +1,7 @@
 ---
 task_id: "T03"
 title: "Implement the four default rules"
-status: "planned"
+status: "done"
 depends_on: ["T01"]
 implements: ["FR#5", "FR#6", "FR#7", "FR#8"]
 ---
