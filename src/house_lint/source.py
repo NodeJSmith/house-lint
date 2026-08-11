@@ -173,8 +173,8 @@ class SourceFile:
 
     @property
     def text(self) -> str:
-        self._load()
-        if self._text is None:
+        self._analyze()
+        if self._error is not None or self._text is None:
             raise RuntimeError("source is unavailable")
         return self._text
 
@@ -187,7 +187,7 @@ class SourceFile:
     @property
     def tokens(self) -> tuple[Token, ...]:
         self._analyze()
-        return self._tokens
+        return () if self._error is not None else self._tokens
 
     @property
     def comments(self) -> dict[int, str]:

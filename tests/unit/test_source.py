@@ -63,8 +63,14 @@ def test_syntax_failure_is_structured_atomic_and_not_clean(tmp_path):
     assert source.error.kind == "syntax"
     assert source.error.code == "syntax-error"
     assert source.tree is None
-    assert source.tokens
+    assert source.tokens == ()
+    assert source.comments == {}
+    assert source.docstring_spans == ()
     assert source.statements == ()
+    with pytest.raises(RuntimeError, match="source is unavailable"):
+        _ = source.text
+    with pytest.raises(RuntimeError, match="source is unavailable"):
+        _ = source.lines
     assert_not_clean(tmp_path, source)
 
 
