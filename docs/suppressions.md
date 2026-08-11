@@ -1,6 +1,6 @@
 # Suppressions
 
-Use suppressions only for a known exception to Jessica's house style. Each pragma appears in a Python comment token, names one or more enabled rule IDs, and gives a reason with at least three alphanumeric characters.
+Use suppressions only for a known exception to the project's house style. Each pragma appears in a Python comment token, names one or more enabled rule IDs, and gives a reason with at least three alphanumeric characters.
 
 ```python
 value()  # house-lint: ignore[HSL001,HSL004] - generated compatibility wrapper

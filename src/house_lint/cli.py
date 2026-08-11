@@ -28,7 +28,7 @@ from house_lint.results import Finding, LintError, RuleInfo, RuleList, ScanResul
 from house_lint.source import SourceFile
 from house_lint.suppressions import SuppressionBudgetExceeded, apply_suppressions
 
-app = App(name="house-lint", help="Jessica's opinionated Python house-style linter.")
+app = App(name="house-lint", help="Opinionated Python house-style linter.")
 
 
 def _flatten_ids(values: list[str] | None) -> tuple[str, ...] | None:

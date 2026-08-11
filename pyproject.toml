@@ -1,12 +1,12 @@
 [project]
 name = "house-lint"
 version = "0.1.1"
-description = "Jessica's opinionated Python house-style linter"
+description = "Opinionated Python house-style linter"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "Jessica" }]
+authors = [{ name = "NodeJSmith" }]
 keywords = ["lint", "python", "house-style", "pre-commit"]
 classifiers = [
   "Development Status :: 3 - Alpha",
