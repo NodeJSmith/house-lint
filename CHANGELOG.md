@@ -2,6 +2,13 @@
 
 All notable changes to `house-lint` are documented here.
 
+## [0.1.1](https://github.com/NodeJSmith/house-lint/compare/v0.1.0...v0.1.1) (2026-08-11)
+
+
+### Documentation
+
+* trim README — depersonalize, remove setup notes, merge non-goals ([#4](https://github.com/NodeJSmith/house-lint/issues/4)) ([57beef2](https://github.com/NodeJSmith/house-lint/commit/57beef2a3f21ef68f86e6f69f1ec5466fdd28d5f))
+
 ## [0.1.0] (2026-08-11)
 
 Initial public release of Jessica's opinionated Python house-style linter.
