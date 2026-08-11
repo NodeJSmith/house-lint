@@ -2,7 +2,7 @@
 
 All notable changes to `house-lint` are documented here.
 
-## 0.1.0 — 2026-08-11
+## [0.1.0] (2026-08-11)
 
 Initial public release of Jessica's opinionated Python house-style linter.
 
