@@ -185,3 +185,26 @@ uv run pyright
 ```
 
 See [the changelog](CHANGELOG.md) for compatibility notes.
+
+## Releases
+
+CI tests Python 3.11 through 3.14 and runs Ruff, Pyright, and a package build. [Release
+Please](https://github.com/googleapis/release-please) opens release pull requests from
+Conventional Commits, updates the version, changelog, and lockfile, then creates the GitHub
+release and publishes its distributions to PyPI.
+
+Publishing uses PyPI Trusted Publishing, not a stored API token. Before the initial release,
+register a pending PyPI publisher with these exact values:
+
+| Setting | Value |
+| --- | --- |
+| PyPI project | `house-lint` |
+| GitHub owner | `NodeJSmith` |
+| GitHub repository | `house-lint` |
+| Workflow filename | `workflow.yml` |
+| Environment | `pypi` |
+
+Create and publish the `v0.1.0` GitHub release after this workflow is on `master`; its
+`published` event builds and publishes the package. Re-run **Release and Publish** with that
+existing tag if the initial publication needs to be retried. Subsequent releases are created
+and published by Release Please.
