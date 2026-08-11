@@ -1,6 +1,6 @@
 import pytest
 
-from house_lint.analysis import SourceKind, StatementKey
+from house_lint.analysis import CandidateBudgetExceeded, SourceKind, StatementKey
 from house_lint.rules.llm_cruft import detect
 from house_lint.source import SourceFile
 
@@ -104,3 +104,10 @@ def test_ignores_ordinary_comments(write_sample) -> None:
     path = write_sample("# resolve the owner app from the confirmed app_key\nvalue = 1\n")
 
     assert detect(SourceFile(path, path.parent)) == []
+
+
+def test_limits_materialized_candidates_when_requested(write_sample) -> None:
+    path = write_sample("\n".join("# utilize this" for _ in range(10_002)))
+
+    with pytest.raises(CandidateBudgetExceeded):
+        detect(SourceFile(path, path.parent), limit=10_000)

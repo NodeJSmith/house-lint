@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from house_lint.config import ConfigError, get_house_lint_table, load_config
+from house_lint.config import ConfigError, default_config, get_house_lint_table, load_config
 
 
 def test_defaults_and_cli_selection_precedence(tmp_path: Path) -> None:
@@ -15,6 +15,18 @@ def test_defaults_and_cli_selection_precedence(tmp_path: Path) -> None:
 
     assert config.enabled_rules == ("HSL900",)
     assert config.include == ("src", "tests", "scripts", "tools", "examples")
+
+
+def test_default_config_uses_the_shared_selection_precedence() -> None:
+    assert default_config(cli_select=("HSL002", "HSL003"), cli_ignore=("HSL003",)).enabled_rules == (
+        "HSL002",
+        "HSL900",
+    )
+
+
+def test_default_config_rejects_cli_hsl101_without_tokens() -> None:
+    with pytest.raises(ConfigError, match="HSL101 requires tokens"):
+        default_config(cli_select=("HSL101",))
 
 
 def test_get_house_lint_table_detects_only_a_valid_house_lint_table() -> None:

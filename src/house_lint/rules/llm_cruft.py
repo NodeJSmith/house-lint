@@ -4,6 +4,7 @@ import re
 
 from house_lint.analysis import (
     CandidateFinding,
+    append_candidate,
     candidate_for_line,
     candidate_for_statement,
     comment_owner_for_line,
@@ -28,35 +29,37 @@ FILLER_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
-def detect(source: SourceFile) -> list[CandidateFinding]:
+def detect(source: SourceFile, *, limit: int | None = None) -> list[CandidateFinding]:
     """Return HSL001 candidates using only cached source representations."""
     if source.error is not None:
         return []
 
     findings: list[CandidateFinding] = []
+
+    def add(finding: CandidateFinding) -> None:
+        append_candidate(findings, finding, source, limit)
+
     for line, comment in source.comments.items():
         body = comment.lstrip("#").strip()
         if DIVIDER_RULE.fullmatch(body) or DIVIDER_WRAPPED.fullmatch(body):
-            findings.append(_comment_candidate(source, line, "section-divider comment"))
-        findings.extend(
-            _comment_candidate(source, line, f"filler - {suggestion}")
-            for pattern, suggestion in FILLER_PATTERNS
-            if pattern.search(comment)
-        )
+            add(_comment_candidate(source, line, "section-divider comment"))
+        for pattern, suggestion in FILLER_PATTERNS:
+            if pattern.search(comment):
+                add(_comment_candidate(source, line, f"filler - {suggestion}"))
 
     for start, end in source.docstring_spans:
         for line in range(start, end + 1):
             text = source.lines[line - 1]
-            findings.extend(
-                candidate_for_statement(
-                    source,
-                    "HSL001",
-                    f"filler - {suggestion}",
-                    docstring_owner_for_line(source, line),
-                )
-                for pattern, suggestion in FILLER_PATTERNS
-                if pattern.search(text)
-            )
+            for pattern, suggestion in FILLER_PATTERNS:
+                if pattern.search(text):
+                    add(
+                        candidate_for_statement(
+                            source,
+                            "HSL001",
+                            f"filler - {suggestion}",
+                            docstring_owner_for_line(source, line),
+                        )
+                    )
     return sorted(findings, key=lambda finding: (finding.line or 0, finding.message))
 
 

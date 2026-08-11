@@ -2,11 +2,13 @@
 
 import ast
 import re
+from collections.abc import Iterator
 from functools import lru_cache
 
 from house_lint.analysis import (
     CandidateFinding,
     SourceKind,
+    append_candidate,
     candidate_for_line,
     comment_owner_for_line,
     docstring_owner_for_line,
@@ -15,27 +17,46 @@ from house_lint.config import HSL101Options, TokenFamily
 from house_lint.source import SourceFile
 
 
-def detect(source: SourceFile, options: HSL101Options) -> list[CandidateFinding]:
+def detect(
+    source: SourceFile, options: HSL101Options, *, limit: int | None = None
+) -> list[CandidateFinding]:
     """Return HSL101 candidates for the configured token families."""
     if source.error is not None:
         return []
 
     findings: list[CandidateFinding] = []
     seen: set[tuple[str, int | None, str]] = set()
+
+    def add(finding: CandidateFinding) -> bool:
+        if len(findings) >= options.max_findings_per_file:
+            return False
+        append_candidate(findings, finding, source, limit)
+        return True
+
     for family in options.tokens:
         pattern = _content_pattern(family)
         if "comments" in family.scopes:
             for line, comment in source.comments.items():
-                findings.extend(_content_candidates(source, pattern, comment, line, "comment", seen))
+                for finding in _content_candidates(source, pattern, comment, line, "comment", seen):
+                    if not add(finding):
+                        return _ordered(findings)
         if "docstrings" in family.scopes:
             for start, end in source.docstring_spans:
                 for line in range(start, end + 1):
-                    findings.extend(
-                        _content_candidates(source, pattern, source.lines[line - 1], line, "docstring", seen)
-                    )
+                    for finding in _content_candidates(
+                        source, pattern, source.lines[line - 1], line, "docstring", seen
+                    ):
+                        if not add(finding):
+                            return _ordered(findings)
         if "filenames" in family.scopes:
-            findings.extend(_filename_candidates(source, family, seen))
+            for finding in _filename_candidates(source, family, seen):
+                if not add(finding):
+                    return _ordered(findings)
 
+    return _ordered(findings)
+
+
+def _ordered(findings: list[CandidateFinding]) -> list[CandidateFinding]:
     ordered = sorted(
         enumerate(findings),
         key=lambda item: (
@@ -45,7 +66,7 @@ def detect(source: SourceFile, options: HSL101Options) -> list[CandidateFinding]
             item[0],
         ),
     )
-    return [finding for _, finding in ordered[: options.max_findings_per_file]]
+    return [finding for _, finding in ordered]
 
 
 def _content_candidates(
@@ -55,24 +76,20 @@ def _content_candidates(
     line: int,
     scope: str,
     seen: set[tuple[str, int | None, str]],
-) -> list[CandidateFinding]:
-    findings: list[CandidateFinding] = []
+) -> Iterator[CandidateFinding]:
     for match in pattern.finditer(text):
         token = match.group(0)
         key = (scope, line, token)
         if key in seen:
             continue
         seen.add(key)
-        findings.append(
-            candidate_for_line(
-                source,
-                "HSL101",
-                f"spec token {token} in {scope}",
-                line,
-                _owner_for_line(source, line, scope, text),
-            )
+        yield candidate_for_line(
+            source,
+            "HSL101",
+            f"spec token {token} in {scope}",
+            line,
+            _owner_for_line(source, line, scope, text),
         )
-    return findings
 
 
 def _owner_for_line(source: SourceFile, line: int, scope: str, text: str) -> ast.stmt | None:
@@ -83,9 +100,8 @@ def _owner_for_line(source: SourceFile, line: int, scope: str, text: str) -> ast
 
 def _filename_candidates(
     source: SourceFile, family: TokenFamily, seen: set[tuple[str, int | None, str]]
-) -> list[CandidateFinding]:
+) -> Iterator[CandidateFinding]:
     pattern = _filename_pattern(family)
-    findings: list[CandidateFinding] = []
     for segment in re.split(r"[._-]", source.path.name):
         if not pattern.fullmatch(segment):
             continue
@@ -93,19 +109,16 @@ def _filename_candidates(
         if key in seen:
             continue
         seen.add(key)
-        findings.append(
-            CandidateFinding(
-                "HSL101",
-                source.relative_path,
-                f"spec token {segment} in filename",
-                None,
-                None,
-                None,
-                None,
-                SourceKind.FILENAME,
-            )
+        yield CandidateFinding(
+            "HSL101",
+            source.relative_path,
+            f"spec token {segment} in filename",
+            None,
+            None,
+            None,
+            None,
+            SourceKind.FILENAME,
         )
-    return findings
 
 
 @lru_cache

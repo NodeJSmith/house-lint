@@ -1,5 +1,9 @@
 """Public package boundary for house-lint."""
 
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 
-__version__ = version("house-lint")
+try:
+    __version__ = version("house-lint")
+except PackageNotFoundError:
+    # Source checkouts have no installed distribution metadata.
+    __version__ = "0.0.0"

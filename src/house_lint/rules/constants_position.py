@@ -3,14 +3,14 @@
 import ast
 import re
 
-from house_lint.analysis import CandidateFinding, candidate_for_statement
+from house_lint.analysis import CandidateFinding, append_candidate, candidate_for_statement
 from house_lint.source import SourceFile
 
 CONSTANT_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 DUNDER_NAME = re.compile(r"^__.+__$")
 
 
-def detect(source: SourceFile) -> list[CandidateFinding]:
+def detect(source: SourceFile, *, limit: int | None = None) -> list[CandidateFinding]:
     """Return HSL004 candidates using the preserved derived-binding heuristic."""
     if source.error is not None or source.tree is None:
         return []
@@ -27,10 +27,13 @@ def detect(source: SourceFile) -> list[CandidateFinding]:
             continue
         if _references_earlier_binding(node, bound_names, index):
             continue
-        findings.append(
+        append_candidate(
+            findings,
             candidate_for_statement(
                 source, "HSL004", "constant defined after the first class or function", node
-            )
+            ),
+            source,
+            limit,
         )
     return findings
 

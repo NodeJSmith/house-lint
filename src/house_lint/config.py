@@ -76,6 +76,16 @@ def selected_detector_inputs(config: LintConfig) -> tuple[DetectorInput, ...]:
     return tuple((rule_id, options[rule_id]) for rule_id in config.enabled_rules if rule_id in options)
 
 
+def default_config(
+    *, cli_select: Iterable[str] | None = None, cli_ignore: Iterable[str] | None = None
+) -> LintConfig:
+    """Build built-in configuration with the same CLI selection semantics as TOML."""
+    enabled_rules = _effective_rule_selection(DEFAULT_SELECT, (), cli_select, cli_ignore)
+    if "HSL101" in enabled_rules:
+        raise ConfigError("HSL101 requires tokens when selected")
+    return LintConfig(enabled_rules=enabled_rules)
+
+
 def _table(value: Any, name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ConfigError(f"{name} must be a table")
@@ -102,6 +112,24 @@ def _ids(value: Any, name: str) -> tuple[str, ...]:
     if any(item not in ORDINARY_RULES for item in values):
         raise ConfigError(f"{name} contains unknown or forbidden rule ID")
     return values
+
+
+def _effective_rule_selection(
+    configured_select: Iterable[str],
+    configured_ignore: Iterable[str],
+    cli_select: Iterable[str] | None,
+    cli_ignore: Iterable[str] | None,
+) -> tuple[str, ...]:
+    """Apply the one selection precedence algorithm shared by defaults and TOML."""
+    configured = _ids(list(configured_select), "select")
+    configured_ignored = _ids(list(configured_ignore), "ignore")
+    selected = (
+        _ids(list(cli_select), "--select")
+        if cli_select is not None
+        else tuple(rule_id for rule_id in configured if rule_id not in configured_ignored)
+    )
+    cli_ignored = _ids(list(cli_ignore or ()), "--ignore")
+    return tuple(sorted(set(selected) - set(cli_ignored))) + ("HSL900",)
 
 
 def _validate_include(values: tuple[str, ...]) -> tuple[str, ...]:
@@ -255,16 +283,12 @@ def load_config(
     _strict_keys(house, {"include", "exclude", "select", "ignore", "rules"}, "tool.house-lint")
     include = _validate_include(_strings(house.get("include", list(DEFAULT_INCLUDE)), "include"))
     exclude = _validate_exclude(_strings(house.get("exclude", []), "exclude"))
-    configured_select = _ids(house.get("select", list(DEFAULT_SELECT)), "select")
-    configured_ignore = _ids(house.get("ignore", []), "ignore")
-    selected = (
-        tuple(cli_select)
-        if cli_select is not None
-        else tuple(item for item in configured_select if item not in configured_ignore)
+    enabled = _effective_rule_selection(
+        house.get("select", list(DEFAULT_SELECT)),
+        house.get("ignore", []),
+        cli_select,
+        cli_ignore,
     )
-    selected = _ids(list(selected), "--select")
-    cli_ignored = _ids(list(cli_ignore or ()), "--ignore")
-    enabled = tuple(sorted(set(selected) - set(cli_ignored))) + ("HSL900",)
     options = _rule_options(house)
     if "HSL101" in enabled and not options[0].tokens:
         raise ConfigError("HSL101 requires tokens when selected")

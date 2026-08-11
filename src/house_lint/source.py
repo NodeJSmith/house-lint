@@ -21,6 +21,7 @@ class SourceFile:
         self.resolved_path = path.resolve()
         self.root = root.resolve()
         self._error: LintError | None = None
+        self._debug_exception: BaseException | None = None
         self._loaded = False
         self._analyzed = False
         self._text: str | None = None
@@ -68,12 +69,14 @@ class SourceFile:
                 return
             with tokenize.open(self.resolved_path) as handle:
                 self._text = handle.read()
-        except UnicodeDecodeError:
+        except UnicodeDecodeError as exc:
+            self._debug_exception = exc
             self._error = self._make_error(
                 "decode-error", "decode", "read", "tokenize.open", "source could not be decoded"
             )
             return
-        except SyntaxError:
+        except SyntaxError as exc:
+            self._debug_exception = exc
             self._error = self._make_error(
                 "decode-error",
                 "decode",
@@ -82,7 +85,8 @@ class SourceFile:
                 "source encoding declaration is invalid",
             )
             return
-        except OSError:
+        except OSError as exc:
+            self._debug_exception = exc
             self._error = self._make_error(
                 "read-error", "read", "read", "tokenize.open", "source could not be read"
             )
@@ -100,6 +104,7 @@ class SourceFile:
         try:
             self._tokens = tuple(tokenize.generate_tokens(io.StringIO(self._text).readline))
         except (tokenize.TokenError, IndentationError) as exc:
+            self._debug_exception = exc
             self._error = self._make_error(
                 "tokenize-error", "tokenize", "analysis", "tokenize", str(exc)
             )
@@ -114,6 +119,7 @@ class SourceFile:
                 )
             )
         except SyntaxError as exc:
+            self._debug_exception = exc
             line = exc.lineno
             column = exc.offset
             self._error = self._make_error(
@@ -158,6 +164,12 @@ class SourceFile:
     def error(self) -> LintError | None:
         self._analyze()
         return self._error
+
+    @property
+    def debug_exception(self) -> BaseException | None:
+        """Return the preserved operational exception for CLI debug output only."""
+        self._analyze()
+        return self._debug_exception
 
     @property
     def text(self) -> str:

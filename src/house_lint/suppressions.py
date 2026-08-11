@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TypeAlias, cast
 
 from .analysis import (
+    CandidateBudgetExceeded,
     CandidateFinding,
     SourceKind,
     StatementKey,
@@ -36,6 +37,14 @@ class SuppressionResult:
     suppressed_count: int
 
 
+class SuppressionBudgetExceeded(CandidateBudgetExceeded):
+    """Carry the bounded visible prefix when suppression diagnostics exceed the budget."""
+
+    def __init__(self, source: SourceFile, result: SuppressionResult) -> None:
+        self.result = result
+        super().__init__(source.relative_path)
+
+
 @dataclass(frozen=True)
 class _Pragma:
     action: str
@@ -53,29 +62,44 @@ class _Claim:
 
 
 def apply_suppressions(
-    source: SourceFile, candidates: tuple[CandidateFinding, ...], enabled_rules: Collection[str]
+    source: SourceFile,
+    candidates: tuple[CandidateFinding, ...],
+    enabled_rules: Collection[str],
+    *,
+    candidates_complete: bool = True,
+    limit: int | None = None,
 ) -> SuppressionResult:
     """Apply valid pragmas, retaining diagnostics and provenance until public conversion."""
     diagnostics: list[CandidateFinding] = []
     claims: list[_Claim] = []
+    diagnostic_limit = None if limit is None else max(0, limit - len(candidates))
+    diagnostics_exceeded = False
+
+    def add_diagnostic(candidate: CandidateFinding) -> None:
+        nonlocal diagnostics_exceeded
+        if diagnostic_limit is not None and len(diagnostics) >= diagnostic_limit:
+            diagnostics_exceeded = True
+            return
+        diagnostics.append(candidate)
+
     for token in source.tokens:
         if token.type != tokenize.COMMENT or not _is_pragma(token):
             continue
         pragma, message = _parse_pragma(source, token)
         if pragma is None:
-            diagnostics.append(_diagnostic(source, token, message))
+            add_diagnostic(_diagnostic(source, token, message))
             continue
         owner, placement_error = _owner_for_pragma(source, pragma)
         if placement_error is not None:
-            diagnostics.append(_diagnostic(source, token, placement_error))
+            add_diagnostic(_diagnostic(source, token, placement_error))
             continue
         pragma = _Pragma(pragma.action, pragma.ids, pragma.token, owner)
         for rule_id in pragma.ids:
             if not is_known_rule(rule_id):
-                diagnostics.append(_diagnostic(source, token, f"unknown suppression rule {rule_id}"))
+                add_diagnostic(_diagnostic(source, token, f"unknown suppression rule {rule_id}"))
                 continue
             if rule_id not in enabled_rules:
-                diagnostics.append(_diagnostic(source, token, f"unused suppression for disabled rule {rule_id}"))
+                add_diagnostic(_diagnostic(source, token, f"unused suppression for disabled rule {rule_id}"))
                 continue
             target = _target(pragma)
             owned = tuple(
@@ -88,11 +112,11 @@ def apply_suppressions(
     conflicts = _conflicting_claims(claims)
     for index, claim in enumerate(claims):
         if index in conflicts:
-            diagnostics.append(
+            add_diagnostic(
                 _diagnostic(source, claim.pragma.token, f"conflicting suppression for {claim.rule_id}")
             )
-        elif not claim.candidates:
-            diagnostics.append(
+        elif not claim.candidates and candidates_complete:
+            add_diagnostic(
                 _diagnostic(source, claim.pragma.token, f"unused suppression for {claim.rule_id}")
             )
 
@@ -105,7 +129,10 @@ def apply_suppressions(
     visible = tuple(candidate for index, candidate in enumerate(candidates) if index not in suppressed) + tuple(
         diagnostics
     )
-    return SuppressionResult(visible, tuple(_public(candidate) for candidate in visible), len(suppressed))
+    result = SuppressionResult(visible, tuple(_public(candidate) for candidate in visible), len(suppressed))
+    if diagnostics_exceeded:
+        raise SuppressionBudgetExceeded(source, result)
+    return result
 
 
 def _is_pragma(token: Token) -> bool:

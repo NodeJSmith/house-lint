@@ -1,7 +1,7 @@
 ---
 task_id: "T06"
 title: "Build CLI, reporters, and exit handling"
-status: "planned"
+status: "done"
 depends_on: ["T01", "T02", "T03", "T04", "T05"]
 implements: ["FR#1", "FR#13", "FR#14", "FR#21", "FR#22", "AC#2", "AC#3", "AC#9"]
 ---

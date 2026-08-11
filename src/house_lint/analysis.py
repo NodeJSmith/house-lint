@@ -12,15 +12,6 @@ from .source import SourceFile
 MAX_CANDIDATES_PER_FILE = 10_000
 
 
-class CandidateBudgetExceeded(RuntimeError):
-    """Raised when one file produces more candidates than the fixed safety limit."""
-
-    def __init__(self, path: str, limit: int = MAX_CANDIDATES_PER_FILE) -> None:
-        self.path = path
-        self.limit = limit
-        super().__init__(f"candidate limit exceeded for {path}: {limit}")
-
-
 class SourceKind(Enum):
     STATEMENT = "statement"
     FILE = "file"
@@ -47,6 +38,27 @@ class CandidateFinding:
     end_column: int | None
     source_kind: SourceKind
     owner: StatementKey | None = None
+
+
+class CandidateBudgetExceeded(RuntimeError):
+    """Raised when one file produces more candidates than the fixed safety limit."""
+
+    def __init__(
+        self, path: str, *, candidates: tuple[CandidateFinding, ...] = ()
+    ) -> None:
+        self.path = path
+        self.limit = MAX_CANDIDATES_PER_FILE
+        self.candidates = candidates
+        super().__init__(f"candidate limit exceeded for {path}: {self.limit}")
+
+
+def append_candidate(
+    candidates: list[CandidateFinding], candidate: CandidateFinding, source: SourceFile, limit: int | None
+) -> None:
+    """Append a candidate without exceeding the per-detector capacity."""
+    if limit is not None and len(candidates) >= limit:
+        raise CandidateBudgetExceeded(source.relative_path, candidates=tuple(candidates))
+    candidates.append(candidate)
 
 
 def statement_key(statement: ast.stmt) -> StatementKey:

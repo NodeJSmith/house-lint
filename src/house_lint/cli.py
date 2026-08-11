@@ -1,0 +1,330 @@
+"""Cyclopts process boundary and sequential scan orchestration."""
+
+import sys
+import traceback
+from pathlib import Path
+
+from cyclopts import App, CycloptsError
+
+from house_lint.analysis import MAX_CANDIDATES_PER_FILE, CandidateBudgetExceeded, CandidateFinding
+from house_lint.config import (
+    ConfigError,
+    LintConfig,
+    default_config,
+    load_config,
+    selected_detector_inputs,
+)
+from house_lint.discovery import DiscoveryError, discover_files, resolve_project
+from house_lint.registry import detect_candidates, rule_ids, rule_metadata
+from house_lint.reporters import (
+    render_json,
+    render_rule_list_json,
+    render_rule_list_text,
+    render_text,
+)
+from house_lint.results import Finding, LintError, RuleInfo, RuleList, ScanResult
+from house_lint.source import SourceFile
+from house_lint.suppressions import SuppressionBudgetExceeded, apply_suppressions
+
+app = App(name="house-lint", help="Jessica's opinionated Python house-style linter.")
+
+
+def _flatten_ids(values: list[str] | None) -> tuple[str, ...] | None:
+    if values is None:
+        return None
+    return tuple(item.strip() for value in values for item in value.split(","))
+
+
+def _error(kind: str, phase: str, operation: str, message: str, *, path: str | None = None) -> LintError:
+    return LintError(f"{kind}-error", kind, path, None, None, None, None, phase, operation, None, message)
+
+
+def _internal_error(phase: str, operation: str, *, path: str | None = None) -> LintError:
+    """Create a stable public error without exposing exception details."""
+    return _error("internal", phase, operation, "an unexpected internal error occurred", path=path)
+
+
+def _render_error(error: LintError) -> str:
+    """Render the stable error context required by the text CLI contract."""
+    location = f"{error.path}: " if error.path else ""
+    return f"error: {location}[{error.code} {error.phase}/{error.operation}] {error.message}"
+
+
+def _result_for_config_error(
+    error: ConfigError, *, root: Path | None = None, config: Path | None = None
+) -> ScanResult:
+    return ScanResult(root, config, (), 0, 0, errors=(_error("config", "config", "load", str(error)),))
+
+
+def _write_result(
+    result: ScanResult, output_format: str, *, errors_to_stderr: bool, debug: bool
+) -> None:
+    print(render_json(result) if output_format == "json" else render_text(result))
+    if errors_to_stderr:
+        for error in result.errors:
+            print(_render_error(error), file=sys.stderr)
+    if debug:
+        for error in result.to_dict()["errors"]:
+            print(
+                f"debug: {error['kind']} error during {error['phase']}/{error['operation']}: "
+                f"{error['message']}",
+                file=sys.stderr,
+            )
+
+
+def _write_config_error(result: ScanResult, output_format: str) -> None:
+    if output_format == "json":
+        print(render_json(result))
+        return
+    for error in result.errors:
+        print(_render_error(error), file=sys.stderr)
+
+
+def _exit_code(result: ScanResult) -> int:
+    if any(error.kind == "internal" for error in result.errors):
+        return 4
+    if result.errors:
+        return 3
+    if result.findings:
+        return 1
+    return 0
+
+
+def _requested_format(arguments: list[str]) -> str:
+    """Return the explicitly requested output format before Cyclopts parses it."""
+    for index, argument in enumerate(arguments):
+        if argument.startswith("--format="):
+            return argument.partition("=")[2]
+        if argument == "--format" and index + 1 < len(arguments):
+            return arguments[index + 1]
+    return "text"
+
+
+def _scan(
+    paths: tuple[Path, ...],
+    *,
+    root: Path,
+    config_path: Path | None,
+    config: LintConfig,
+    use_gitignore: bool,
+    debug: bool,
+) -> ScanResult:
+    """Run the complete file pipeline, retaining all completed-file results."""
+    try:
+        discovered = discover_files(
+            root,
+            include=config.include,
+            explicit=paths,
+            excludes=config.exclude,
+            use_gitignore=use_gitignore,
+        )
+    except DiscoveryError as exc:
+        return ScanResult(
+            root,
+            config_path,
+            config.enabled_rules,
+            0,
+            0,
+            errors=(exc.error,),
+        )
+
+    findings: list[Finding] = []
+    errors = list(discovered.errors)
+    detector_inputs = selected_detector_inputs(config)
+    suppressed_count = 0
+    files_scanned = 0
+    for path in discovered.files:
+        source: SourceFile | None = None
+        candidates: list[CandidateFinding] = []
+        source_ready = False
+        try:
+            source = SourceFile(path, root)
+            if source.error is not None:
+                errors.append(source.error)
+                if debug and source.debug_exception is not None:
+                    traceback.print_exception(source.debug_exception, file=sys.stderr)
+                continue
+            source_ready = True
+            files_scanned += 1
+            for detector_input in detector_inputs:
+                candidates.extend(
+                    detect_candidates(
+                        source,
+                        (detector_input,),
+                        limit=MAX_CANDIDATES_PER_FILE - len(candidates),
+                    )
+                )
+            suppressed = apply_suppressions(
+                source,
+                tuple(candidates),
+                config.enabled_rules,
+                limit=MAX_CANDIDATES_PER_FILE,
+            )
+        except SuppressionBudgetExceeded as exc:
+            findings.extend(exc.result.findings)
+            suppressed_count += exc.result.suppressed_count
+            errors.append(
+                _error(
+                    "budget",
+                    "analysis",
+                    "candidate-count",
+                    str(CandidateBudgetExceeded(exc.path)),
+                    path=exc.path,
+                )
+            )
+            continue
+        except CandidateBudgetExceeded as exc:
+            candidates.extend(exc.candidates)
+            if source is not None:
+                try:
+                    suppressed = apply_suppressions(
+                        source,
+                        tuple(candidates),
+                        config.enabled_rules,
+                        candidates_complete=False,
+                        limit=MAX_CANDIDATES_PER_FILE,
+                    )
+                except SuppressionBudgetExceeded as suppression_exc:
+                    findings.extend(suppression_exc.result.findings)
+                    suppressed_count += suppression_exc.result.suppressed_count
+                except CandidateBudgetExceeded:
+                    pass
+                else:
+                    findings.extend(suppressed.findings)
+                    suppressed_count += suppressed.suppressed_count
+            errors.append(
+                _error(
+                    "budget",
+                    "analysis",
+                    "candidate-count",
+                    str(CandidateBudgetExceeded(exc.path)),
+                    path=source.relative_path if source is not None else None,
+                )
+            )
+            continue
+        except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
+            errors.append(
+                _internal_error(
+                    "analysis",
+                    "rule-dispatch" if source_ready else "source-load",
+                    path=source.relative_path if source is not None else path.relative_to(root).as_posix(),
+                )
+            )
+            if debug:
+                traceback.print_exc(file=sys.stderr)
+            break
+        findings.extend(suppressed.findings)
+        suppressed_count += suppressed.suppressed_count
+    return ScanResult(
+        root,
+        config_path,
+        config.enabled_rules,
+        files_scanned,
+        discovered.files_skipped,
+        tuple(findings),
+        suppressed_count,
+        tuple(errors),
+    )
+
+
+@app.command
+def check(
+    paths: list[Path] | None = None,
+    *,
+    config: Path | None = None,
+    root: Path | None = None,
+    format: str = "text",
+    select: list[str] | None = None,
+    ignore: list[str] | None = None,
+    no_gitignore: bool = False,
+    debug: bool = False,
+) -> int:
+    """Scan configured roots or explicit Python paths."""
+    if format not in {"text", "json"}:
+        result = _result_for_config_error(ConfigError("--format must be text or json"))
+        _write_config_error(result, "text")
+        return 2
+    cli_select = _flatten_ids(select)
+    cli_ignore = _flatten_ids(ignore)
+    resolved_root: Path | None = None
+    resolved_config: Path | None = None
+    try:
+        if config is not None:
+            resolved_config = config.expanduser().resolve()
+            resolved_root = root.expanduser().resolve() if root is not None else resolved_config.parent
+        resolution = resolve_project(root=root, config=config)
+        resolved_root = resolution.root
+        resolved_config = resolution.config
+        lint_config = (
+            default_config(cli_select=cli_select, cli_ignore=cli_ignore)
+            if resolution.config is None
+            else load_config(
+                resolution.config,
+                cli_select=cli_select,
+                cli_ignore=cli_ignore,
+            )
+        )
+        result = _scan(
+            tuple(paths or ()),
+            root=resolution.root,
+            config_path=resolution.config,
+            config=lint_config,
+            use_gitignore=not no_gitignore,
+            debug=debug,
+        )
+    except ConfigError as exc:
+        result = _result_for_config_error(exc, root=resolved_root, config=resolved_config)
+        _write_config_error(result, format)
+        return 2
+    except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
+        result = ScanResult(
+            resolved_root,
+            resolved_config,
+            (),
+            0,
+            0,
+            errors=(_internal_error("cli", "scan"),),
+        )
+        if debug:
+            traceback.print_exc(file=sys.stderr)
+    code = _exit_code(result)
+    _write_result(
+        result,
+        format,
+        errors_to_stderr=format == "text" and code >= 3,
+        debug=debug,
+    )
+    return code
+
+
+@app.command
+def rules(*, format: str = "text") -> int:
+    """List every built-in rule and its enablement mode."""
+    rule_list = RuleList(
+        tuple(
+            RuleInfo(metadata.id, metadata.name, metadata.description, metadata.enablement)
+            for rule_id in rule_ids()
+            for metadata in (rule_metadata(rule_id),)
+        )
+    )
+    if format == "json":
+        print(render_rule_list_json(rule_list))
+        return 0
+    if format == "text":
+        print(render_rule_list_text(rule_list))
+        return 0
+    print("error: --format must be text or json", file=sys.stderr)
+    return 2
+
+
+def main() -> None:
+    """Run Cyclopts with command return values mapped to process exit status."""
+    try:
+        app(result_action="sys_exit", exit_on_error=False, print_error=False)
+    except CycloptsError as exc:
+        result = _result_for_config_error(ConfigError(str(exc)))
+        _write_config_error(result, _requested_format(sys.argv[1:]))
+        raise SystemExit(2) from exc
+
+
+__all__ = ["app", "check", "main", "rules"]
