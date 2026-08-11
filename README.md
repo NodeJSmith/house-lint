@@ -44,7 +44,7 @@ house-lint rules --format json
 
 The command writes a schema-versioned JSON object containing all eight IDs and their enablement modes.
 
-See [the rule reference](docs/rules.md) for exact behavior and messages.
+See [the rule reference](docs/rules.md) for exact rule behavior.
 
 ## Configuration
 
@@ -145,6 +145,8 @@ house-lint check --format json
 
 JSON stdout is always one parseable schema-version-1 object. It always includes `root`, `config`, `enabled_rules`, file counts, findings, errors, and summary counts. `root` and `config` are absolute strings when available and `null` otherwise; filename and file-level findings have all location fields set to `null`.
 
+Finding `message` values are human-readable display text, not stable machine keys. Machine consumers should use rule IDs and locations for findings, and error `code` values for operational failures.
+
 | Exit | Meaning |
 | ---: | --- |
 | 0 | Complete scan with no visible findings or errors |
@@ -154,6 +156,21 @@ JSON stdout is always one parseable schema-version-1 object. It always includes 
 | 4 | Unexpected internal error caught at the CLI boundary |
 
 Exit precedence is `4 > 3 > 2 > 1 > 0`. In JSON mode, diagnostics stay in the JSON result on stdout; `--debug` writes additional details only to stderr.
+
+`errors[*].code` is the stable machine-readable error taxonomy. `kind`, `phase`, and `operation` provide context and may gain new values without changing an existing error code.
+
+| Code | Meaning |
+| --- | --- |
+| `config-error` | CLI argument or configuration loading failure |
+| `path-error` | Invalid root, explicit path, or selected source path |
+| `traversal-error` | Discovery or root `.gitignore` filesystem failure |
+| `budget-error` | Discovery or candidate-count safety limit exceeded |
+| `source-too-large` | A selected source file exceeds the 10 MiB read limit |
+| `read-error` | A selected source file could not be read |
+| `decode-error` | A selected source file could not be decoded |
+| `tokenize-error` | A selected source file could not be tokenized |
+| `syntax-error` | A selected source file could not be parsed as Python |
+| `internal-error` | An unexpected failure crossed the CLI boundary |
 
 ## Non-goals
 

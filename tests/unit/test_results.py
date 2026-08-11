@@ -1,28 +1,8 @@
+from pathlib import Path
+
+import pytest
+
 from house_lint.results import Finding, LintError, RuleInfo, RuleList, ScanResult
-
-
-def test_finding_from_span_normalizes_root_relative_posix_path_and_columns(tmp_path):
-    path = tmp_path / "src" / "module.py"
-    path.parent.mkdir()
-
-    finding = Finding.from_span(
-        "HSL002", path, tmp_path, 4, 2, 4, 11, "import inside function body"
-    )
-
-    assert finding.path == "src/module.py"
-    assert (finding.line, finding.column, finding.end_line, finding.end_column) == (4, 3, 4, 12)
-
-
-def test_finding_from_span_preserves_lexical_symlink_path(tmp_path):
-    target = tmp_path / "pkg" / "real.py"
-    target.parent.mkdir()
-    target.write_text("value = 1\n")
-    link = tmp_path / "link.py"
-    link.symlink_to(target)
-
-    finding = Finding.from_span("HSL002", link, tmp_path, 1, 0, 1, 7, "import")
-
-    assert finding.path == "link.py"
 
 
 def test_finding_and_error_serialize_their_exact_schema_fields():
@@ -63,6 +43,94 @@ def test_finding_and_error_serialize_their_exact_schema_fields():
         "rule_id": None,
         "message": "invalid syntax",
     }
+
+
+@pytest.mark.parametrize(
+    ("factory", "message"),
+    [
+        (lambda: Finding("HSL001", "src/app.py", 1, None, 1, 2, "message"), "all null"),
+        (lambda: Finding("HSL001", "src/app.py", True, 1, 1, 2, "message"), "all null"),
+        (lambda: Finding("HSL001", "src/app.py", 1.5, 1, 1, 2, "message"), "all null"),
+        (
+            lambda: Finding("HSL001", "src/app.py", 2, 1, 1, 2, "message"),
+            "end must not precede",
+        ),
+        (
+            lambda: LintError(
+                "syntax-error",
+                "syntax",
+                "src/app.py",
+                1,
+                None,
+                1,
+                2,
+                "analysis",
+                "ast-parse",
+                None,
+                "message",
+            ),
+            "all null",
+        ),
+        (
+            lambda: LintError(
+                "syntax-error",
+                "syntax",
+                "src/app.py",
+                True,
+                1,
+                1,
+                2,
+                "analysis",
+                "ast-parse",
+                None,
+                "message",
+            ),
+            "all null",
+        ),
+        (
+            lambda: LintError(
+                "syntax-error",
+                "syntax",
+                "src/app.py",
+                1.5,
+                1,
+                1,
+                2,
+                "analysis",
+                "ast-parse",
+                None,
+                "message",
+            ),
+            "all null",
+        ),
+        (
+            lambda: LintError(
+                "syntax-error",
+                "syntax",
+                "src/app.py",
+                2,
+                1,
+                1,
+                2,
+                "analysis",
+                "ast-parse",
+                None,
+                "message",
+            ),
+            "end must not precede",
+        ),
+    ],
+)
+def test_public_dtos_reject_invalid_locations(factory, message):
+    with pytest.raises(ValueError, match=message):
+        factory()
+
+
+def test_scan_result_normalizes_relative_root_and_config_paths():
+    result = ScanResult(Path("project"), Path("project/pyproject.toml"), (), 0, 0)
+
+    assert result.root == Path("project").absolute()
+    assert result.config == Path("project/pyproject.toml").absolute()
 
 
 def test_scan_result_serializes_schema_v1_with_nulls_and_sorted_values(tmp_path):

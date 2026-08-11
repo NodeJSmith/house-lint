@@ -29,15 +29,31 @@ class RuleMetadata:
 
 _RULES: Mapping[str, RuleMetadata] = MappingProxyType(
     {
-        "HSL001": RuleMetadata("HSL001", "AI-writing cruft", "AI-writing tells", "default", "statement"),
-        "HSL002": RuleMetadata("HSL002", "Lazy imports", "Imports inside functions", "default", "statement"),
-        "HSL003": RuleMetadata(
-            "HSL003", "TYPE_CHECKING position", "TYPE_CHECKING blocks followed by imports", "default", "statement"
+        "HSL001": RuleMetadata(
+            "HSL001", "AI-writing cruft", "AI-writing tells", "default", "statement"
         ),
-        "HSL004": RuleMetadata("HSL004", "Constants position", "Constants after definitions", "default", "statement"),
-        "HSL101": RuleMetadata("HSL101", "Spec tokens", "Configured spec tokens", "opt-in", "mixed"),
-        "HSL102": RuleMetadata("HSL102", "File length", "Files exceeding the line limit", "opt-in", "file"),
-        "HSL103": RuleMetadata("HSL103", "Exception names", "Exception binding names", "opt-in", "statement"),
+        "HSL002": RuleMetadata(
+            "HSL002", "Lazy imports", "Imports inside functions", "default", "statement"
+        ),
+        "HSL003": RuleMetadata(
+            "HSL003",
+            "TYPE_CHECKING position",
+            "TYPE_CHECKING blocks followed by imports",
+            "default",
+            "statement",
+        ),
+        "HSL004": RuleMetadata(
+            "HSL004", "Constants position", "Constants after definitions", "default", "statement"
+        ),
+        "HSL101": RuleMetadata(
+            "HSL101", "Spec tokens", "Configured spec tokens", "opt-in", "mixed"
+        ),
+        "HSL102": RuleMetadata(
+            "HSL102", "File length", "Files exceeding the line limit", "opt-in", "file"
+        ),
+        "HSL103": RuleMetadata(
+            "HSL103", "Exception names", "Exception binding names", "opt-in", "statement"
+        ),
         "HSL900": RuleMetadata(
             "HSL900", "Suppression diagnostics", "Invalid suppression pragmas", "always", "no-owner"
         ),
@@ -45,43 +61,57 @@ _RULES: Mapping[str, RuleMetadata] = MappingProxyType(
 )
 
 
-def _hsl001(source: SourceFile, options: object, *, limit: int | None = None) -> list[CandidateFinding]:
+def _hsl001(
+    source: SourceFile, options: object, *, limit: int | None = None
+) -> list[CandidateFinding]:
     from .rules import llm_cruft
 
     return llm_cruft.detect(source, limit=limit)
 
 
-def _hsl002(source: SourceFile, options: object, *, limit: int | None = None) -> list[CandidateFinding]:
+def _hsl002(
+    source: SourceFile, options: object, *, limit: int | None = None
+) -> list[CandidateFinding]:
     from .rules import lazy_imports
 
     return lazy_imports.detect(source, limit=limit)
 
 
-def _hsl003(source: SourceFile, options: object, *, limit: int | None = None) -> list[CandidateFinding]:
+def _hsl003(
+    source: SourceFile, options: object, *, limit: int | None = None
+) -> list[CandidateFinding]:
     from .rules import type_checking_position
 
     return type_checking_position.detect(source, limit=limit)
 
 
-def _hsl004(source: SourceFile, options: object, *, limit: int | None = None) -> list[CandidateFinding]:
+def _hsl004(
+    source: SourceFile, options: object, *, limit: int | None = None
+) -> list[CandidateFinding]:
     from .rules import constants_position
 
     return constants_position.detect(source, limit=limit)
 
 
-def _hsl101(source: SourceFile, options: object, *, limit: int | None = None) -> list[CandidateFinding]:
+def _hsl101(
+    source: SourceFile, options: object, *, limit: int | None = None
+) -> list[CandidateFinding]:
     from .rules import spec_tokens
 
     return spec_tokens.detect(source, cast("HSL101Options", options), limit=limit)
 
 
-def _hsl102(source: SourceFile, options: object, *, limit: int | None = None) -> list[CandidateFinding]:
+def _hsl102(
+    source: SourceFile, options: object, *, limit: int | None = None
+) -> list[CandidateFinding]:
     from .rules import file_length
 
     return file_length.detect(source, cast("HSL102Options", options), limit=limit)
 
 
-def _hsl103(source: SourceFile, options: object, *, limit: int | None = None) -> list[CandidateFinding]:
+def _hsl103(
+    source: SourceFile, options: object, *, limit: int | None = None
+) -> list[CandidateFinding]:
     from .rules import exception_names
 
     return exception_names.detect(source, cast("HSL103Options", options), limit=limit)
@@ -130,4 +160,4 @@ def rule_metadata(rule_id: str) -> RuleMetadata:
     return _RULES[rule_id]
 
 
-__all__ = ["RuleMetadata", "detect_candidates", "is_known_rule", "rule_ids", "rule_metadata"]
+__all__ = ["detect_candidates", "is_known_rule", "rule_ids", "rule_metadata"]

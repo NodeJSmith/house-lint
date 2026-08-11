@@ -2,9 +2,11 @@
 
 `house-lint` has fixed rule IDs. Four rules are enabled by default, three are opt-in, and `HSL900` is always enabled.
 
+Finding messages are human-readable display text and may change. Machine consumers should identify findings by rule ID and location rather than message text.
+
 | ID | Mode | Behavior |
 | --- | --- | --- |
-| `HSL001` | Default | Flags divider comments and configured fixed filler phrases in comments/docstrings. Ordinary string literals are excluded. |
+| `HSL001` | Default | Flags divider comments and fixed built-in filler phrases in comments/docstrings. Ordinary string literals are excluded. |
 | `HSL002` | Default | Flags `import` and `from … import` inside function, async-function, method, and nested-function bodies. |
 | `HSL003` | Default | Flags a top-level `if TYPE_CHECKING:` or `if typing.TYPE_CHECKING:` followed later by a top-level import. |
 | `HSL004` | Default | Flags uppercase module constants after the first top-level class/function. Dunder names and constants referencing an earlier top-level binding are exempt. |
@@ -17,7 +19,7 @@
 
 ### HSL001 — AI-writing cruft
 
-The rule flags bare decorative runs of at least four `-=#*~_` characters, decorative wrapped labels, and these case-insensitive phrases: “it is important to note,” “it should be noted,” “it is worth noting,” “please note that,” “needless to say,” “due to the fact that,” “in order to,” “as mentioned above/previously/earlier,” and forms of “leverage,” “utilize,” and “facilitate.”
+The rule flags bare decorative runs of at least four `-=#*~_` characters, decorative wrapped labels, and these case-insensitive phrases: “it is important to note,” “it should be noted,” “it is worth noting,” “please note that,” “needless to say,” “due to the fact that,” “in order to,” “as mentioned above/previously/earlier,” and forms of “leverage,” “utilize,” and “facilitate,” including `leveraged`, `utilized`, and `facilitated`.
 
 ### HSL002 — Lazy imports
 

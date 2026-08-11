@@ -42,7 +42,9 @@ class _LazyImportVisitor(ast.NodeVisitor):
 
     def _append(self, node: ast.Import | ast.ImportFrom) -> None:
         if self.limit is not None and len(self.findings) >= self.limit:
-            raise CandidateBudgetExceeded(self.source.relative_path, candidates=tuple(self.findings))
+            raise CandidateBudgetExceeded(
+                self.source.relative_path, candidates=tuple(self.findings)
+            )
         self.findings.append(_candidate(self.source, node))
 
 

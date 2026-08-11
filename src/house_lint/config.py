@@ -73,7 +73,9 @@ def selected_detector_inputs(config: LintConfig) -> tuple[DetectorInput, ...]:
         "HSL102": config.hsl102,
         "HSL103": config.hsl103,
     }
-    return tuple((rule_id, options[rule_id]) for rule_id in config.enabled_rules if rule_id in options)
+    return tuple(
+        (rule_id, options[rule_id]) for rule_id in config.enabled_rules if rule_id in options
+    )
 
 
 def default_config(

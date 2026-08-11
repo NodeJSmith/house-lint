@@ -170,6 +170,47 @@ def test_unreadable_root_gitignore_reports_an_error_and_keeps_reachable_files(
     assert result.errors[0].operation == "read"
 
 
+def test_undecodable_root_gitignore_reports_an_error_and_keeps_reachable_files(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src" / "kept.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("x = 1\n")
+    (tmp_path / ".gitignore").write_bytes(b"\xff")
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert result.files == (source,)
+    assert result.errors[0].kind == "traversal"
+    assert result.errors[0].path == ".gitignore"
+    assert result.errors[0].operation == "read"
+
+
+def test_resolve_error_reports_traversal_and_keeps_other_include_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    kept = tmp_path / "kept" / "source.py"
+    kept.parent.mkdir()
+    kept.write_text("x = 1\n")
+    resolve = Path.resolve
+
+    def fail_broken_resolve(self: Path, *, strict: bool = False) -> Path:
+        if self == broken:
+            raise OSError("permission denied")
+        return resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", fail_broken_resolve)
+
+    result = discover_files(tmp_path, include=("broken", "kept"))
+
+    assert result.files == (kept,)
+    assert result.errors[0].kind == "traversal"
+    assert result.errors[0].path == "broken"
+    assert result.errors[0].operation == "resolve"
+
+
 def test_direct_symlink_file_is_safe_only_when_target_is_in_root(tmp_path: Path) -> None:
     inside = tmp_path / "inside.py"
     inside.write_text("x = 1\n")

@@ -1,3 +1,4 @@
+from house_lint import registry
 from house_lint.config import (
     DEFAULT_SELECT,
     ORDINARY_RULES,
@@ -24,13 +25,15 @@ def test_registry_has_fixed_metadata_and_explicit_dispatch(write_sample) -> None
         "HSL900",
     )
     assert rule_metadata("HSL900").enablement == "always"
+    assert "RuleMetadata" not in registry.__all__
     assert is_known_rule("HSL001")
     assert not is_known_rule("HSL999")
     assert DEFAULT_SELECT == ("HSL001", "HSL002", "HSL003", "HSL004")
     assert ORDINARY_RULES == set(rule_ids()) - {"HSL900"}
-    assert [candidate.rule_id for candidate in detect_candidates(source, selected_detector_inputs(LintConfig()))] == [
-        "HSL002"
-    ]
+    assert [
+        candidate.rule_id
+        for candidate in detect_candidates(source, selected_detector_inputs(LintConfig()))
+    ] == ["HSL002"]
 
 
 def test_dispatch_receives_selected_typed_options_without_lint_config(write_sample) -> None:

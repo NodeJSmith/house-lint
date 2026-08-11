@@ -2,6 +2,7 @@
 
 import sys
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 
 from cyclopts import App, CycloptsError
@@ -9,6 +10,7 @@ from cyclopts import App, CycloptsError
 from house_lint.analysis import MAX_CANDIDATES_PER_FILE, CandidateBudgetExceeded, CandidateFinding
 from house_lint.config import (
     ConfigError,
+    DetectorInput,
     LintConfig,
     default_config,
     load_config,
@@ -35,8 +37,12 @@ def _flatten_ids(values: list[str] | None) -> tuple[str, ...] | None:
     return tuple(item.strip() for value in values for item in value.split(","))
 
 
-def _error(kind: str, phase: str, operation: str, message: str, *, path: str | None = None) -> LintError:
-    return LintError(f"{kind}-error", kind, path, None, None, None, None, phase, operation, None, message)
+def _error(
+    kind: str, phase: str, operation: str, message: str, *, path: str | None = None
+) -> LintError:
+    return LintError(
+        f"{kind}-error", kind, path, None, None, None, None, phase, operation, None, message
+    )
 
 
 def _internal_error(phase: str, operation: str, *, path: str | None = None) -> LintError:
@@ -53,7 +59,9 @@ def _render_error(error: LintError) -> str:
 def _result_for_config_error(
     error: ConfigError, *, root: Path | None = None, config: Path | None = None
 ) -> ScanResult:
-    return ScanResult(root, config, (), 0, 0, errors=(_error("config", "config", "load", str(error)),))
+    return ScanResult(
+        root, config, (), 0, 0, errors=(_error("config", "config", "load", str(error)),)
+    )
 
 
 def _write_result(
@@ -100,6 +108,140 @@ def _requested_format(arguments: list[str]) -> str:
     return "text"
 
 
+@dataclass(frozen=True)
+class _FileScanResult:
+    findings: tuple[Finding, ...] = ()
+    errors: tuple[LintError, ...] = ()
+    suppressed_count: int = 0
+    files_scanned: int = 0
+    stop: bool = False
+
+
+def _scan_file(
+    path: Path,
+    *,
+    root: Path,
+    enabled_rules: tuple[str, ...],
+    detector_inputs: tuple[DetectorInput, ...],
+    debug: bool,
+) -> _FileScanResult:
+    """Scan one selected file after resolving source-load failures."""
+    source = _load_source(path, root=root, debug=debug)
+    if isinstance(source, _FileScanResult):
+        return source
+    return _scan_ready_source(source, enabled_rules=enabled_rules, detector_inputs=detector_inputs, debug=debug)
+
+
+def _load_source(path: Path, *, root: Path, debug: bool) -> SourceFile | _FileScanResult:
+    """Load a source file or convert source-load failures into a scan result."""
+    source: SourceFile | None = None
+    try:
+        source = SourceFile(path, root)
+        if source.error is not None:
+            if debug and source.debug_exception is not None:
+                traceback.print_exception(source.debug_exception, file=sys.stderr)
+            return _FileScanResult(errors=(source.error,))
+        return source
+    except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
+        error_path = source.relative_path if source is not None else path.relative_to(root).as_posix()
+        if debug:
+            traceback.print_exc(file=sys.stderr)
+        return _FileScanResult(
+            errors=(_internal_error("analysis", "source-load", path=error_path),), stop=True
+        )
+
+
+def _scan_ready_source(
+    source: SourceFile,
+    *,
+    enabled_rules: tuple[str, ...],
+    detector_inputs: tuple[DetectorInput, ...],
+    debug: bool,
+) -> _FileScanResult:
+    """Run detectors and suppressions for a successfully loaded source file."""
+    candidates: list[CandidateFinding] = []
+    try:
+        for detector_input in detector_inputs:
+            candidates.extend(
+                detect_candidates(
+                    source,
+                    (detector_input,),
+                    limit=MAX_CANDIDATES_PER_FILE - len(candidates),
+                )
+            )
+        suppressed = apply_suppressions(
+            source, tuple(candidates), enabled_rules, limit=MAX_CANDIDATES_PER_FILE
+        )
+    except SuppressionBudgetExceeded as exc:
+        return _FileScanResult(
+            findings=exc.result.findings,
+            errors=(_candidate_budget_error(exc.path),),
+            suppressed_count=exc.result.suppressed_count,
+            files_scanned=1,
+        )
+    except CandidateBudgetExceeded as exc:
+        return _recover_candidate_budget(source, candidates, enabled_rules, exc)
+    except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
+        if debug:
+            traceback.print_exc(file=sys.stderr)
+        return _FileScanResult(
+            errors=(
+                _internal_error("analysis", "rule-dispatch", path=source.relative_path),
+            ),
+            files_scanned=1,
+            stop=True,
+        )
+    return _FileScanResult(
+        findings=suppressed.findings,
+        suppressed_count=suppressed.suppressed_count,
+        files_scanned=1,
+    )
+
+
+def _recover_candidate_budget(
+    source: SourceFile,
+    candidates: list[CandidateFinding],
+    enabled_rules: tuple[str, ...],
+    exceeded: CandidateBudgetExceeded,
+) -> _FileScanResult:
+    """Merge the overflowing detector's partial prefix before applying known suppressions."""
+    candidates.extend(exceeded.candidates)
+    findings: tuple[Finding, ...] = ()
+    suppressed_count = 0
+    try:
+        suppressed = apply_suppressions(
+            source,
+            tuple(candidates),
+            enabled_rules,
+            candidates_complete=False,
+            limit=MAX_CANDIDATES_PER_FILE,
+        )
+    except SuppressionBudgetExceeded as exc:
+        findings = exc.result.findings
+        suppressed_count = exc.result.suppressed_count
+    except CandidateBudgetExceeded:
+        pass
+    else:
+        findings = suppressed.findings
+        suppressed_count = suppressed.suppressed_count
+    return _FileScanResult(
+        findings=findings,
+        errors=(_candidate_budget_error(exceeded.path),),
+        suppressed_count=suppressed_count,
+        files_scanned=1,
+    )
+
+
+def _candidate_budget_error(path: str) -> LintError:
+    return _error(
+        "budget",
+        "analysis",
+        "candidate-count",
+        str(CandidateBudgetExceeded(path)),
+        path=path,
+    )
+
+
 def _scan(
     paths: tuple[Path, ...],
     *,
@@ -134,87 +276,19 @@ def _scan(
     suppressed_count = 0
     files_scanned = 0
     for path in discovered.files:
-        source: SourceFile | None = None
-        candidates: list[CandidateFinding] = []
-        source_ready = False
-        try:
-            source = SourceFile(path, root)
-            if source.error is not None:
-                errors.append(source.error)
-                if debug and source.debug_exception is not None:
-                    traceback.print_exception(source.debug_exception, file=sys.stderr)
-                continue
-            source_ready = True
-            files_scanned += 1
-            for detector_input in detector_inputs:
-                candidates.extend(
-                    detect_candidates(
-                        source,
-                        (detector_input,),
-                        limit=MAX_CANDIDATES_PER_FILE - len(candidates),
-                    )
-                )
-            suppressed = apply_suppressions(
-                source,
-                tuple(candidates),
-                config.enabled_rules,
-                limit=MAX_CANDIDATES_PER_FILE,
-            )
-        except SuppressionBudgetExceeded as exc:
-            findings.extend(exc.result.findings)
-            suppressed_count += exc.result.suppressed_count
-            errors.append(
-                _error(
-                    "budget",
-                    "analysis",
-                    "candidate-count",
-                    str(CandidateBudgetExceeded(exc.path)),
-                    path=exc.path,
-                )
-            )
-            continue
-        except CandidateBudgetExceeded as exc:
-            candidates.extend(exc.candidates)
-            if source is not None:
-                try:
-                    suppressed = apply_suppressions(
-                        source,
-                        tuple(candidates),
-                        config.enabled_rules,
-                        candidates_complete=False,
-                        limit=MAX_CANDIDATES_PER_FILE,
-                    )
-                except SuppressionBudgetExceeded as suppression_exc:
-                    findings.extend(suppression_exc.result.findings)
-                    suppressed_count += suppression_exc.result.suppressed_count
-                except CandidateBudgetExceeded:
-                    pass
-                else:
-                    findings.extend(suppressed.findings)
-                    suppressed_count += suppressed.suppressed_count
-            errors.append(
-                _error(
-                    "budget",
-                    "analysis",
-                    "candidate-count",
-                    str(CandidateBudgetExceeded(exc.path)),
-                    path=source.relative_path if source is not None else None,
-                )
-            )
-            continue
-        except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
-            errors.append(
-                _internal_error(
-                    "analysis",
-                    "rule-dispatch" if source_ready else "source-load",
-                    path=source.relative_path if source is not None else path.relative_to(root).as_posix(),
-                )
-            )
-            if debug:
-                traceback.print_exc(file=sys.stderr)
+        file_result = _scan_file(
+            path,
+            root=root,
+            enabled_rules=config.enabled_rules,
+            detector_inputs=detector_inputs,
+            debug=debug,
+        )
+        findings.extend(file_result.findings)
+        errors.extend(file_result.errors)
+        suppressed_count += file_result.suppressed_count
+        files_scanned += file_result.files_scanned
+        if file_result.stop:
             break
-        findings.extend(suppressed.findings)
-        suppressed_count += suppressed.suppressed_count
     return ScanResult(
         root,
         config_path,
@@ -251,7 +325,9 @@ def check(
     try:
         if config is not None:
             resolved_config = config.expanduser().resolve()
-            resolved_root = root.expanduser().resolve() if root is not None else resolved_config.parent
+            resolved_root = (
+                root.expanduser().resolve() if root is not None else resolved_config.parent
+            )
         resolution = resolve_project(root=root, config=config)
         resolved_root = resolution.root
         resolved_config = resolution.config

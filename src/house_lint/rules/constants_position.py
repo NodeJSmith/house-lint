@@ -54,7 +54,9 @@ def _module_bindings(tree: ast.Module) -> tuple[dict[str, int], int | None]:
 
 def _target_names(node: ast.Assign | ast.AnnAssign) -> list[str]:
     if isinstance(node, ast.AnnAssign):
-        return [node.target.id] if node.value is not None and isinstance(node.target, ast.Name) else []
+        return (
+            [node.target.id] if node.value is not None and isinstance(node.target, ast.Name) else []
+        )
     names: list[str] = []
     for target in node.targets:
         collected = _names_in_target(target)
@@ -79,7 +81,9 @@ def _names_in_target(target: ast.expr) -> list[str] | None:
 
 
 def _is_constant(name: str) -> bool:
-    return len(name) >= 2 and not DUNDER_NAME.fullmatch(name) and bool(CONSTANT_NAME.fullmatch(name))
+    return (
+        len(name) >= 2 and not DUNDER_NAME.fullmatch(name) and bool(CONSTANT_NAME.fullmatch(name))
+    )
 
 
 def _references_earlier_binding(

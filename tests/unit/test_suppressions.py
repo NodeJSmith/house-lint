@@ -15,7 +15,9 @@ def _source(write_sample, text: str) -> SourceFile:
 def _candidate(
     source: SourceFile, rule_id: str, statement_line: int, finding_line: int | None = None
 ) -> CandidateFinding:
-    statement = next(statement for statement in source.statements if statement.lineno == statement_line)
+    statement = next(
+        statement for statement in source.statements if statement.lineno == statement_line
+    )
     owner = statement_key(statement)
     line = finding_line or statement_line
     return CandidateFinding(
@@ -41,6 +43,7 @@ def test_trailing_ignore_suppresses_all_owned_rule_candidates(write_sample) -> N
 
     assert result.findings == ()
     assert result.suppressed_count == 2
+    assert not hasattr(result, "visible_candidates")
 
 
 def test_trailing_ignore_suppresses_a_simple_statement(write_sample) -> None:
@@ -52,7 +55,9 @@ def test_trailing_ignore_suppresses_a_simple_statement(write_sample) -> None:
     assert result.suppressed_count == 1
 
 
-def test_trailing_ignore_owns_the_last_statement_on_a_semicolon_separated_line(write_sample) -> None:
+def test_trailing_ignore_owns_the_last_statement_on_a_semicolon_separated_line(
+    write_sample,
+) -> None:
     source = _source(
         write_sample,
         "def load() -> None:\n    value = 1; import module  # house-lint: ignore[HSL002] - generated import\n",
@@ -65,7 +70,9 @@ def test_trailing_ignore_owns_the_last_statement_on_a_semicolon_separated_line(w
     assert result.suppressed_count == 1
 
 
-def test_trailing_ignore_owns_interior_comment_findings_in_multiline_statements(write_sample) -> None:
+def test_trailing_ignore_owns_interior_comment_findings_in_multiline_statements(
+    write_sample,
+) -> None:
     source = _source(
         write_sample,
         "value = (  # house-lint: ignore[HSL101] - generated value\n    1  # T01\n)\n",
@@ -82,7 +89,9 @@ def test_trailing_ignore_owns_interior_comment_findings_in_multiline_statements(
     assert result.suppressed_count == 1
 
 
-def test_trailing_ignore_suppresses_hsl001_inline_comment_in_multiline_statement(write_sample) -> None:
+def test_trailing_ignore_suppresses_hsl001_inline_comment_in_multiline_statement(
+    write_sample,
+) -> None:
     source = _source(
         write_sample,
         "value = (\n    1\n)  # house-lint: ignore[HSL001] - Please note that generated value\n",
@@ -123,6 +132,18 @@ def test_ignore_next_stays_in_its_lexical_suite(write_sample) -> None:
     assert result.suppressed_count == 1
 
 
+def test_ignore_next_owns_a_statement_in_a_match_case_suite(write_sample) -> None:
+    source = _source(
+        write_sample,
+        "match value:\n    case _:\n        # house-lint: ignore-next[HSL002] - circular import\n        import package\n",
+    )
+
+    result = apply_suppressions(source, (_candidate(source, "HSL002", 4),), {"HSL002", "HSL900"})
+
+    assert result.findings == ()
+    assert result.suppressed_count == 1
+
+
 def test_ignore_next_cannot_leave_its_lexical_suite(write_sample) -> None:
     source = _source(
         write_sample,
@@ -148,14 +169,18 @@ def test_ignore_next_requires_a_comment_only_line(write_sample) -> None:
 def test_file_ignore_suppresses_statement_file_and_filename_candidates(write_sample) -> None:
     source = _source(
         write_sample,
-        "#!/usr/bin/env python\n# coding: utf-8\n\n# generated module\n\"\"\"Docs.\"\"\"\n"
+        '#!/usr/bin/env python\n# coding: utf-8\n\n# generated module\n"""Docs."""\n'
         "from __future__ import annotations\n# house-lint: ignore-file[HSL101, HSL102] - generated module\n"
         "value = 1\n",
     )
     candidates = (
         _candidate(source, "HSL101", 8),
-        CandidateFinding("HSL101", source.relative_path, "filename", None, None, None, None, SourceKind.FILENAME),
-        CandidateFinding("HSL102", source.relative_path, "length", None, None, None, None, SourceKind.FILE),
+        CandidateFinding(
+            "HSL101", source.relative_path, "filename", None, None, None, None, SourceKind.FILENAME
+        ),
+        CandidateFinding(
+            "HSL102", source.relative_path, "length", None, None, None, None, SourceKind.FILE
+        ),
     )
     result = apply_suppressions(source, candidates, {"HSL101", "HSL102", "HSL900"})
 
@@ -174,7 +199,9 @@ def test_file_ignore_rejects_a_non_docstring_string_before_the_pragma(write_samp
     assert result.suppressed_count == 0
 
 
-def test_invalid_and_conflicting_pragmas_emit_hsl900_without_hiding_candidates(write_sample) -> None:
+def test_invalid_and_conflicting_pragmas_emit_hsl900_without_hiding_candidates(
+    write_sample,
+) -> None:
     source = _source(
         write_sample,
         "# house-lint: ignore-file[HSL001] - generated module\nvalue = 1  # house-lint: ignore[HSL001] - valid reason\n# house-lint: ignore[HSL900] - valid reason\n",
@@ -182,11 +209,18 @@ def test_invalid_and_conflicting_pragmas_emit_hsl900_without_hiding_candidates(w
     candidates = (_candidate(source, "HSL001", 2),)
     result = apply_suppressions(source, candidates, {"HSL001", "HSL900"})
 
-    assert [finding.rule_id for finding in result.findings] == ["HSL001", "HSL900", "HSL900", "HSL900"]
+    assert [finding.rule_id for finding in result.findings] == [
+        "HSL001",
+        "HSL900",
+        "HSL900",
+        "HSL900",
+    ]
     assert result.suppressed_count == 0
 
 
-def test_invalid_pragma_ids_reasons_and_disabled_or_unknown_rules_are_diagnostics(write_sample) -> None:
+def test_invalid_pragma_ids_reasons_and_disabled_or_unknown_rules_are_diagnostics(
+    write_sample,
+) -> None:
     source = _source(
         write_sample,
         "# house-lint: ignore-next[HSL01] - valid reason\n"

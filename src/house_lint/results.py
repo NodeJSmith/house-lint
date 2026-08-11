@@ -5,12 +5,19 @@ from pathlib import Path
 from typing import Any
 
 
-def _location(value: int | None) -> int | None:
-    return value
-
-
-def _relative_posix(path: Path, root: Path) -> str:
-    return path.absolute().relative_to(root.absolute()).as_posix()
+def _validate_location(
+    line: int | None, column: int | None, end_line: int | None, end_column: int | None
+) -> None:
+    location = (line, column, end_line, end_column)
+    if all(value is None for value in location):
+        return
+    if any(value is None for value in location) or not all(
+        type(value) is int and value >= 1 for value in location
+    ):
+        raise ValueError("locations must be all null or valid 1-based coordinates")
+    assert line is not None and column is not None and end_line is not None and end_column is not None
+    if (end_line, end_column) < (line, column):
+        raise ValueError("location end must not precede its start")
 
 
 @dataclass(frozen=True)
@@ -23,37 +30,17 @@ class Finding:
     end_column: int | None
     message: str
 
-    @classmethod
-    def from_span(
-        cls,
-        rule_id: str,
-        path: Path,
-        root: Path,
-        line: int,
-        column: int,
-        end_line: int,
-        end_column: int,
-        message: str,
-    ) -> "Finding":
-        """Convert an AST/token span into the public location contract."""
-        return cls(
-            rule_id,
-            _relative_posix(path, root),
-            line,
-            column + 1,
-            end_line,
-            end_column + 1,
-            message,
-        )
+    def __post_init__(self) -> None:
+        _validate_location(self.line, self.column, self.end_line, self.end_column)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "rule_id": self.rule_id,
             "path": self.path,
-            "line": _location(self.line),
-            "column": _location(self.column),
-            "end_line": _location(self.end_line),
-            "end_column": _location(self.end_column),
+            "line": self.line,
+            "column": self.column,
+            "end_line": self.end_line,
+            "end_column": self.end_column,
             "message": self.message,
         }
 
@@ -72,15 +59,18 @@ class LintError:
     rule_id: str | None
     message: str
 
+    def __post_init__(self) -> None:
+        _validate_location(self.line, self.column, self.end_line, self.end_column)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "code": self.code,
             "kind": self.kind,
             "path": self.path,
-            "line": _location(self.line),
-            "column": _location(self.column),
-            "end_line": _location(self.end_line),
-            "end_column": _location(self.end_column),
+            "line": self.line,
+            "column": self.column,
+            "end_line": self.end_line,
+            "end_column": self.end_column,
             "phase": self.phase,
             "operation": self.operation,
             "rule_id": self.rule_id,
@@ -98,6 +88,12 @@ class ScanResult:
     findings: tuple[Finding, ...] = ()
     suppressed_count: int = 0
     errors: tuple[LintError, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.root is not None:
+            object.__setattr__(self, "root", self.root.absolute())
+        if self.config is not None:
+            object.__setattr__(self, "config", self.config.absolute())
 
     @property
     def is_clean(self) -> bool:

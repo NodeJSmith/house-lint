@@ -2,6 +2,8 @@
 
 import ast
 import io
+import os
+import stat
 import tokenize
 from pathlib import Path
 from typing import TypeAlias
@@ -53,26 +55,32 @@ class SourceFile:
             return
         self._loaded = True
         try:
-            if not self.resolved_path.is_file():
-                self._error = self._make_error(
-                    "path-error", "path", "source-check", "regular-file", "not a regular file"
-                )
-                return
-            if self.resolved_path.stat().st_size > MAX_SOURCE_BYTES:
+            # A nonblocking descriptor prevents a raced FIFO from stalling the scan.
+            descriptor = os.open(self.resolved_path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+            with os.fdopen(descriptor, "rb") as handle:
+                if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                    self._error = self._make_error(
+                        "path-error", "path", "source-check", "regular-file", "not a regular file"
+                    )
+                    return
+                source_bytes = handle.read(MAX_SOURCE_BYTES + 1)
+            if len(source_bytes) > MAX_SOURCE_BYTES:
                 self._error = self._make_error(
                     "source-too-large",
                     "budget",
                     "source-check",
-                    "size-check",
+                    "bounded-read",
                     "source file exceeds 10 MiB",
                 )
                 return
-            with tokenize.open(self.resolved_path) as handle:
-                self._text = handle.read()
-        except UnicodeDecodeError as exc:
+            buffer = io.BytesIO(source_bytes)
+            encoding, _ = tokenize.detect_encoding(buffer.readline)
+            buffer.seek(0)
+            self._text = io.TextIOWrapper(buffer, encoding=encoding).read()
+        except (UnicodeDecodeError, LookupError) as exc:
             self._debug_exception = exc
             self._error = self._make_error(
-                "decode-error", "decode", "read", "tokenize.open", "source could not be decoded"
+                "decode-error", "decode", "read", "bounded-read", "source could not be decoded"
             )
             return
         except SyntaxError as exc:
@@ -81,14 +89,19 @@ class SourceFile:
                 "decode-error",
                 "decode",
                 "read",
-                "tokenize.open",
+                "bounded-read",
                 "source encoding declaration is invalid",
+            )
+            return
+        except IsADirectoryError:
+            self._error = self._make_error(
+                "path-error", "path", "source-check", "regular-file", "not a regular file"
             )
             return
         except OSError as exc:
             self._debug_exception = exc
             self._error = self._make_error(
-                "read-error", "read", "read", "tokenize.open", "source could not be read"
+                "read-error", "read", "read", "bounded-read", "source could not be read"
             )
             return
 

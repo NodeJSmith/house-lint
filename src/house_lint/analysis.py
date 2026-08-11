@@ -43,9 +43,7 @@ class CandidateFinding:
 class CandidateBudgetExceeded(RuntimeError):
     """Raised when one file produces more candidates than the fixed safety limit."""
 
-    def __init__(
-        self, path: str, *, candidates: tuple[CandidateFinding, ...] = ()
-    ) -> None:
+    def __init__(self, path: str, *, candidates: tuple[CandidateFinding, ...] = ()) -> None:
         self.path = path
         self.limit = MAX_CANDIDATES_PER_FILE
         self.candidates = candidates
@@ -53,7 +51,10 @@ class CandidateBudgetExceeded(RuntimeError):
 
 
 def append_candidate(
-    candidates: list[CandidateFinding], candidate: CandidateFinding, source: SourceFile, limit: int | None
+    candidates: list[CandidateFinding],
+    candidate: CandidateFinding,
+    source: SourceFile,
+    limit: int | None,
 ) -> None:
     """Append a candidate without exceeding the per-detector capacity."""
     if limit is not None and len(candidates) >= limit:
@@ -113,7 +114,7 @@ def candidate_for_line(
 def statement_owner_for_line(
     source: SourceFile, line: int, column: int | None = None
 ) -> ast.stmt | None:
-    """Return the narrowest statement a comment is syntactically attached to."""
+    """Return a comment's owner: innermost for trailing text, outermost at line ends."""
     if column is not None and source.lines[line - 1][:column].strip():
         candidates = [
             statement

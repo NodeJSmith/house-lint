@@ -12,7 +12,12 @@ def test_flags_only_files_strictly_over_configured_splitlines_threshold(write_sa
     [finding] = detect(SourceFile(over, over.parent), HSL102Options(max_lines=3))
 
     assert finding.message == "4 lines (threshold: 3)"
-    assert (finding.line, finding.column, finding.end_line, finding.end_column) == (None, None, None, None)
+    assert (finding.line, finding.column, finding.end_line, finding.end_column) == (
+        None,
+        None,
+        None,
+        None,
+    )
     assert finding.source_kind is SourceKind.FILE
     assert finding.owner is None
 

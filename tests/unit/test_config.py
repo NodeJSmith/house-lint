@@ -18,7 +18,9 @@ def test_defaults_and_cli_selection_precedence(tmp_path: Path) -> None:
 
 
 def test_default_config_uses_the_shared_selection_precedence() -> None:
-    assert default_config(cli_select=("HSL002", "HSL003"), cli_ignore=("HSL003",)).enabled_rules == (
+    assert default_config(
+        cli_select=("HSL002", "HSL003"), cli_ignore=("HSL003",)
+    ).enabled_rules == (
         "HSL002",
         "HSL900",
     )
@@ -42,7 +44,7 @@ def test_selection_omission_empty_and_cli_precedence(tmp_path: Path) -> None:
     path.write_text("[tool.house-lint]\n")
     assert load_config(path).enabled_rules == ("HSL001", "HSL002", "HSL003", "HSL004", "HSL900")
 
-    path.write_text('[tool.house-lint]\nselect = []\nignore = []\n')
+    path.write_text("[tool.house-lint]\nselect = []\nignore = []\n")
     assert load_config(path).enabled_rules == ("HSL900",)
 
     path.write_text('[tool.house-lint]\nselect = ["HSL001"]\nignore = ["HSL001"]\n')
@@ -97,7 +99,7 @@ def test_unknown_keys_and_bad_include_are_rejected(tmp_path: Path) -> None:
         "[tool.house-lint.rules.HSL101]\nunknown = true\n",
         "[tool.house-lint.rules.HSL102]\nunknown = true\n",
         "[tool.house-lint.rules.HSL103]\nunknown = true\n",
-        "[[tool.house-lint.rules.HSL101.tokens]]\nprefixes = [\"AC\"]\nscopes = [\"comments\"]\nunknown = true\n",
+        '[[tool.house-lint.rules.HSL101.tokens]]\nprefixes = ["AC"]\nscopes = ["comments"]\nunknown = true\n',
     ],
 )
 def test_rule_tables_and_token_families_reject_unknown_keys(tmp_path: Path, table: str) -> None:

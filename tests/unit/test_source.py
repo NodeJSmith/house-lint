@@ -106,10 +106,10 @@ def test_read_failure_is_structured_and_not_clean(monkeypatch, tmp_path):
     path = tmp_path / "unreadable.py"
     path.write_text("value = 1\n")
 
-    def fail_open(*args, **kwargs):
+    def fail_open(_path: str | Path, _flags: int) -> int:
         raise OSError("permission denied")
 
-    monkeypatch.setattr(house_lint.source.tokenize, "open", fail_open)
+    monkeypatch.setattr(house_lint.source.os, "open", fail_open)
     source = SourceFile(path, tmp_path)
 
     assert source.error is not None
