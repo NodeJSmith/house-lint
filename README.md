@@ -1,8 +1,8 @@
 # house-lint
 
-> Jessica's opinionated Python house-style linter for comments, imports, module layout, and deliberately configured project conventions.
+> Opinionated Python house-style linter for comments, imports, module layout, and deliberately configured project conventions.
 
-`house-lint` packages the checks Jessica uses across her Python projects. It is intentionally not a general-purpose style framework, an LLM-authorship detector, or a replacement for Ruff.
+`house-lint` packages a specific set of checks used across a handful of Python projects. It is intentionally not a general-purpose style framework, an LLM-authorship detector, or a replacement for Ruff.
 
 ## Quick start
 
@@ -172,10 +172,6 @@ Exit precedence is `4 > 3 > 2 > 1 > 0`. In JSON mode, diagnostics stay in the JS
 | `syntax-error` | A selected source file could not be parsed as Python |
 | `internal-error` | An unexpected failure crossed the CLI boundary |
 
-## Non-goals
-
-This package does not infer whether code was written by an LLM, provide autofixes or plugins, support arbitrary user rules, scan non-Python sources, or migrate existing repository-local annotations and hooks.
-
 ## Development
 
 ```bash
@@ -188,23 +184,4 @@ See [the changelog](CHANGELOG.md) for compatibility notes.
 
 ## Releases
 
-CI tests Python 3.11 through 3.14 and runs Ruff, Pyright, and a package build. [Release
-Please](https://github.com/googleapis/release-please) opens release pull requests from
-Conventional Commits, updates the version, changelog, and lockfile, then creates the GitHub
-release and publishes its distributions to PyPI.
-
-Publishing uses PyPI Trusted Publishing, not a stored API token. Before the initial release,
-register a pending PyPI publisher with these exact values:
-
-| Setting | Value |
-| --- | --- |
-| PyPI project | `house-lint` |
-| GitHub owner | `NodeJSmith` |
-| GitHub repository | `house-lint` |
-| Workflow filename | `release-please.yml` |
-| Environment | `pypi` |
-
-Create and publish the `v0.1.0` GitHub release after this workflow is on `master`; its
-`published` event builds and publishes the package. Re-run **Release and Publish** with that
-existing tag if the initial publication needs to be retried. Subsequent releases are created
-and published by Release Please.
+CI tests Python 3.11 through 3.14 and runs Ruff, Pyright, and a package build. [Release Please](https://github.com/googleapis/release-please) manages version bumps, changelog updates, and GitHub releases from Conventional Commits. Distributions are published to PyPI via Trusted Publishing.
