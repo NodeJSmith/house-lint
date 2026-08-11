@@ -201,7 +201,7 @@ register a pending PyPI publisher with these exact values:
 | PyPI project | `house-lint` |
 | GitHub owner | `NodeJSmith` |
 | GitHub repository | `house-lint` |
-| Workflow filename | `workflow.yml` |
+| Workflow filename | `release-please.yml` |
 | Environment | `pypi` |
 
 Create and publish the `v0.1.0` GitHub release after this workflow is on `master`; its
