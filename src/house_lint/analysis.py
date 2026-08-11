@@ -110,6 +110,19 @@ def statement_owner_for_line(source: SourceFile, line: int) -> ast.stmt | None:
     return min(candidates, key=_statement_span)
 
 
+def docstring_owner_for_line(source: SourceFile, line: int) -> ast.stmt:
+    """Return the string-expression statement containing a docstring line."""
+    for statement in source.statements:
+        if (
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+            and statement.lineno <= line <= (statement.end_lineno or statement.lineno)
+        ):
+            return statement
+    raise RuntimeError("docstring line has no string-expression statement")
+
+
 def _statement_span(statement: ast.stmt) -> tuple[int, int, int, int]:
     return (
         (statement.end_lineno or statement.lineno) - statement.lineno,

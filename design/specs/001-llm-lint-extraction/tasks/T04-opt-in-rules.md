@@ -1,7 +1,7 @@
 ---
 task_id: "T04"
 title: "Implement the three opt-in rules"
-status: "planned"
+status: "done"
 depends_on: ["T01", "T02"]
 implements: ["FR#9", "FR#10", "FR#11", "AC#4"]
 ---

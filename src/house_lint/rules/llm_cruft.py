@@ -1,12 +1,12 @@
 """Detect AI-writing tells in comments and docstrings."""
 
-import ast
 import re
 
 from house_lint.analysis import (
     CandidateFinding,
     candidate_for_line,
     candidate_for_statement,
+    docstring_owner_for_line,
     statement_owner_for_line,
 )
 from house_lint.source import SourceFile
@@ -52,7 +52,7 @@ def detect(source: SourceFile) -> list[CandidateFinding]:
                     source,
                     "HSL001",
                     f"filler - {suggestion}",
-                    _docstring_owner(source, line),
+                    docstring_owner_for_line(source, line),
                 )
                 for pattern, suggestion in FILLER_PATTERNS
                 if pattern.search(text)
@@ -64,15 +64,3 @@ def _comment_candidate(source: SourceFile, line: int, message: str) -> Candidate
     return candidate_for_line(
         source, "HSL001", message, line, statement_owner_for_line(source, line)
     )
-
-
-def _docstring_owner(source: SourceFile, line: int) -> ast.stmt:
-    for statement in source.statements:
-        if (
-            isinstance(statement, ast.Expr)
-            and isinstance(statement.value, ast.Constant)
-            and isinstance(statement.value.value, str)
-            and statement.lineno <= line <= (statement.end_lineno or statement.lineno)
-        ):
-            return statement
-    raise RuntimeError("docstring line has no string-expression statement")
