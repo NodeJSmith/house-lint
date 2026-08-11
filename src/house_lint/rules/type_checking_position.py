@@ -14,7 +14,10 @@ def detect(source: SourceFile, *, limit: int | None = None) -> list[CandidateFin
     for index, node in enumerate(source.tree.body):
         if not isinstance(node, ast.If) or not _is_type_checking_guard(node.test):
             continue
-        if any(isinstance(later, (ast.Import, ast.ImportFrom)) for later in source.tree.body[index + 1 :]):
+        if any(
+            isinstance(later, (ast.Import, ast.ImportFrom))
+            for later in source.tree.body[index + 1 :]
+        ):
             append_candidate(
                 findings,
                 candidate_for_statement(

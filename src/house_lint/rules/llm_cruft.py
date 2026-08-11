@@ -6,7 +6,6 @@ from house_lint.analysis import (
     CandidateFinding,
     append_candidate,
     candidate_for_line,
-    candidate_for_statement,
     comment_owner_for_line,
     docstring_owner_for_line,
 )
@@ -22,10 +21,16 @@ FILLER_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bneedless to say\b", re.IGNORECASE), "drop it"),
     (re.compile(r"\bdue to the fact that\b", re.IGNORECASE), "use 'because'"),
     (re.compile(r"\bin order to\b", re.IGNORECASE), "use 'to'"),
-    (re.compile(r"\bas mentioned (?:above|previously|earlier)\b", re.IGNORECASE), "name the thing directly"),
-    (re.compile(r"\b(?:leverage|leverages|leveraging)\b", re.IGNORECASE), "use 'use'"),
-    (re.compile(r"\b(?:utilize|utilizes|utilizing)\b", re.IGNORECASE), "use 'use'"),
-    (re.compile(r"\b(?:facilitate|facilitates|facilitating)\b", re.IGNORECASE), "use 'help' or be specific"),
+    (
+        re.compile(r"\bas mentioned (?:above|previously|earlier)\b", re.IGNORECASE),
+        "name the thing directly",
+    ),
+    (re.compile(r"\b(?:leverage|leverages|leveraging|leveraged)\b", re.IGNORECASE), "use 'use'"),
+    (re.compile(r"\b(?:utilize|utilizes|utilizing|utilized)\b", re.IGNORECASE), "use 'use'"),
+    (
+        re.compile(r"\b(?:facilitate|facilitates|facilitating|facilitated)\b", re.IGNORECASE),
+        "use 'help' or be specific",
+    ),
 )
 
 
@@ -53,10 +58,11 @@ def detect(source: SourceFile, *, limit: int | None = None) -> list[CandidateFin
             for pattern, suggestion in FILLER_PATTERNS:
                 if pattern.search(text):
                     add(
-                        candidate_for_statement(
+                        candidate_for_line(
                             source,
                             "HSL001",
                             f"filler - {suggestion}",
+                            line,
                             docstring_owner_for_line(source, line),
                         )
                     )

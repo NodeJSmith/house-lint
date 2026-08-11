@@ -122,7 +122,9 @@ def test_check_selects_repeatable_comma_separated_rule_ids(repository: Path) -> 
     ("option", "value"),
     [("--select", "HSL001,"), ("--select", "HSL001,,HSL002"), ("--ignore", " ")],
 )
-def test_empty_cli_rule_id_elements_are_usage_errors(repository: Path, option: str, value: str) -> None:
+def test_empty_cli_rule_id_elements_are_usage_errors(
+    repository: Path, option: str, value: str
+) -> None:
     completed = _run(repository, "check", "--root", str(repository), option, value)
 
     assert completed.returncode == 2
@@ -153,6 +155,26 @@ def test_config_and_syntax_errors_have_documented_stream_ownership(repository: P
     assert "error: src/broken.py: [syntax-error analysis/ast-parse]" in text_incomplete.stderr
 
 
+def test_unavailable_pep263_codec_is_a_decode_error_and_preserves_sibling_findings(
+    repository: Path,
+) -> None:
+    (repository / "src" / "unknown_codec.py").write_bytes(b"# coding: unknown-codec\n")
+    (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
+
+    completed = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    result = json.loads(completed.stdout)
+    assert completed.returncode == 3
+    assert any(
+        error["path"] == "src/unknown_codec.py" and error["kind"] == "decode"
+        for error in result["errors"]
+    )
+    assert any(
+        finding["path"] == "src/finding.py" and finding["rule_id"] == "HSL002"
+        for finding in result["findings"]
+    )
+
+
 def test_json_parser_usage_error_has_a_schema_result(repository: Path) -> None:
     completed = _run(repository, "check", "--format", "json", "--root")
 
@@ -169,9 +191,7 @@ def test_json_parser_usage_error_has_a_schema_result(repository: Path) -> None:
 def test_debug_operational_details_stay_on_stderr_for_json_output(repository: Path) -> None:
     (repository / "src" / "broken.py").write_text("def broken()\n    pass\n")
 
-    completed = _run(
-        repository, "check", "--root", str(repository), "--format", "json", "--debug"
-    )
+    completed = _run(repository, "check", "--root", str(repository), "--format", "json", "--debug")
 
     result = json.loads(completed.stdout)
     assert completed.returncode == 3
@@ -283,7 +303,9 @@ cli.main()
 
 
 def test_hsl001_stops_at_the_candidate_budget(repository: Path) -> None:
-    (repository / "src" / "overflow.py").write_text("\n".join("# utilize this" for _ in range(10_002)))
+    (repository / "src" / "overflow.py").write_text(
+        "\n".join("# utilize this" for _ in range(10_002))
+    )
 
     completed = _run(
         repository,
@@ -352,7 +374,9 @@ def test_suppression_budget_preserves_the_bounded_candidate_prefix(repository: P
     assert {finding["rule_id"] for finding in result["findings"]} == {"HSL001"}
 
 
-def test_detector_and_suppression_budget_preserve_the_bounded_candidate_prefix(repository: Path) -> None:
+def test_detector_and_suppression_budget_preserve_the_bounded_candidate_prefix(
+    repository: Path,
+) -> None:
     (repository / "src" / "overflow.py").write_text(
         "\n".join("# utilize this" for _ in range(10_001))
         + "\n# house-lint: ignore[] - generated module\n"
@@ -494,7 +518,9 @@ cli.main()
     assert "Traceback" in completed.stderr
 
 
-def test_subprocess_internal_error_precedes_incomplete_scan_and_preserves_findings(repository: Path) -> None:
+def test_subprocess_internal_error_precedes_incomplete_scan_and_preserves_findings(
+    repository: Path,
+) -> None:
     first = repository / "src" / "a.py"
     broken = repository / "src" / "b.py"
     failing = repository / "src" / "c.py"

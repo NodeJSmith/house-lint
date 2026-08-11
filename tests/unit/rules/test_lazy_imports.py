@@ -4,7 +4,7 @@ from house_lint.source import SourceFile
 
 
 def test_detects_imports_at_function_depth_including_async_methods_and_nested(write_sample) -> None:
-    path = write_sample('''\
+    path = write_sample("""\
         import os
 
         def outer():
@@ -15,7 +15,7 @@ def test_detects_imports_at_function_depth_including_async_methods_and_nested(wr
         class Example:
             def method(self):
                 import sys
-    ''')
+    """)
 
     findings = detect(SourceFile(path, path.parent))
 

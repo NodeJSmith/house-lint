@@ -1,7 +1,7 @@
 # Design: Standalone Python House-Style Linter
 
 **Date:** 2026-08-10
-**Status:** approved
+**Status:** archived
 **Scope-mode:** hold
 **Research:** `design/specs/001-llm-lint-extraction/research.md`
 
@@ -137,7 +137,7 @@ The new package must make this house style installable through `uvx`, `pipx`, an
 - Cyclopts supports variadic path parameters, console/module entry points, and explicit process-exit handling; this was confirmed against its documentation and a read-only spike during blind-spot review.
 - `pathspec` compiles and matches supplied Git-ignore-style patterns but does not discover ignore files. V0.1 deliberately loads only the project-root `.gitignore` plus configured excludes.
 - The selected names are distribution/CLI `house-lint`, import package `house_lint`, pragma prefix `house-lint:`, and rule namespace `HSL`. On 2026-08-10, both the PyPI JSON endpoint for `house-lint` and GitHub's `NodeJSmith/house-lint` repository endpoint returned 404. This confirms no visible project occupied either name at verification time, though only publication/reservation prevents a later race.
-- Text/JSON schemas, rule IDs, exit codes, configuration keys, and pragma grammar become compatibility surfaces. Pre-1.0 changes remain possible but require documented migration notes.
+- Text/JSON schemas, rule IDs, exit codes, error codes, configuration keys, and pragma grammar become compatibility surfaces. Finding messages are display text rather than stable machine keys. Pre-1.0 changes remain possible but require documented migration notes.
 - General file suppressions can hide broad classes of findings. Mandatory IDs/reasons, top-of-file placement, conflict detection, and unused diagnostics mitigate that accepted cost.
 - The two acceptance repositories are available locally during implementation; acceptance does not modify them or become part of package unit-test isolation.
 
@@ -236,7 +236,7 @@ Sort findings by `(path, line, column, rule_id, message)` and errors by `(path-o
 
 ### Source Processing
 
-`SourceFile` reads each selected file once and lazily caches decoded text, lines, tokens/comments, AST, docstring spans, and statements. Decode with `tokenize.open()` to honor PEP 263 cookies. Parse with the selected runtime's `ast.parse(..., filename=...)`. A selected Python file must be fully readable, tokenizable, and parseable before rules run; failures create `LintError` and no rule findings for that file.
+`SourceFile` reads each selected regular file once through a bounded descriptor and lazily caches decoded text, lines, tokens/comments, AST, docstring spans, and statements. Decode the cached bytes with `tokenize.detect_encoding()` and `TextIOWrapper` to preserve `tokenize.open()` PEP 263 semantics. Parse with the selected runtime's `ast.parse(..., filename=...)`. A selected Python file must be fully readable, tokenizable, and parseable before rules run; failures create `LintError` and no rule findings for that file.
 
 V0.1 safety limits are fixed guardrails, not configuration: only regular files are scanned; each file is at most 10 MiB; one invocation discovers at most 100,000 qualifying files; one file retains at most 10,000 candidate findings across rules. Exceeding a limit produces a structured `budget` or path error and exit 3 rather than relying on process exhaustion. Process files sequentially and release each `SourceFile` after its candidates are suppressed/serialized so full parsed source representations do not accumulate across the repository.
 
@@ -267,7 +267,7 @@ Rules consume `SourceFile` and typed rule configuration and return private `Cand
 
 | Rule | Preserve | Generalize | Drop |
 |---|---|---|---|
-| `HSL001` | Existing divider/filler patterns; comment/docstring-only scope; ordinary strings excluded | Unified statement/file suppression | Hassette's no-exemption policy |
+| `HSL001` | Existing divider/filler patterns; comment/docstring-only scope; ordinary strings excluded | Past-tense `leveraged`, `utilized`, and `facilitated`; unified statement/file suppression | Hassette's no-exemption policy |
 | `HSL002` | AST function-depth detection including async/method/nested imports | Unified statement/file suppression | `# lazy-import:` syntax and raw-line attachment |
 | `HSL003` | Top-level guard forms and later-import detection | Unified statement/file suppression | No-suppression behavior |
 | `HSL004` | Uppercase/dunder/derived-binding heuristic including annotations | Unified statement/file suppression; document heuristic under future annotations | `# constant-after-def:` syntax |
@@ -428,7 +428,7 @@ Exit codes:
 
 Exit precedence is `4 > 3 > 2 > 1 > 0`; code 2 occurs pre-scan, so it cannot coexist with scan results.
 
-Normal errors always include stable code, phase, operation, and available path/rule context without source text or secrets. `--debug` additionally writes the caught traceback to stderr for exit 4 and chained exception details for operational errors; it never corrupts JSON stdout.
+Normal errors always include stable code, phase, operation, and available path/rule context without source text or secrets. `--debug` additionally writes caught tracebacks and chained exception details to stderr; tracebacks may include source excerpts and never corrupt JSON stdout.
 
 Output/exit contract:
 
@@ -583,8 +583,8 @@ No tests are removed.
 
 ## Documentation Updates
 
-- `README.md`: positioning as Jessica's opinionated house style, installation, quick start, default/opt-in rules, CLI examples, config, pre-commit integration, suppressions, exits, and non-goals.
-- `docs/rules.md`: stable rule IDs, exact behavior, defaults, messages, configuration, and preserved/generalized source semantics.
+- `README.md`: positioning as Jessica's opinionated house style, installation, quick start, default/opt-in rules, CLI examples, config, pre-commit integration, suppressions, exits, error codes, and non-goals.
+- `docs/rules.md`: stable rule IDs, exact behavior, defaults, display-only messages, configuration, and preserved/generalized source semantics.
 - `docs/configuration.md`: discovery/precedence, include/exclude/gitignore behavior, constrained spec-token schema, and validation limits.
 - `docs/suppressions.md`: grammar, statement/suite/file ownership, mandatory reasons, examples, and every `HSL900` case.
 - `CHANGELOG.md`: pre-1.0 compatibility changes and migration notes.

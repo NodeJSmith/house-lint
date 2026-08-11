@@ -8,12 +8,16 @@ from house_lint.source import SourceFile
 
 def test_detects_configured_comment_and_docstring_tokens_with_provenance(write_sample) -> None:
     path = write_sample(
-        '"""Implement FR#6a before release.\nT05: planning label\n"""\n'
-        'value = 1  # AC1 and WP04\n'
+        '"""Implement FR#6a before release.\nT05: planning label\n"""\nvalue = 1  # AC1 and WP04\n'
     )
     options = HSL101Options(
         (
-            TokenFamily(("AC", "FR", "WP"), ("comments", "docstrings"), "optional", suffix="optional-lower-alpha"),
+            TokenFamily(
+                ("AC", "FR", "WP"),
+                ("comments", "docstrings"),
+                "optional",
+                suffix="optional-lower-alpha",
+            ),
             TokenFamily(("T",), ("docstrings",), min_digits=2, not_followed_by_time=True),
         )
     )
@@ -30,10 +34,7 @@ def test_detects_configured_comment_and_docstring_tokens_with_provenance(write_s
 
 
 def test_respects_hash_digits_suffix_case_time_and_ordinary_strings(write_sample) -> None:
-    path = write_sample(
-        'data = "FR#6 and T05"\n'
-        '# FR6 FR#6a FR#6A fr#6 T05:30 T05: label\n'
-    )
+    path = write_sample('data = "FR#6 and T05"\n# FR6 FR#6a FR#6A fr#6 T05:30 T05: label\n')
     options = HSL101Options(
         (
             TokenFamily(("FR",), ("comments",), "required", suffix="optional-lower-alpha"),
@@ -50,12 +51,7 @@ def test_respects_hash_digits_suffix_case_time_and_ordinary_strings(write_sample
 
 
 def test_comment_token_on_multiline_statement_uses_statement_provenance(write_sample) -> None:
-    path = write_sample(
-        "def prepare() -> None:\n"
-        "    value = (\n"
-        "        1\n"
-        "    )  # AC1\n"
-    )
+    path = write_sample("def prepare() -> None:\n    value = (\n        1\n    )  # AC1\n")
     options = HSL101Options((TokenFamily(("AC",), ("comments",)),))
 
     [finding] = detect(SourceFile(path, path.parent), options)
@@ -80,9 +76,7 @@ def test_respects_case_and_maximum_digits_for_each_configured_scope(write_sample
 def test_detects_whole_filename_segments_without_source_owner(tmp_path: Path) -> None:
     path = tmp_path / "test-T05_AC1.py"
     path.write_text("value = 1\n")
-    options = HSL101Options(
-        (TokenFamily(("AC", "T"), ("filenames",), min_digits=1),)
-    )
+    options = HSL101Options((TokenFamily(("AC", "T"), ("filenames",), min_digits=1),))
 
     findings = detect(SourceFile(path, tmp_path), options)
 
@@ -93,7 +87,9 @@ def test_detects_whole_filename_segments_without_source_owner(tmp_path: Path) ->
         ("spec token T05 in filename", None, None, None, None),
         ("spec token AC1 in filename", None, None, None, None),
     ]
-    assert all(finding.source_kind is SourceKind.FILENAME and finding.owner is None for finding in findings)
+    assert all(
+        finding.source_kind is SourceKind.FILENAME and finding.owner is None for finding in findings
+    )
 
 
 def test_limits_findings_per_file(write_sample) -> None:

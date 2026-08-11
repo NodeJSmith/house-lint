@@ -6,6 +6,7 @@ All notable changes to `house-lint` are documented here.
 
 Initial public release of Jessica's opinionated Python house-style linter.
 
+- Hardens source discovery, result validation, and suppression handling for release use (#1).
 - Adds the `house-lint check` and `house-lint rules` commands for Python 3.11+.
 - Ships default rules `HSL001`–`HSL004`, opt-in rules `HSL101`–`HSL103`, and always-on suppression diagnostics `HSL900`.
 - Adds strict root/configuration/path discovery, deterministic text and schema-versioned JSON output, and documented exit categories.

@@ -132,12 +132,16 @@ def _filename_pattern(family: TokenFamily) -> re.Pattern[str]:
 
 
 def _token_expression(family: TokenFamily, *, boundaries: bool) -> str:
-    prefixes = "|".join(re.escape(prefix) for prefix in sorted(family.prefixes, key=len, reverse=True))
+    prefixes = "|".join(
+        re.escape(prefix) for prefix in sorted(family.prefixes, key=len, reverse=True)
+    )
     if not family.case_sensitive:
         prefixes = f"(?i:{prefixes})"
     hash_part = {"forbidden": "", "optional": "#?", "required": "#"}[family.hash]
     maximum = "" if family.max_digits is None else str(family.max_digits)
-    digits = f"[0-9]{{{family.min_digits},{maximum}}}" if maximum else f"[0-9]{{{family.min_digits},}}"
+    digits = (
+        f"[0-9]{{{family.min_digits},{maximum}}}" if maximum else f"[0-9]{{{family.min_digits},}}"
+    )
     suffix = "[a-z]?" if family.suffix == "optional-lower-alpha" else ""
     time_guard = "(?!:[0-9])" if family.not_followed_by_time else ""
     token = f"(?:{prefixes}){hash_part}{digits}{suffix}{time_guard}"

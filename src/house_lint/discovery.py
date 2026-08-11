@@ -3,7 +3,7 @@
 import os
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -53,12 +53,31 @@ def _patterns(
     errors: list[LintError] = []
     if use_gitignore:
         ignore = root / ".gitignore"
-        if ignore.is_file():
+        try:
+            is_file = ignore.is_file()
+        except OSError as exc:
+            errors.append(
+                LintError(
+                    "traversal-error",
+                    "traversal",
+                    ".gitignore",
+                    None,
+                    None,
+                    None,
+                    None,
+                    "discovery",
+                    "stat",
+                    None,
+                    str(exc),
+                )
+            )
+            is_file = False
+        if is_file:
             try:
                 gitignore_spec = GitIgnoreSpec.from_lines(
                     ignore.read_text(encoding="utf-8").splitlines()
                 )
-            except OSError as exc:
+            except (OSError, UnicodeDecodeError) as exc:
                 errors.append(
                     LintError(
                         "traversal-error",
@@ -100,32 +119,148 @@ def _patterns(
 
 def _ignored(root: Path, path: Path, *specs: GitIgnoreSpec) -> bool:
     relative = path.relative_to(root).as_posix()
-    return any(
-        spec.match_file(relative) or spec.match_file(f"{relative}/") for spec in specs
-    )
+    return any(spec.match_file(relative) or spec.match_file(f"{relative}/") for spec in specs)
 
 
-def discover_files(
-    root: Path,
-    *,
-    include: tuple[str, ...] = DEFAULT_INCLUDE,
-    explicit: tuple[Path, ...] = (),
-    excludes: tuple[str, ...] = (),
-    use_gitignore: bool = True,
-) -> DiscoveryResult:
-    """Discover qualifying files, or raise for strict explicit path failures."""
-    root = root.expanduser().resolve()
-    builtin_spec, exclude_spec, gitignore_spec, pattern_errors = _patterns(
-        root, excludes, use_gitignore
-    )
-    selected: dict[Path, Path] = {}
-    skipped = 0
-    errors = list(pattern_errors)
-    limit_reached = False
+@dataclass
+class _FileSelector:
+    root: Path
+    builtin_spec: GitIgnoreSpec
+    exclude_spec: GitIgnoreSpec
+    gitignore_spec: GitIgnoreSpec
+    errors: list[LintError]
+    selected: dict[Path, Path] = field(default_factory=lambda: dict[Path, Path]())
+    files_skipped: int = 0
+    limit_reached: bool = False
 
-    def make_error(path: Path, kind: str, operation: str, message: str) -> LintError:
+    def select(self, requested: tuple[Path, ...], *, explicit_paths: bool) -> None:
+        seen_arguments: set[Path] = set()
+        for path in requested:
+            if self.limit_reached:
+                break
+            argument = path if path.is_absolute() else self.root / path
+            if explicit_paths and argument in seen_arguments:
+                continue
+            seen_arguments.add(argument)
+            self._consider(argument, explicit_paths=explicit_paths)
+
+    def result(self) -> DiscoveryResult:
+        return DiscoveryResult(
+            tuple(sorted(self.selected.values())), self.files_skipped, tuple(self.errors)
+        )
+
+    def _consider(self, path: Path, *, explicit_paths: bool) -> None:
+        if self.limit_reached:
+            return
         try:
-            relative = path.relative_to(root).as_posix()
+            exists = path.exists()
+        except OSError as exc:
+            self._filesystem_error(path, "stat", str(exc), explicit_paths=explicit_paths)
+            return
+        if not exists:
+            if explicit_paths:
+                raise DiscoveryError(
+                    self._error(path, "path", "stat", f"path does not exist: {path}")
+                )
+            return
+        try:
+            resolved = path.resolve()
+        except (OSError, RuntimeError) as exc:
+            self._filesystem_error(path, "resolve", str(exc), explicit_paths=explicit_paths)
+            return
+        if not _inside(self.root, resolved):
+            if explicit_paths:
+                raise DiscoveryError(
+                    self._error(path, "path", "containment", f"path is outside root: {path}")
+                )
+            self.files_skipped += 1
+            return
+        try:
+            is_symlink = path.is_symlink()
+            is_dir = path.is_dir()
+            is_file = path.is_file()
+        except OSError as exc:
+            self._filesystem_error(path, "stat", str(exc), explicit_paths=explicit_paths)
+            return
+        if is_symlink and is_dir:
+            self.errors.append(
+                self._error(path, "traversal", "walk", "directory symlink is not traversed")
+            )
+            return
+        if is_symlink and not explicit_paths:
+            self.files_skipped += 1
+            return
+        if is_dir:
+            self._walk(path)
+            return
+        if not is_file or path.suffix != ".py":
+            if explicit_paths:
+                raise DiscoveryError(
+                    self._error(path, "path", "qualify", f"explicit path is not a Python file: {path}")
+                )
+            self.files_skipped += 1
+            return
+        if _ignored(self.root, path, self.builtin_spec, self.exclude_spec, self.gitignore_spec):
+            self.files_skipped += 1
+            return
+        if resolved in self.selected:
+            self.files_skipped += 1
+            return
+        if len(self.selected) >= MAX_DISCOVERED_FILES:
+            self.errors.append(
+                self._error(
+                    self.root,
+                    "budget",
+                    "discover",
+                    f"discovery exceeds {MAX_DISCOVERED_FILES} files",
+                )
+            )
+            self.limit_reached = True
+            return
+        self.selected[resolved] = path
+
+    def _walk(self, directory: Path) -> None:
+        def onerror(error: OSError) -> None:
+            failed_path = Path(error.filename) if error.filename is not None else directory
+            self.errors.append(self._error(failed_path, "traversal", "walk", str(error)))
+
+        for current, dirs, names in os.walk(
+            directory, topdown=True, followlinks=False, onerror=onerror
+        ):
+            if self.limit_reached:
+                break
+            current_path = Path(current)
+            kept_dirs: list[str] = []
+            for item in sorted(dirs):
+                child = current_path / item
+                try:
+                    is_symlink = child.is_symlink()
+                except OSError as exc:
+                    self.errors.append(self._error(child, "traversal", "stat", str(exc)))
+                    continue
+                if is_symlink:
+                    self.errors.append(
+                        self._error(child, "traversal", "walk", "directory symlink is not traversed")
+                    )
+                    continue
+                kept_dirs.append(item)
+            dirs[:] = kept_dirs
+            for name in sorted(names):
+                self._consider(current_path / name, explicit_paths=False)
+                if self.limit_reached:
+                    break
+
+    def _filesystem_error(
+        self, path: Path, operation: str, message: str, *, explicit_paths: bool
+    ) -> None:
+        error = self._error(path, "path" if explicit_paths else "traversal", operation, message)
+        if explicit_paths:
+            raise DiscoveryError(error)
+        self.errors.append(error)
+
+    def _error(self, path: Path, kind: str, operation: str, message: str) -> LintError:
+        try:
+            relative = path.relative_to(self.root).as_posix()
         except ValueError:
             relative = None
         return LintError(
@@ -142,99 +277,30 @@ def discover_files(
             message=message,
         )
 
+
+def discover_files(
+    root: Path,
+    *,
+    include: tuple[str, ...] = DEFAULT_INCLUDE,
+    explicit: tuple[Path, ...] = (),
+    excludes: tuple[str, ...] = (),
+    use_gitignore: bool = True,
+) -> DiscoveryResult:
+    """Discover qualifying files, or raise for strict explicit path failures."""
+    root = root.expanduser().resolve()
+    builtin_spec, exclude_spec, gitignore_spec, pattern_errors = _patterns(
+        root, excludes, use_gitignore
+    )
     requested = explicit or tuple(root / item for item in include)
-
-    def consider(path: Path, *, strict: bool) -> None:
-        nonlocal limit_reached, skipped
-        if limit_reached:
-            return
-        lexical = path
-        if not lexical.exists():
-            if strict:
-                error = make_error(path, "path", "stat", f"path does not exist: {path}")
-                raise DiscoveryError(error)
-            return
-        resolved = lexical.resolve()
-        if not _inside(root, resolved):
-            if strict:
-                error = make_error(path, "path", "containment", f"path is outside root: {path}")
-                raise DiscoveryError(error)
-            skipped += 1
-            return
-        if lexical.is_symlink() and lexical.is_dir():
-            errors.append(
-                make_error(lexical, "traversal", "walk", "directory symlink is not traversed")
-            )
-            return
-        if lexical.is_symlink() and not strict:
-            skipped += 1
-            return
-        if lexical.is_dir():
-            walk_directory(lexical)
-            return
-        if not lexical.is_file() or lexical.suffix != ".py":
-            if strict:
-                error = make_error(
-                    path, "path", "qualify", f"explicit path is not a Python file: {path}"
-                )
-                raise DiscoveryError(error)
-            skipped += 1
-            return
-        if _ignored(root, lexical, builtin_spec, exclude_spec, gitignore_spec):
-            skipped += 1
-            return
-        if resolved in selected:
-            skipped += 1
-            return
-        if len(selected) >= MAX_DISCOVERED_FILES:
-            errors.append(
-                make_error(
-                    root,
-                    "budget",
-                    "discover",
-                    f"discovery exceeds {MAX_DISCOVERED_FILES} files",
-                )
-            )
-            limit_reached = True
-            return
-        selected[resolved] = lexical
-
-    def walk_directory(directory: Path) -> None:
-        def onerror(error: OSError) -> None:
-            failed_path = Path(error.filename) if error.filename is not None else directory
-            errors.append(make_error(failed_path, "traversal", "walk", str(error)))
-
-        for current, dirs, names in os.walk(
-            directory, topdown=True, followlinks=False, onerror=onerror
-        ):
-            if limit_reached:
-                break
-            current_path = Path(current)
-            kept_dirs: list[str] = []
-            for item in sorted(dirs):
-                child = current_path / item
-                if child.is_symlink():
-                    errors.append(
-                        make_error(child, "traversal", "walk", "directory symlink is not traversed")
-                    )
-                    continue
-                kept_dirs.append(item)
-            dirs[:] = kept_dirs
-            for name in sorted(names):
-                consider(current_path / name, strict=False)
-                if limit_reached:
-                    break
-
-    seen_arguments: set[Path] = set()
-    for path in requested:
-        if limit_reached:
-            break
-        argument = path if path.is_absolute() else root / path
-        if explicit and argument in seen_arguments:
-            continue
-        seen_arguments.add(argument)
-        consider(path if path.is_absolute() else root / path, strict=bool(explicit))
-    return DiscoveryResult(tuple(sorted(selected.values())), skipped, tuple(errors))
+    selector = _FileSelector(
+        root,
+        builtin_spec,
+        exclude_spec,
+        gitignore_spec,
+        list(pattern_errors),
+    )
+    selector.select(requested, explicit_paths=bool(explicit))
+    return selector.result()
 
 
 def resolve_project(

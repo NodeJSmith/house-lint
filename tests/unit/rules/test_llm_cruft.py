@@ -6,12 +6,12 @@ from house_lint.source import SourceFile
 
 
 def test_detects_dividers_and_filler_in_comments_and_docstrings(write_sample) -> None:
-    path = write_sample('''\
+    path = write_sample("""\
         # ======
         # In Order To prepare the pool
         \"\"\"We leverage the pool in order to batch.\"\"\"
         value = 1
-    ''')
+    """)
 
     findings = detect(SourceFile(path, path.parent))
 
@@ -28,12 +28,24 @@ def test_detects_dividers_and_filler_in_comments_and_docstrings(write_sample) ->
     assert findings[2].owner == StatementKey(3, 1, 3, 46)
 
 
+def test_multiline_docstring_reports_the_matching_line_and_keeps_statement_owner(
+    write_sample,
+) -> None:
+    path = write_sample('"""Explain the operation.\nPlease note that it is temporary.\n"""\n')
+
+    [finding] = detect(SourceFile(path, path.parent))
+
+    assert (finding.line, finding.column, finding.end_line, finding.end_column) == (2, 1, 2, 34)
+    assert finding.source_kind is SourceKind.STATEMENT
+    assert finding.owner == StatementKey(1, 1, 3, 4)
+
+
 def test_preserves_divider_thresholds_and_excludes_ordinary_strings(write_sample) -> None:
-    path = write_sample('''\
+    path = write_sample("""\
         # ---
         # --- Helpers ---
         label = "in order to proceed"
-    ''')
+    """)
 
     findings = detect(SourceFile(path, path.parent))
 
@@ -67,9 +79,7 @@ def test_comment_on_a_multiline_statement_uses_its_narrowest_owner(write_sample)
 
 def test_standalone_body_comment_has_no_owner(write_sample) -> None:
     path = write_sample(
-        "def prepare() -> None:\n"
-        "    # Please note that this is temporary\n"
-        "    value = 1\n"
+        "def prepare() -> None:\n    # Please note that this is temporary\n    value = 1\n"
     )
 
     [finding] = detect(SourceFile(path, path.parent))
@@ -88,11 +98,16 @@ def test_standalone_body_comment_has_no_owner(write_sample) -> None:
         ("Needless to say, this", "filler - drop it"),
         ("Due to the fact that this", "filler - use 'because'"),
         ("As mentioned earlier, this", "filler - name the thing directly"),
+        ("Leveraged this", "filler - use 'use'"),
         ("Utilizing this", "filler - use 'use'"),
+        ("Utilized this", "filler - use 'use'"),
         ("Facilitating this", "filler - use 'help' or be specific"),
+        ("Facilitated this", "filler - use 'help' or be specific"),
     ],
 )
-def test_detects_remaining_retained_filler_patterns_in_comments(write_sample, comment: str, message: str) -> None:
+def test_detects_remaining_retained_filler_patterns_in_comments(
+    write_sample, comment: str, message: str
+) -> None:
     path = write_sample(f"# {comment}\nvalue = 1\n")
 
     [finding] = detect(SourceFile(path, path.parent))

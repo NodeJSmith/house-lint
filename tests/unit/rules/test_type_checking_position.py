@@ -4,7 +4,7 @@ from house_lint.source import SourceFile
 
 
 def test_detects_both_top_level_guards_followed_by_later_imports(write_sample) -> None:
-    path = write_sample('''\
+    path = write_sample("""\
         from typing import TYPE_CHECKING
         import typing
 
@@ -15,7 +15,7 @@ def test_detects_both_top_level_guards_followed_by_later_imports(write_sample) -
         if typing.TYPE_CHECKING:
             from b import B
         from pathlib import Path
-    ''')
+    """)
 
     findings = detect(SourceFile(path, path.parent))
 
@@ -28,7 +28,7 @@ def test_detects_both_top_level_guards_followed_by_later_imports(write_sample) -
 
 
 def test_ignores_final_and_nested_type_checking_guards(write_sample) -> None:
-    path = write_sample('''\
+    path = write_sample("""\
         from typing import TYPE_CHECKING
 
         def function():
@@ -38,13 +38,13 @@ def test_ignores_final_and_nested_type_checking_guards(write_sample) -> None:
 
         if TYPE_CHECKING:
             from pathlib import Path
-    ''')
+    """)
 
     assert detect(SourceFile(path, path.parent)) == []
 
 
 def test_ignores_final_and_nested_qualified_type_checking_guards(write_sample) -> None:
-    path = write_sample('''\
+    path = write_sample("""\
         import typing
 
         def function():
@@ -57,13 +57,13 @@ def test_ignores_final_and_nested_qualified_type_checking_guards(write_sample) -
 
         class Example:
             pass
-    ''')
+    """)
 
     assert detect(SourceFile(path, path.parent)) == []
 
 
 def test_reports_only_guards_with_later_top_level_imports(write_sample) -> None:
-    path = write_sample('''\
+    path = write_sample("""\
         import os
         from typing import TYPE_CHECKING
 
@@ -77,7 +77,7 @@ def test_reports_only_guards_with_later_top_level_imports(write_sample) -> None:
 
         class Example:
             pass
-    ''')
+    """)
 
     findings = detect(SourceFile(path, path.parent))
 

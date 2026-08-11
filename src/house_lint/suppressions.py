@@ -6,7 +6,7 @@ import tokenize
 from collections import defaultdict
 from collections.abc import Collection
 from dataclasses import dataclass
-from typing import TypeAlias, cast
+from typing import TypeAlias
 
 from .analysis import (
     CandidateBudgetExceeded,
@@ -21,18 +21,15 @@ from .results import Finding
 from .source import SourceFile, Token
 
 _ID = re.compile(r"HSL[0-9]{3}\Z")
-_PRAGMA = re.compile(
-    r"#\s*house-lint:\s*(ignore-next|ignore-file|ignore)\[([^]]*)\] - (.+)\Z"
-)
+_PRAGMA = re.compile(r"#\s*house-lint:\s*(ignore-next|ignore-file|ignore)\[([^]]*)\] - (.+)\Z")
 
 _Owner: TypeAlias = StatementKey | str
 
 
 @dataclass(frozen=True)
 class SuppressionResult:
-    """The post-suppression private and public views for one source file."""
+    """Public findings and suppression count for one source file."""
 
-    visible_candidates: tuple[CandidateFinding, ...]
     findings: tuple[Finding, ...]
     suppressed_count: int
 
@@ -99,7 +96,9 @@ def apply_suppressions(
                 add_diagnostic(_diagnostic(source, token, f"unknown suppression rule {rule_id}"))
                 continue
             if rule_id not in enabled_rules:
-                add_diagnostic(_diagnostic(source, token, f"unused suppression for disabled rule {rule_id}"))
+                add_diagnostic(
+                    _diagnostic(source, token, f"unused suppression for disabled rule {rule_id}")
+                )
                 continue
             target = _target(pragma)
             owned = tuple(
@@ -113,7 +112,9 @@ def apply_suppressions(
     for index, claim in enumerate(claims):
         if index in conflicts:
             add_diagnostic(
-                _diagnostic(source, claim.pragma.token, f"conflicting suppression for {claim.rule_id}")
+                _diagnostic(
+                    source, claim.pragma.token, f"conflicting suppression for {claim.rule_id}"
+                )
             )
         elif not claim.candidates and candidates_complete:
             add_diagnostic(
@@ -126,10 +127,10 @@ def apply_suppressions(
         if index not in conflicts
         for candidate_index in claim.candidates
     }
-    visible = tuple(candidate for index, candidate in enumerate(candidates) if index not in suppressed) + tuple(
-        diagnostics
-    )
-    result = SuppressionResult(visible, tuple(_public(candidate) for candidate in visible), len(suppressed))
+    visible = tuple(
+        candidate for index, candidate in enumerate(candidates) if index not in suppressed
+    ) + tuple(diagnostics)
+    result = SuppressionResult(tuple(_public(candidate) for candidate in visible), len(suppressed))
     if diagnostics_exceeded:
         raise SuppressionBudgetExceeded(source, result)
     return result
@@ -156,7 +157,9 @@ def _parse_pragma(source: SourceFile, token: Token) -> tuple[_Pragma | None, str
     return _Pragma(action, ids, token, None), ""
 
 
-def _owner_for_pragma(source: SourceFile, pragma: _Pragma) -> tuple[StatementKey | None, str | None]:
+def _owner_for_pragma(
+    source: SourceFile, pragma: _Pragma
+) -> tuple[StatementKey | None, str | None]:
     if pragma.action == "ignore":
         owner = _trailing_owner(source, pragma.token)
         return (owner, None) if owner is not None else (None, "misplaced ignore suppression")
@@ -190,17 +193,38 @@ def _next_owner(source: SourceFile, token: Token) -> StatementKey | None:
 
 
 def _suites(tree: ast.Module | None) -> tuple[tuple[ast.stmt, ...], ...]:
+    """Return Python grammar suites eligible for `ignore-next` ownership."""
     if tree is None:
         return ()
     suites: list[tuple[ast.stmt, ...]] = []
-    for node in ast.walk(tree):
-        for _, value in ast.iter_fields(node):
-            if not isinstance(value, list):
-                continue
-            items = cast(list[object], value)
-            statements = tuple(item for item in items if isinstance(item, ast.stmt))
-            if statements and len(statements) == len(items):
-                suites.append(statements)
+
+    def add_suite(statements: list[ast.stmt]) -> None:
+        if not statements:
+            return
+        suite = tuple(statements)
+        suites.append(suite)
+        for statement in suite:
+            visit(statement)
+
+    def visit(statement: ast.stmt) -> None:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            add_suite(statement.body)
+        elif isinstance(statement, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+            add_suite(statement.body)
+            add_suite(statement.orelse)
+        elif isinstance(statement, (ast.With, ast.AsyncWith)):
+            add_suite(statement.body)
+        elif isinstance(statement, (ast.Try, ast.TryStar)):
+            add_suite(statement.body)
+            for handler in statement.handlers:
+                add_suite(handler.body)
+            add_suite(statement.orelse)
+            add_suite(statement.finalbody)
+        elif isinstance(statement, ast.Match):
+            for case in statement.cases:
+                add_suite(case.body)
+
+    add_suite(tree.body)
     return tuple(suites)
 
 
