@@ -1,0 +1,6 @@
+- id: house-lint
+  name: house-lint
+  entry: house-lint check
+  language: python
+  types: [python]
+  files: \.py$

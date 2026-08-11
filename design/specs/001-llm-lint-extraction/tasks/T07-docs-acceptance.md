@@ -1,7 +1,7 @@
 ---
 task_id: "T07"
 title: "Document and validate the package"
-status: "planned"
+status: "done"
 depends_on: ["T03", "T04", "T05", "T06"]
 implements: ["AC#1", "AC#7", "AC#8"]
 ---
