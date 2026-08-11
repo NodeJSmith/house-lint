@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from house_lint.analysis import SourceKind
+from house_lint.analysis import SourceKind, StatementKey
 from house_lint.config import HSL101Options, TokenFamily
 from house_lint.rules.spec_tokens import detect
 from house_lint.source import SourceFile
@@ -47,6 +47,21 @@ def test_respects_hash_digits_suffix_case_time_and_ordinary_strings(write_sample
         (2, "spec token FR#6a in comment"),
         (2, "spec token T05 in comment"),
     ]
+
+
+def test_comment_token_on_multiline_statement_uses_statement_provenance(write_sample) -> None:
+    path = write_sample(
+        "def prepare() -> None:\n"
+        "    value = (\n"
+        "        1\n"
+        "    )  # AC1\n"
+    )
+    options = HSL101Options((TokenFamily(("AC",), ("comments",)),))
+
+    [finding] = detect(SourceFile(path, path.parent), options)
+
+    assert finding.source_kind is SourceKind.STATEMENT
+    assert finding.owner == StatementKey(2, 5, 4, 6)
 
 
 def test_respects_case_and_maximum_digits_for_each_configured_scope(write_sample) -> None:

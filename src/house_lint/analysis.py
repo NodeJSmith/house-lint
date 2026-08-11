@@ -98,16 +98,32 @@ def candidate_for_line(
     )
 
 
-def statement_owner_for_line(source: SourceFile, line: int) -> ast.stmt | None:
-    """Return the narrowest statement that begins or ends on a comment line."""
-    candidates = [
-        statement
-        for statement in source.statements
-        if statement.lineno == line or (statement.end_lineno or statement.lineno) == line
-    ]
+def statement_owner_for_line(
+    source: SourceFile, line: int, column: int | None = None
+) -> ast.stmt | None:
+    """Return the narrowest statement a comment is syntactically attached to."""
+    if column is not None and source.lines[line - 1][:column].strip():
+        candidates = [
+            statement
+            for statement in source.statements
+            if statement.lineno <= line <= (statement.end_lineno or statement.lineno)
+        ]
+    else:
+        candidates = [
+            statement
+            for statement in source.statements
+            if statement.lineno == line or (statement.end_lineno or statement.lineno) == line
+        ]
     if not candidates:
         return None
-    return min(candidates, key=_statement_span)
+    if column is not None:
+        return max(candidates, key=lambda statement: (statement.lineno, statement.col_offset))
+    return min(candidates, key=statement_span)
+
+
+def comment_owner_for_line(source: SourceFile, line: int, comment: str) -> ast.stmt | None:
+    """Return the statement syntactically attached to this comment token."""
+    return statement_owner_for_line(source, line, source.lines[line - 1].index(comment))
 
 
 def docstring_owner_for_line(source: SourceFile, line: int) -> ast.stmt:
@@ -123,7 +139,7 @@ def docstring_owner_for_line(source: SourceFile, line: int) -> ast.stmt:
     raise RuntimeError("docstring line has no string-expression statement")
 
 
-def _statement_span(statement: ast.stmt) -> tuple[int, int, int, int]:
+def statement_span(statement: ast.stmt) -> tuple[int, int, int, int]:
     return (
         (statement.end_lineno or statement.lineno) - statement.lineno,
         (statement.end_col_offset or statement.col_offset) - statement.col_offset,

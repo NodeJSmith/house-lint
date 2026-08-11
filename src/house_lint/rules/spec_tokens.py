@@ -8,8 +8,8 @@ from house_lint.analysis import (
     CandidateFinding,
     SourceKind,
     candidate_for_line,
+    comment_owner_for_line,
     docstring_owner_for_line,
-    statement_owner_for_line,
 )
 from house_lint.config import HSL101Options, TokenFamily
 from house_lint.source import SourceFile
@@ -26,9 +26,7 @@ def detect(source: SourceFile, options: HSL101Options) -> list[CandidateFinding]
         pattern = _content_pattern(family)
         if "comments" in family.scopes:
             for line, comment in source.comments.items():
-                findings.extend(
-                    _content_candidates(source, pattern, comment, line, "comment", seen)
-                )
+                findings.extend(_content_candidates(source, pattern, comment, line, "comment", seen))
         if "docstrings" in family.scopes:
             for start, end in source.docstring_spans:
                 for line in range(start, end + 1):
@@ -71,15 +69,15 @@ def _content_candidates(
                 "HSL101",
                 f"spec token {token} in {scope}",
                 line,
-                _owner_for_line(source, line, scope),
+                _owner_for_line(source, line, scope, text),
             )
         )
     return findings
 
 
-def _owner_for_line(source: SourceFile, line: int, scope: str) -> ast.stmt | None:
+def _owner_for_line(source: SourceFile, line: int, scope: str, text: str) -> ast.stmt | None:
     if scope == "comment":
-        return statement_owner_for_line(source, line)
+        return comment_owner_for_line(source, line, text)
     return docstring_owner_for_line(source, line)
 
 

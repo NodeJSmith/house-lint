@@ -1,7 +1,7 @@
 ---
 task_id: "T05"
 title: "Add registry and unified suppressions"
-status: "planned"
+status: "done"
 depends_on: ["T01", "T02", "T03", "T04"]
 implements: ["FR#15", "FR#16", "FR#17", "FR#18", "FR#19", "AC#5"]
 ---
@@ -38,9 +38,9 @@ Implement a narrow immutable rule metadata table and explicit dispatch map; do n
 
 ## Verify
 
-- [ ] FR#15: Tests prove trailing pragmas attach to containing simple/multiline statements and consume all owned same-rule findings.
-- [ ] FR#16: Tests prove comment-only `ignore-next` attaches across blanks/comments only within the same lexical suite.
-- [ ] FR#17: Tests prove valid prologue placement and file-wide suppression for statement, filename, and file-length findings.
-- [ ] FR#18: Tests prove explicit IDs, comma grammar, forbidden HSL900/all/globs, and meaningful mandatory reasons.
-- [ ] FR#19: Tests prove every malformed/misplaced/unknown/disabled/duplicate/conflicting/unused case yields visible HSL900 and conflicts leave originals visible.
-- [ ] AC#5: The complete suppression characterization suite passes for all forms, ownership shapes, multi-ID/multi-finding cases, and diagnostics.
+- [x] FR#15: Tests prove trailing pragmas attach to containing simple/multiline statements and consume all owned same-rule findings.
+- [x] FR#16: Tests prove comment-only `ignore-next` attaches across blanks/comments only within the same lexical suite.
+- [x] FR#17: Tests prove valid prologue placement and file-wide suppression for statement, filename, and file-length findings.
+- [x] FR#18: Tests prove explicit IDs, comma grammar, forbidden HSL900/all/globs, and meaningful mandatory reasons.
+- [x] FR#19: Tests prove every malformed/misplaced/unknown/disabled/duplicate/conflicting/unused case yields visible HSL900 and conflicts leave originals visible.
+- [x] AC#5: The complete suppression characterization suite passes for all forms, ownership shapes, multi-ID/multi-finding cases, and diagnostics.

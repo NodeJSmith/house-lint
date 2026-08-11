@@ -6,8 +6,8 @@ from house_lint.analysis import (
     CandidateFinding,
     candidate_for_line,
     candidate_for_statement,
+    comment_owner_for_line,
     docstring_owner_for_line,
-    statement_owner_for_line,
 )
 from house_lint.source import SourceFile
 
@@ -61,6 +61,11 @@ def detect(source: SourceFile) -> list[CandidateFinding]:
 
 
 def _comment_candidate(source: SourceFile, line: int, message: str) -> CandidateFinding:
+    comment = source.comments[line]
     return candidate_for_line(
-        source, "HSL001", message, line, statement_owner_for_line(source, line)
+        source,
+        "HSL001",
+        message,
+        line,
+        comment_owner_for_line(source, line, comment),
     )

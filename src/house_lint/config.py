@@ -52,10 +52,28 @@ class HSL103Options:
 class LintConfig:
     include: tuple[str, ...] = DEFAULT_INCLUDE
     exclude: tuple[str, ...] = ()
-    enabled_rules: tuple[str, ...] = ("HSL001", "HSL002", "HSL003", "HSL004", "HSL900")
+    enabled_rules: tuple[str, ...] = (*DEFAULT_SELECT, "HSL900")
     hsl101: HSL101Options = HSL101Options()
     hsl102: HSL102Options = HSL102Options()
     hsl103: HSL103Options = HSL103Options()
+
+
+DetectorOptions = HSL101Options | HSL102Options | HSL103Options | None
+DetectorInput = tuple[str, DetectorOptions]
+
+
+def selected_detector_inputs(config: LintConfig) -> tuple[DetectorInput, ...]:
+    """Return enabled ordinary rules with their already-validated options."""
+    options: dict[str, DetectorOptions] = {
+        "HSL001": None,
+        "HSL002": None,
+        "HSL003": None,
+        "HSL004": None,
+        "HSL101": config.hsl101,
+        "HSL102": config.hsl102,
+        "HSL103": config.hsl103,
+    }
+    return tuple((rule_id, options[rule_id]) for rule_id in config.enabled_rules if rule_id in options)
 
 
 def _table(value: Any, name: str) -> dict[str, Any]:
