@@ -6,4 +6,4 @@ try:
     __version__ = version("house-lint")
 except PackageNotFoundError:
     # Source checkouts have no installed distribution metadata.
-    __version__ = "0.0.0"
+    __version__ = "0.1.1"
