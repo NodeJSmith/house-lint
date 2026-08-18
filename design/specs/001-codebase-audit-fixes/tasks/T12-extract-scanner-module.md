@@ -1,7 +1,7 @@
 ---
 task_id: "T12"
 title: "Extract scan orchestration from cli.py into scanner.py"
-status: "planned"
+status: "done"
 depends_on: ["T07"]
 implements: ["FR#11", "AC#11", "AC#12"]
 ---

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from house_lint import cli
+from house_lint import cli, scanner
 
 
 def _run(
@@ -293,9 +293,9 @@ runpy.run_module("house_lint", run_name="__main__")
 def test_candidate_budget_is_an_incomplete_subprocess_result(repository: Path) -> None:
     (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
     prelude = """
-from house_lint import cli
+from house_lint import cli, scanner
 
-cli.MAX_CANDIDATES_PER_FILE = 0
+scanner.MAX_CANDIDATES_PER_FILE = 0
 cli.main()
 """
 
@@ -341,9 +341,9 @@ def test_hsl001_stops_at_the_candidate_budget(repository: Path) -> None:
 def test_suppression_diagnostics_respect_the_candidate_budget(repository: Path) -> None:
     (repository / "src" / "pragma.py").write_text("# house-lint: ignore[] - generated module\n")
     prelude = """
-from house_lint import cli
+from house_lint import cli, scanner
 
-cli.MAX_CANDIDATES_PER_FILE = 0
+scanner.MAX_CANDIDATES_PER_FILE = 0
 cli.main()
 """
 
@@ -494,7 +494,7 @@ def test_budget_error_counts_the_file_when_rule_execution_begins(
 ) -> None:
     source = repository / "src" / "finding.py"
     source.write_text("def example():\n    import module\n")
-    monkeypatch.setattr(cli, "MAX_CANDIDATES_PER_FILE", 0)
+    monkeypatch.setattr(scanner, "MAX_CANDIDATES_PER_FILE", 0)
 
     code = cli.check(paths=[source], root=repository, format="json")
     result = json.loads(capsys.readouterr().out)
@@ -505,12 +505,12 @@ def test_budget_error_counts_the_file_when_rule_execution_begins(
 
 def test_subprocess_internal_failure_exits_four_with_parseable_json(repository: Path) -> None:
     prelude = """
-from house_lint import cli
+from house_lint import cli, scanner
 
 def fail(*_args: object) -> object:
     raise RuntimeError("simulated failure")
 
-cli.detect_candidates = fail
+scanner.detect_candidates = fail
 cli.main()
 """
 
@@ -541,16 +541,16 @@ def test_subprocess_internal_error_precedes_incomplete_scan_and_preserves_findin
     broken.write_text("def broken()\n    pass\n")
     failing.write_text("value = 1\n")
     prelude = """
-from house_lint import cli
+from house_lint import cli, scanner
 
-original = cli.detect_candidates
+original = scanner.detect_candidates
 
 def fail_c(source, detector_inputs, **kwargs):
     if source.relative_path == "src/c.py":
         raise RuntimeError("simulated failure")
     return original(source, detector_inputs, **kwargs)
 
-cli.detect_candidates = fail_c
+scanner.detect_candidates = fail_c
 cli.main()
 """
 
@@ -581,14 +581,16 @@ def test_internal_error_preserves_completed_results_and_writes_debug_to_stderr(
     second = repository / "src" / "b.py"
     first.write_text("def example():\n    import module\n")
     second.write_text("value = 1\n")
-    original = cli.detect_candidates
+    original = scanner.detect_candidates
 
-    def fail_second(source: cli.SourceFile, detector_inputs: object, **kwargs: object) -> object:
+    def fail_second(
+        source: scanner.SourceFile, detector_inputs: object, **kwargs: object
+    ) -> object:
         if source.relative_path == "src/b.py":
             raise RuntimeError("simulated failure")
         return original(source, detector_inputs, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(cli, "detect_candidates", fail_second)
+    monkeypatch.setattr(scanner, "detect_candidates", fail_second)
 
     code = cli.check(paths=[first, second], root=repository, format="json", debug=True)
     captured = capsys.readouterr()
@@ -612,14 +614,14 @@ def test_source_construction_failure_preserves_completed_results(
     second = repository / "src" / "b.py"
     first.write_text("def example():\n    import module\n")
     second.write_text("value = 1\n")
-    source_file = cli.SourceFile
+    source_file = scanner.SourceFile
 
-    def fail_second(path: Path, root: Path) -> cli.SourceFile:
+    def fail_second(path: Path, root: Path) -> scanner.SourceFile:
         if path == second:
             raise RuntimeError("simulated construction failure")
         return source_file(path, root)
 
-    monkeypatch.setattr(cli, "SourceFile", fail_second)
+    monkeypatch.setattr(scanner, "SourceFile", fail_second)
 
     code = cli.check(paths=[first, second], root=repository, format="json")
     result = json.loads(capsys.readouterr().out)

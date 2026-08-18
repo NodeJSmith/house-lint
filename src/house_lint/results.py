@@ -78,6 +78,17 @@ class LintError:
         }
 
 
+def error(kind: str, phase: str, operation: str, message: str, *, path: str | None = None) -> LintError:
+    return LintError(
+        f"{kind}-error", kind, path, None, None, None, None, phase, operation, None, message
+    )
+
+
+def internal_error(phase: str, operation: str, *, path: str | None = None) -> LintError:
+    """Create a stable public error without exposing exception details."""
+    return error("internal", phase, operation, "an unexpected internal error occurred", path=path)
+
+
 @dataclass(frozen=True)
 class ScanResult:
     root: Path | None
