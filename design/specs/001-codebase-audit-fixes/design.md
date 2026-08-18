@@ -42,8 +42,12 @@ This design covers all 12 findings via 11 functional requirements — FR#1 resol
   when its own `limit=` is exceeded (currently only `llm_cruft` has one).
 - **FR#5** TOML-loading (`tomllib.load` + error mapping to `ConfigError`) is implemented once and
   reused by `config.py` and `discovery.py`'s two call sites, instead of three near-duplicate copies.
-- **FR#6** `cli.py`'s `check()` no longer pre-computes its own weaker copy of `resolve_project`'s
-  root/config resolution just to have something to show on a `ConfigError`.
+- **FR#6 (superseded post-archival — see KI-001 in `known-issues.md`)** Originally: `cli.py`'s
+  `check()` no longer pre-computes its own weaker copy of `resolve_project`'s root/config
+  resolution just to have something to show on a `ConfigError`. This was later reversed: the
+  pre-computation is back, now canonicalized with `.resolve()` and moved inside the `try:` block,
+  as a best-effort fallback for error reporting when `resolve_project()` itself raises before
+  returning.
 - **FR#7** All 7 rule `detect()` functions accept `(source, options, *, limit=None)`, matching the
   documented `Detector` Protocol, even where a rule doesn't use `options`.
 - **FR#8** `registry.py`'s 7 lazy `from .rules import ...` dispatch imports carry an inline comment
@@ -77,9 +81,10 @@ This design covers all 12 findings via 11 functional requirements — FR#1 resol
   6 plus a one-line comment in `test_file_length.py` documenting why satisfies FR#4. FR#4.
 - **AC#5** `grep -c "tomllib.load" src/house_lint/config.py src/house_lint/discovery.py` shows the
   call collapsed into one shared helper (used from both files); full suite passes. FR#5.
-- **AC#6** `cli.py`'s `check()` no longer contains the `resolved_config = config.expanduser()...`
-  pre-computation block; `tests/integration/test_cli.py`'s config-error tests still pass unchanged
-  in behavior. FR#6.
+- **AC#6 (superseded post-archival — see FR#6 note above)** Originally: `cli.py`'s `check()` no
+  longer contains the `resolved_config = config.expanduser()...` pre-computation block;
+  `tests/integration/test_cli.py`'s config-error tests still pass unchanged in behavior. FR#6.
+  This is no longer true — the block was reinstated rather than removed.
 - **AC#7** Reading each of the 7 rule files' `detect()` signature (some span multiple lines, so a
   single-line grep is not sufficient on its own) confirms `options` is present as the second
   positional parameter. FR#7.
