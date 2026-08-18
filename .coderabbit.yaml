@@ -54,7 +54,7 @@ reviews:
         file discovery) run inside the try/except that converts unexpected
         exceptions into the documented internal-error result and exit code,
         rather than escaping uncaught. Check exit codes match the documented
-        contract (2 config error, 3 findings/budget, 4 internal error).
+        contract (1 findings, 2 config error, 3 incomplete scan/budget, 4 internal error).
 
     - path: "tests/unit/rules/**"
       instructions: |
