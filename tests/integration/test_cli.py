@@ -255,6 +255,19 @@ def test_json_missing_explicit_config_preserves_resolved_root_and_config(reposit
     assert result["files_scanned"] == result["files_skipped"] == 0
 
 
+def test_json_auto_discovery_config_error_preserves_resolved_root(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.house-lint\n")
+
+    completed = _run(tmp_path, "check", "--format", "json")
+
+    result = json.loads(completed.stdout)
+    assert completed.returncode == 2
+    assert completed.stderr == ""
+    assert result["root"] is not None
+    assert result["config"] is None
+    assert result["errors"][0]["kind"] == "config"
+
+
 def test_source_checkout_module_entry_point_does_not_require_distribution_metadata(
     repository: Path,
 ) -> None:

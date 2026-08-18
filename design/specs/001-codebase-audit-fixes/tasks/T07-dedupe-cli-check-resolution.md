@@ -1,7 +1,7 @@
 ---
 task_id: "T07"
 title: "Remove cli.py check()'s duplicated resolve_project fallback logic"
-status: "planned"
+status: "done"
 depends_on: []
 implements: ["FR#6", "AC#6"]
 ---

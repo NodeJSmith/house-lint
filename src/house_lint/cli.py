@@ -321,14 +321,9 @@ def check(
         return 2
     cli_select = _flatten_ids(select)
     cli_ignore = _flatten_ids(ignore)
-    resolved_root: Path | None = None
-    resolved_config: Path | None = None
+    resolved_root: Path | None = root.expanduser() if root is not None else None
+    resolved_config: Path | None = config.expanduser() if config is not None else None
     try:
-        if config is not None:
-            resolved_config = config.expanduser().resolve()
-            resolved_root = (
-                root.expanduser().resolve() if root is not None else resolved_config.parent
-            )
         resolution = resolve_project(root=root, config=config)
         resolved_root = resolution.root
         resolved_config = resolution.config
@@ -350,6 +345,8 @@ def check(
             debug=debug,
         )
     except ConfigError as exc:
+        if resolved_root is None:
+            resolved_root = resolved_config.parent if resolved_config is not None else Path.cwd()
         result = _result_for_config_error(exc, root=resolved_root, config=resolved_config)
         _write_config_error(result, format)
         return 2
