@@ -26,7 +26,7 @@ might suggest.
    `registry.py` enforces consistency at import time with a `RuntimeError`, not a test that could
    be silently deleted.
 5. Where the design leaves an implementation detail open (e.g. exactly where the shared
-   `_load_toml` helper lives), the task prompt says so explicitly — use judgment, but keep exactly
+   `load_toml` helper lives), the task prompt says so explicitly — use judgment, but keep exactly
    one implementation.
 
 ## Constraints

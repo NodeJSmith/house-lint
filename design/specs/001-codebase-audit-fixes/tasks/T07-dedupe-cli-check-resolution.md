@@ -9,6 +9,7 @@ implements: ["FR#6", "AC#6"]
 ## Target Files
 
 - modify: `src/house_lint/cli.py`
+- modify: `tests/integration/test_cli.py`
 
 ## Prompt
 

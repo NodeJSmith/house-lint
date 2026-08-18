@@ -10,6 +10,7 @@ implements: ["FR#11", "AC#11", "AC#12"]
 
 - modify: `src/house_lint/cli.py`
 - create: `src/house_lint/scanner.py`
+- modify: `tests/integration/test_cli.py`
 
 ## Prompt
 

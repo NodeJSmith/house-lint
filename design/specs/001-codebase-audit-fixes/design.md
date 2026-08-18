@@ -118,7 +118,7 @@ refactors are pinned by a test before the implementation changes (per this repo'
    `constants_position`, `exception_names`, `file_length`, `spec_tokens`, `type_checking_position`
    test files, mirroring `test_llm_cruft.py`'s pattern. Pure test-gap-filling, no implementation
    risk, independent of every other task.
-6. **T06** (FR#5) — extract a shared TOML-loading helper (e.g. `_load_toml(path: Path) -> dict[str,
+6. **T06** (FR#5) — extract a shared TOML-loading helper (e.g. `load_toml(path: Path) -> dict[str,
    Any]` raising `ConfigError`) used by `config.py:277-281` and both call sites in
    `discovery.py:322-328` and `discovery.py:342-348`. Where the file lives (config.py, since it
    already owns `ConfigError`, with discovery.py importing it, or a new small shared module) is an
@@ -185,3 +185,6 @@ reviewer can walk.
 - `tests/unit/rules/test_spec_tokens.py` — modify (FR#4)
 - `tests/unit/rules/test_type_checking_position.py` — modify (FR#4)
 - `tests/integration/test_reporters.py` — modify (FR#10)
+- `tests/integration/test_cli.py` — modify (T07/T12: monkeypatch targets retargeted to
+  `scanner.MAX_CANDIDATES_PER_FILE`/`scanner.detect_candidates`/`scanner.SourceFile`, plus a new
+  auto-discovery regression test from T07's fixer pass)

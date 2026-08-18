@@ -37,10 +37,13 @@ Single package, `src/` layout: `src/house_lint/` with `reporters/` and `rules/` 
 `tests/conftest.py` provides `write_sample(content: str) -> Path`, which dedents and writes to
 `tmp_path/sample.py` — use it instead of ad hoc file writes in rule tests.
 
-Rules are registered in two places in `src/house_lint/registry.py`: static metadata in `_RULES`
-(a `MappingProxyType` of `RuleMetadata`), and a detector function in `_DETECTORS` that lazily
-imports each `rules/<name>.py` module (avoids import cost for unused rules). A new rule needs
-both. Detector signature: `(source, options, *, limit=None) -> list[CandidateFinding]`.
+Rule metadata (IDs, display info, enablement tier) lives in `src/house_lint/rule_catalog.py` — the
+single source of truth (`RULES`, plus `is_known_rule`/`rule_ids`/`rule_metadata` accessors).
+`src/house_lint/registry.py` owns only dispatch: `_DETECTORS` maps rule IDs to detector functions
+that lazily import each `rules/<name>.py` module (avoids import cost for unused rules), and an
+import-time check raises `RuntimeError` if `_DETECTORS` and `rule_catalog.ORDINARY_RULES` diverge.
+A new rule needs an entry in both `rule_catalog.py` and `registry.py`'s `_DETECTORS`. Detector
+signature: `(source, options, *, limit=None) -> list[CandidateFinding]`.
 
 ## Gotchas
 

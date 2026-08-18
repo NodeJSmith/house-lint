@@ -24,13 +24,13 @@ The three copies already have subtly different error messages ("cannot read conf
 "invalid project configuration: {exc}"), which is exactly the kind of drift that happens when the
 same logic lives in three places.
 
-Add a shared helper function `_load_toml(path: Path) -> dict[str, Any]` to `src/house_lint/config.py`
+Add a shared helper function `load_toml(path: Path) -> dict[str, Any]` to `src/house_lint/config.py`
 (it already owns `ConfigError` and is a natural home — `discovery.py` already imports from
 `config.py` for `ConfigError` and `get_house_lint_table`, so adding one more import is consistent
 with the existing dependency direction):
 
 ```python
-def _load_toml(path: Path) -> dict[str, Any]:
+def load_toml(path: Path) -> dict[str, Any]:
     """Parse a TOML file, raising ConfigError with a consistent message on failure."""
     try:
         with path.open("rb") as stream:
@@ -46,11 +46,11 @@ read config {path}" wording — this is not a free choice.
 wording would fail that test. `tests/unit/test_config.py` has no assertion on the exact message
 text, so switching `config.py`'s call site to the new shared wording is safe.
 
-Update all three call sites to use `_load_toml(path)` instead of their inline
+Update all three call sites to use `load_toml(path)` instead of their inline
 `tomllib.load`/`except` blocks:
 - `config.py`'s `load_config` (replaces its own inline block with a call to the new helper it now
   owns).
-- `discovery.py`'s two call sites in `resolve_project` (import `_load_toml` from `.config`).
+- `discovery.py`'s two call sites in `resolve_project` (import `load_toml` from `.config`).
 
 Keep the surrounding logic (what happens with the parsed `dict` afterward — e.g. checking
 `get_house_lint_table(data)`) unchanged; only the load-and-raise mechanics move into the helper.
@@ -58,7 +58,7 @@ Keep the surrounding logic (what happens with the parsed `dict` afterward — e.
 ## Verify
 
 - [ ] FR#5: `grep -c "tomllib.load" src/house_lint/config.py src/house_lint/discovery.py` — the
-      total count across both files should now be 1 (in the new `_load_toml` helper), not 3.
+      total count across both files should now be 1 (in the new `load_toml` helper), not 3.
 - [ ] AC#5: `uv run pytest tests/unit/test_config.py tests/unit/test_discovery.py -v` passes —
       these already cover the "bad TOML" / "unreadable config" error paths, so this is the real
       regression check.
