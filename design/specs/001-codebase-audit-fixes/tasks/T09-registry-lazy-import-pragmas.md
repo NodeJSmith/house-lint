@@ -1,7 +1,7 @@
 ---
 task_id: "T09"
 title: "Document and suppress registry.py's intentional lazy imports"
-status: "planned"
+status: "done"
 depends_on: []
 implements: ["FR#8", "AC#8"]
 ---
