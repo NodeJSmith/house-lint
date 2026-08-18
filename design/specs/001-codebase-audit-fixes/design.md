@@ -1,7 +1,7 @@
 # Design: Codebase Audit Fixes
 
 **Date:** 2026-08-18
-**Status:** draft
+**Status:** archived
 **Mode:** sketch
 
 ## Problem
