@@ -6,7 +6,9 @@ from house_lint.analysis import CandidateFinding, append_candidate, candidate_fo
 from house_lint.source import SourceFile
 
 
-def detect(source: SourceFile, *, limit: int | None = None) -> list[CandidateFinding]:
+def detect(
+    source: SourceFile, options: object, *, limit: int | None = None
+) -> list[CandidateFinding]:
     """Return HSL003 candidates for misplaced top-level type-checking guards."""
     if source.error is not None or source.tree is None:
         return []

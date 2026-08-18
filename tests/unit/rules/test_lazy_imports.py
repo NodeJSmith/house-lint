@@ -19,7 +19,7 @@ def test_detects_imports_at_function_depth_including_async_methods_and_nested(wr
                 import sys
     """)
 
-    findings = detect(SourceFile(path, path.parent))
+    findings = detect(SourceFile(path, path.parent), None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (4, "import inside function body"),
@@ -35,4 +35,4 @@ def test_limits_materialized_candidates_when_requested(write_sample) -> None:
     path = write_sample(f"def example():\n{body}\n")
 
     with pytest.raises(CandidateBudgetExceeded):
-        detect(SourceFile(path, path.parent), limit=10_000)
+        detect(SourceFile(path, path.parent), None, limit=10_000)

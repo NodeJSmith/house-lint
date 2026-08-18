@@ -13,7 +13,7 @@ def test_detects_dividers_and_filler_in_comments_and_docstrings(write_sample) ->
         value = 1
     """)
 
-    findings = detect(SourceFile(path, path.parent))
+    findings = detect(SourceFile(path, path.parent), None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (1, "section-divider comment"),
@@ -33,7 +33,7 @@ def test_multiline_docstring_reports_the_matching_line_and_keeps_statement_owner
 ) -> None:
     path = write_sample('"""Explain the operation.\nPlease note that it is temporary.\n"""\n')
 
-    [finding] = detect(SourceFile(path, path.parent))
+    [finding] = detect(SourceFile(path, path.parent), None)
 
     assert (finding.line, finding.column, finding.end_line, finding.end_column) == (2, 1, 2, 34)
     assert finding.source_kind is SourceKind.STATEMENT
@@ -47,7 +47,7 @@ def test_preserves_divider_thresholds_and_excludes_ordinary_strings(write_sample
         label = "in order to proceed"
     """)
 
-    findings = detect(SourceFile(path, path.parent))
+    findings = detect(SourceFile(path, path.parent), None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (2, "section-divider comment")
@@ -57,7 +57,7 @@ def test_preserves_divider_thresholds_and_excludes_ordinary_strings(write_sample
 def test_comment_on_a_statement_keeps_statement_provenance(write_sample) -> None:
     path = write_sample("value = 1  # Please note that this is temporary\n")
 
-    [finding] = detect(SourceFile(path, path.parent))
+    [finding] = detect(SourceFile(path, path.parent), None)
 
     assert finding.source_kind is SourceKind.STATEMENT
     assert finding.owner == StatementKey(1, 1, 1, 10)
@@ -71,7 +71,7 @@ def test_comment_on_a_multiline_statement_uses_its_narrowest_owner(write_sample)
         "    )  # Please note that this is temporary\n"
     )
 
-    [finding] = detect(SourceFile(path, path.parent))
+    [finding] = detect(SourceFile(path, path.parent), None)
 
     assert finding.source_kind is SourceKind.STATEMENT
     assert finding.owner == StatementKey(2, 5, 4, 6)
@@ -82,7 +82,7 @@ def test_standalone_body_comment_has_no_owner(write_sample) -> None:
         "def prepare() -> None:\n    # Please note that this is temporary\n    value = 1\n"
     )
 
-    [finding] = detect(SourceFile(path, path.parent))
+    [finding] = detect(SourceFile(path, path.parent), None)
 
     assert finding.source_kind is SourceKind.NO_OWNER
     assert finding.owner is None
@@ -110,7 +110,7 @@ def test_detects_remaining_retained_filler_patterns_in_comments(
 ) -> None:
     path = write_sample(f"# {comment}\nvalue = 1\n")
 
-    [finding] = detect(SourceFile(path, path.parent))
+    [finding] = detect(SourceFile(path, path.parent), None)
 
     assert (finding.line, finding.message) == (1, message)
 
@@ -118,11 +118,11 @@ def test_detects_remaining_retained_filler_patterns_in_comments(
 def test_ignores_ordinary_comments(write_sample) -> None:
     path = write_sample("# resolve the owner app from the confirmed app_key\nvalue = 1\n")
 
-    assert detect(SourceFile(path, path.parent)) == []
+    assert detect(SourceFile(path, path.parent), None) == []
 
 
 def test_limits_materialized_candidates_when_requested(write_sample) -> None:
     path = write_sample("\n".join("# utilize this" for _ in range(10_002)))
 
     with pytest.raises(CandidateBudgetExceeded):
-        detect(SourceFile(path, path.parent), limit=10_000)
+        detect(SourceFile(path, path.parent), None, limit=10_000)

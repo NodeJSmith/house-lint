@@ -21,7 +21,7 @@ def _hsl001(
 ) -> list[CandidateFinding]:
     from .rules import llm_cruft
 
-    return llm_cruft.detect(source, limit=limit)
+    return llm_cruft.detect(source, options, limit=limit)
 
 
 def _hsl002(
@@ -29,7 +29,7 @@ def _hsl002(
 ) -> list[CandidateFinding]:
     from .rules import lazy_imports
 
-    return lazy_imports.detect(source, limit=limit)
+    return lazy_imports.detect(source, options, limit=limit)
 
 
 def _hsl003(
@@ -37,7 +37,7 @@ def _hsl003(
 ) -> list[CandidateFinding]:
     from .rules import type_checking_position
 
-    return type_checking_position.detect(source, limit=limit)
+    return type_checking_position.detect(source, options, limit=limit)
 
 
 def _hsl004(
@@ -45,7 +45,7 @@ def _hsl004(
 ) -> list[CandidateFinding]:
     from .rules import constants_position
 
-    return constants_position.detect(source, limit=limit)
+    return constants_position.detect(source, options, limit=limit)
 
 
 def _hsl101(

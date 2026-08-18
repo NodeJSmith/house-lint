@@ -6,7 +6,9 @@ from house_lint.analysis import CandidateFinding, append_candidate, candidate_fo
 from house_lint.source import SourceFile
 
 
-def detect(source: SourceFile, *, limit: int | None = None) -> list[CandidateFinding]:
+def detect(
+    source: SourceFile, options: object, *, limit: int | None = None
+) -> list[CandidateFinding]:
     """Return HSL002 candidates for imports reached at function depth."""
     if source.error is not None or source.tree is None:
         return []

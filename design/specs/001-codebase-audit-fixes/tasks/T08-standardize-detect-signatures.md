@@ -1,7 +1,7 @@
 ---
 task_id: "T08"
 title: "Standardize all 7 rule detect() signatures to accept options"
-status: "planned"
+status: "done"
 depends_on: []
 implements: ["FR#7", "AC#7"]
 ---

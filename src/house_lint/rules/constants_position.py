@@ -10,7 +10,9 @@ CONSTANT_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 DUNDER_NAME = re.compile(r"^__.+__$")
 
 
-def detect(source: SourceFile, *, limit: int | None = None) -> list[CandidateFinding]:
+def detect(
+    source: SourceFile, options: object, *, limit: int | None = None
+) -> list[CandidateFinding]:
     """Return HSL004 candidates using the preserved derived-binding heuristic."""
     if source.error is not None or source.tree is None:
         return []
