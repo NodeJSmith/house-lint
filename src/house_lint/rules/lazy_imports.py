@@ -2,7 +2,12 @@
 
 import ast
 
-from house_lint.analysis import CandidateFinding, append_candidate, candidate_for_statement
+from house_lint.analysis import (
+    CandidateFinding,
+    append_candidate,
+    candidate_for_statement,
+    parsed_tree,
+)
 from house_lint.source import SourceFile
 
 
@@ -10,11 +15,11 @@ def detect(
     source: SourceFile, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
     """Return HSL002 candidates for imports reached at function depth."""
-    if source.error is not None:
+    tree = parsed_tree(source)
+    if tree is None:
         return []
-    assert source.tree is not None
     visitor = _LazyImportVisitor(source, limit)
-    visitor.visit(source.tree)
+    visitor.visit(tree)
     return visitor.findings
 
 

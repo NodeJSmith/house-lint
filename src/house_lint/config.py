@@ -9,11 +9,20 @@ from typing import Any, cast
 
 from pathspec import GitIgnoreSpec
 
-from .rule_catalog import DEFAULT_SELECT, ORDINARY_RULES
+from house_lint.rule_catalog import DEFAULT_SELECT, ORDINARY_RULES
 
 DEFAULT_INCLUDE = ("src", "tests", "scripts", "tools", "examples")
 _PREFIX = re.compile(r"[A-Z][A-Z0-9_]*\Z")
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+DEFAULT_MAX_FINDINGS_PER_FILE = 200
+MAX_FINDINGS_PER_FILE_LIMIT = 10_000
+DEFAULT_MAX_LINES = 800
+MAX_LINES_LIMIT = 10_000_000
+MAX_TOKEN_FAMILIES = 32
+MAX_PREFIXES_PER_FAMILY = 32
+MAX_PREFIX_LENGTH = 12
+MAX_DIGITS_BOUND = 12
 
 
 class ConfigError(ValueError):
@@ -35,12 +44,12 @@ class TokenFamily:
 @dataclass(frozen=True)
 class HSL101Options:
     tokens: tuple[TokenFamily, ...] = ()
-    max_findings_per_file: int = 200
+    max_findings_per_file: int = DEFAULT_MAX_FINDINGS_PER_FILE
 
 
 @dataclass(frozen=True)
 class HSL102Options:
-    max_lines: int = 800
+    max_lines: int = DEFAULT_MAX_LINES
 
 
 @dataclass(frozen=True)
@@ -160,9 +169,9 @@ def _strict_keys(table: dict[str, Any], allowed: set[str], name: str) -> None:
         raise ConfigError(f"{name} contains unknown keys: {', '.join(sorted(unknown))}")
 
 
-def _bounded_int(value: Any, name: str, maximum: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not 0 < value <= maximum:
-        raise ConfigError(f"{name} must be a positive integer no greater than {maximum}")
+def _bounded_int(value: Any, name: str, maximum: int, *, minimum: int = 1) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        raise ConfigError(f"{name} must be an integer between {minimum} and {maximum}")
     return value
 
 
@@ -184,9 +193,13 @@ def _token_family(raw: Any, index: int) -> TokenFamily:
         name,
     )
     prefixes = _strings(table.get("prefixes"), f"{name}.prefixes")
-    if not prefixes or len(prefixes) > 32 or len(set(prefixes)) != len(prefixes):
-        raise ConfigError(f"{name}.prefixes must contain 1 to 32 unique values")
-    if any(len(item) > 12 or not _PREFIX.fullmatch(item) for item in prefixes):
+    too_many_prefixes = len(prefixes) > MAX_PREFIXES_PER_FAMILY
+    duplicate_prefixes = len(set(prefixes)) != len(prefixes)
+    if not prefixes or too_many_prefixes or duplicate_prefixes:
+        raise ConfigError(
+            f"{name}.prefixes must contain 1 to {MAX_PREFIXES_PER_FAMILY} unique values"
+        )
+    if any(len(item) > MAX_PREFIX_LENGTH or not _PREFIX.fullmatch(item) for item in prefixes):
         raise ConfigError(f"{name}.prefixes contains an invalid prefix")
     scopes = _strings(table.get("scopes"), f"{name}.scopes")
     if (
@@ -198,16 +211,13 @@ def _token_family(raw: Any, index: int) -> TokenFamily:
     hash_mode = table.get("hash", "forbidden")
     if hash_mode not in {"forbidden", "optional", "required"}:
         raise ConfigError(f"{name}.hash is invalid")
-    min_digits = table.get("min_digits", 1)
-    if isinstance(min_digits, bool) or not isinstance(min_digits, int) or not 1 <= min_digits <= 12:
-        raise ConfigError(f"{name}.min_digits is invalid")
-    max_digits = table.get("max_digits")
-    if max_digits is not None and (
-        isinstance(max_digits, bool)
-        or not isinstance(max_digits, int)
-        or not min_digits <= max_digits <= 12
-    ):
-        raise ConfigError(f"{name}.max_digits is invalid")
+    min_digits = _bounded_int(table.get("min_digits", 1), f"{name}.min_digits", MAX_DIGITS_BOUND)
+    max_digits_raw = table.get("max_digits")
+    max_digits = (
+        _bounded_int(max_digits_raw, f"{name}.max_digits", MAX_DIGITS_BOUND, minimum=min_digits)
+        if max_digits_raw is not None
+        else None
+    )
     suffix = table.get("suffix", "none")
     if suffix not in {"none", "optional-lower-alpha"}:
         raise ConfigError(f"{name}.suffix is invalid")
@@ -234,16 +244,22 @@ def _rule_options(raw: dict[str, Any]) -> tuple[HSL101Options, HSL102Options, HS
     tokens: tuple[TokenFamily, ...] = ()
     if "tokens" in hsl101_raw:
         token_values = _array(hsl101_raw["tokens"], "HSL101.tokens")
-        if not token_values or len(token_values) > 32:
-            raise ConfigError("HSL101.tokens must contain 1 to 32 families")
+        if not token_values or len(token_values) > MAX_TOKEN_FAMILIES:
+            raise ConfigError(f"HSL101.tokens must contain 1 to {MAX_TOKEN_FAMILIES} families")
         tokens = tuple(_token_family(item, i) for i, item in enumerate(token_values))
     hsl101 = HSL101Options(
         tokens,
-        _bounded_int(hsl101_raw.get("max_findings_per_file", 200), "max_findings_per_file", 10_000),
+        _bounded_int(
+            hsl101_raw.get("max_findings_per_file", DEFAULT_MAX_FINDINGS_PER_FILE),
+            "max_findings_per_file",
+            MAX_FINDINGS_PER_FILE_LIMIT,
+        ),
     )
     hsl102_raw = _table(rules.get("HSL102", {}), "rules.HSL102")
     _strict_keys(hsl102_raw, {"max_lines"}, "rules.HSL102")
-    hsl102 = HSL102Options(_bounded_int(hsl102_raw.get("max_lines", 800), "max_lines", 10_000_000))
+    hsl102 = HSL102Options(
+        _bounded_int(hsl102_raw.get("max_lines", DEFAULT_MAX_LINES), "max_lines", MAX_LINES_LIMIT)
+    )
     hsl103_raw = _table(rules.get("HSL103", {}), "rules.HSL103")
     _strict_keys(hsl103_raw, {"allowed"}, "rules.HSL103")
     allowed = _strings(hsl103_raw.get("allowed", ["exc", "*_exc"]), "allowed")

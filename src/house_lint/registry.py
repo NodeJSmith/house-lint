@@ -1,13 +1,20 @@
 """Static built-in rule metadata and detector dispatch."""
+# house-lint: ignore-file[HSL002] - every detector below lazy-loads to avoid unused import cost
 
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Protocol, cast
 
-from .analysis import CandidateFinding
-from .config import DetectorInput, DetectorOptions, HSL101Options, HSL102Options, HSL103Options
-from .rule_catalog import ORDINARY_RULES
-from .source import SourceFile
+from house_lint.analysis import CandidateFinding
+from house_lint.config import (
+    DetectorInput,
+    DetectorOptions,
+    HSL101Options,
+    HSL102Options,
+    HSL103Options,
+)
+from house_lint.rule_catalog import ORDINARY_RULES
+from house_lint.source import SourceFile
 
 
 class Detector(Protocol):
@@ -19,8 +26,7 @@ class Detector(Protocol):
 def _hsl001(
     source: SourceFile, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
-    # house-lint: ignore-next[HSL002] - lazy-loaded to avoid import cost for unused rules
-    from .rules import llm_cruft
+    from house_lint.rules import llm_cruft
 
     return llm_cruft.detect(source, options, limit=limit)
 
@@ -28,8 +34,7 @@ def _hsl001(
 def _hsl002(
     source: SourceFile, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
-    # house-lint: ignore-next[HSL002] - lazy-loaded to avoid import cost for unused rules
-    from .rules import lazy_imports
+    from house_lint.rules import lazy_imports
 
     return lazy_imports.detect(source, options, limit=limit)
 
@@ -37,8 +42,7 @@ def _hsl002(
 def _hsl003(
     source: SourceFile, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
-    # house-lint: ignore-next[HSL002] - lazy-loaded to avoid import cost for unused rules
-    from .rules import type_checking_position
+    from house_lint.rules import type_checking_position
 
     return type_checking_position.detect(source, options, limit=limit)
 
@@ -46,8 +50,7 @@ def _hsl003(
 def _hsl004(
     source: SourceFile, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
-    # house-lint: ignore-next[HSL002] - lazy-loaded to avoid import cost for unused rules
-    from .rules import constants_position
+    from house_lint.rules import constants_position
 
     return constants_position.detect(source, options, limit=limit)
 
@@ -55,8 +58,7 @@ def _hsl004(
 def _hsl101(
     source: SourceFile, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
-    # house-lint: ignore-next[HSL002] - lazy-loaded to avoid import cost for unused rules
-    from .rules import spec_tokens
+    from house_lint.rules import spec_tokens
 
     return spec_tokens.detect(source, cast("HSL101Options", options), limit=limit)
 
@@ -64,8 +66,7 @@ def _hsl101(
 def _hsl102(
     source: SourceFile, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
-    # house-lint: ignore-next[HSL002] - lazy-loaded to avoid import cost for unused rules
-    from .rules import file_length
+    from house_lint.rules import file_length
 
     return file_length.detect(source, cast("HSL102Options", options), limit=limit)
 
@@ -73,8 +74,7 @@ def _hsl102(
 def _hsl103(
     source: SourceFile, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
-    # house-lint: ignore-next[HSL002] - lazy-loaded to avoid import cost for unused rules
-    from .rules import exception_names
+    from house_lint.rules import exception_names
 
     return exception_names.detect(source, cast("HSL103Options", options), limit=limit)
 

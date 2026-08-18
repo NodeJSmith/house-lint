@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from house_lint import cli, scanner
+from house_lint.analysis import MAX_CANDIDATES_PER_FILE
 
 
 def _run(
@@ -330,7 +331,7 @@ cli.main()
 
 def test_hsl001_stops_at_the_candidate_budget(repository: Path) -> None:
     (repository / "src" / "overflow.py").write_text(
-        "\n".join("# utilize this" for _ in range(10_002))
+        "\n".join("# utilize this" for _ in range(MAX_CANDIDATES_PER_FILE + 2))
     )
 
     completed = _run(
@@ -347,7 +348,7 @@ def test_hsl001_stops_at_the_candidate_budget(repository: Path) -> None:
     result = json.loads(completed.stdout)
     assert completed.returncode == 3
     assert result["errors"][0]["kind"] == "budget"
-    assert len(result["findings"]) == 10_000
+    assert len(result["findings"]) == MAX_CANDIDATES_PER_FILE
     assert {finding["rule_id"] for finding in result["findings"]} == {"HSL001"}
 
 
@@ -378,7 +379,7 @@ cli.main()
 
 def test_suppression_budget_preserves_the_bounded_candidate_prefix(repository: Path) -> None:
     (repository / "src" / "overflow.py").write_text(
-        "\n".join("# utilize this" for _ in range(10_000))
+        "\n".join("# utilize this" for _ in range(MAX_CANDIDATES_PER_FILE))
         + "\n# house-lint: ignore[] - generated module\n"
     )
 
@@ -396,7 +397,7 @@ def test_suppression_budget_preserves_the_bounded_candidate_prefix(repository: P
     result = json.loads(completed.stdout)
     assert completed.returncode == 3
     assert result["errors"][0]["kind"] == "budget"
-    assert len(result["findings"]) == 10_000
+    assert len(result["findings"]) == MAX_CANDIDATES_PER_FILE
     assert {finding["rule_id"] for finding in result["findings"]} == {"HSL001"}
 
 
@@ -404,7 +405,7 @@ def test_detector_and_suppression_budget_preserve_the_bounded_candidate_prefix(
     repository: Path,
 ) -> None:
     (repository / "src" / "overflow.py").write_text(
-        "\n".join("# utilize this" for _ in range(10_001))
+        "\n".join("# utilize this" for _ in range(MAX_CANDIDATES_PER_FILE + 1))
         + "\n# house-lint: ignore[] - generated module\n"
     )
 
@@ -422,7 +423,7 @@ def test_detector_and_suppression_budget_preserve_the_bounded_candidate_prefix(
     result = json.loads(completed.stdout)
     assert completed.returncode == 3
     assert result["errors"][0]["kind"] == "budget"
-    assert len(result["findings"]) == 10_000
+    assert len(result["findings"]) == MAX_CANDIDATES_PER_FILE
     assert {finding["rule_id"] for finding in result["findings"]} == {"HSL001"}
 
 
@@ -430,7 +431,7 @@ def test_budget_error_preserves_findings_from_completed_files(repository: Path) 
     first = repository / "src" / "a.py"
     overflow = repository / "src" / "overflow.py"
     first.write_text("def example():\n    import module\n")
-    overflow.write_text("\n".join("# utilize this" for _ in range(10_001)))
+    overflow.write_text("\n".join("# utilize this" for _ in range(MAX_CANDIDATES_PER_FILE + 1)))
 
     completed = _run(
         repository,
@@ -456,7 +457,7 @@ def test_budget_error_preserves_findings_from_completed_files(repository: Path) 
 def test_zero_capacity_detector_overflow_applies_known_suppressions(repository: Path) -> None:
     (repository / "src" / "overflow.py").write_text(
         "# house-lint: ignore-file[HSL001] - generated module\n"
-        + "\n".join("# utilize this" for _ in range(10_000))
+        + "\n".join("# utilize this" for _ in range(MAX_CANDIDATES_PER_FILE))
         + "\ndef example():\n    import package  # house-lint: ignore[HSL002] - lazy dependency\n"
     )
 
@@ -474,13 +475,13 @@ def test_zero_capacity_detector_overflow_applies_known_suppressions(repository: 
     result = json.loads(completed.stdout)
     assert completed.returncode == 3
     assert result["findings"] == []
-    assert result["summary"]["suppressed_count"] == 10_000
+    assert result["summary"]["suppressed_count"] == MAX_CANDIDATES_PER_FILE
 
 
 def test_suppression_budget_applies_completed_suppressions(repository: Path) -> None:
     (repository / "src" / "overflow.py").write_text(
         "# house-lint: ignore-file[HSL001] - generated module\n"
-        + "\n".join("# utilize this" for _ in range(9_999))
+        + "\n".join("# utilize this" for _ in range(MAX_CANDIDATES_PER_FILE - 1))
         + "\n# house-lint: ignore[] - generated module\n"
         + "# house-lint: ignore[] - generated module\n"
     )
@@ -499,7 +500,7 @@ def test_suppression_budget_applies_completed_suppressions(repository: Path) -> 
     result = json.loads(completed.stdout)
     assert completed.returncode == 3
     assert [finding["rule_id"] for finding in result["findings"]] == ["HSL900"]
-    assert result["summary"]["suppressed_count"] == 9_999
+    assert result["summary"]["suppressed_count"] == MAX_CANDIDATES_PER_FILE - 1
 
 
 def test_budget_error_counts_the_file_when_rule_execution_begins(

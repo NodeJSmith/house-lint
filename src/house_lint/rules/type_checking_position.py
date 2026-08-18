@@ -2,7 +2,12 @@
 
 import ast
 
-from house_lint.analysis import CandidateFinding, append_candidate, candidate_for_statement
+from house_lint.analysis import (
+    CandidateFinding,
+    append_candidate,
+    candidate_for_statement,
+    parsed_tree,
+)
 from house_lint.source import SourceFile
 
 
@@ -10,17 +15,14 @@ def detect(
     source: SourceFile, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
     """Return HSL003 candidates for misplaced top-level type-checking guards."""
-    if source.error is not None:
+    tree = parsed_tree(source)
+    if tree is None:
         return []
-    assert source.tree is not None
     findings: list[CandidateFinding] = []
-    for index, node in enumerate(source.tree.body):
+    for index, node in enumerate(tree.body):
         if not isinstance(node, ast.If) or not _is_type_checking_guard(node.test):
             continue
-        if any(
-            isinstance(later, (ast.Import, ast.ImportFrom))
-            for later in source.tree.body[index + 1 :]
-        ):
+        if any(isinstance(later, (ast.Import, ast.ImportFrom)) for later in tree.body[index + 1 :]):
             append_candidate(
                 findings,
                 candidate_for_statement(

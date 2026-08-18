@@ -7,7 +7,7 @@ import ast
 from dataclasses import dataclass
 from enum import Enum
 
-from .source import SourceFile
+from house_lint.source import SourceFile
 
 MAX_CANDIDATES_PER_FILE = 10_000
 
@@ -60,6 +60,18 @@ def append_candidate(
     if limit is not None and len(candidates) >= limit:
         raise CandidateBudgetExceeded(source.relative_path, candidates=tuple(candidates))
     candidates.append(candidate)
+
+
+def parsed_tree(source: SourceFile) -> ast.Module | None:
+    """Return the parsed module, or None when the file failed to load or parse.
+
+    `source.error is None` guarantees `source.tree is not None` — the loader parses eagerly and
+    only leaves an error set when parsing failed.
+    """
+    if source.error is not None:
+        return None
+    assert source.tree is not None
+    return source.tree
 
 
 def statement_key(statement: ast.stmt) -> StatementKey:

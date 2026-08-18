@@ -4,11 +4,11 @@ import ast
 import re
 import tokenize
 from collections import defaultdict
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from .analysis import (
+from house_lint.analysis import (
     CandidateBudgetExceeded,
     CandidateFinding,
     SourceKind,
@@ -16,12 +16,13 @@ from .analysis import (
     statement_key,
     statement_owner_for_line,
 )
-from .results import Finding
-from .rule_catalog import is_known_rule
-from .source import SourceFile, Token
+from house_lint.results import Finding
+from house_lint.rule_catalog import is_known_rule
+from house_lint.source import SourceFile, Token
 
 _ID = re.compile(r"HSL[0-9]{3}\Z")
 _PRAGMA = re.compile(r"#\s*house-lint:\s*(ignore-next|ignore-file|ignore)\[([^]]*)\] - (.+)\Z")
+_MIN_REASON_ALNUM_CHARS = 3
 
 _Owner: TypeAlias = StatementKey | str
 
@@ -68,7 +69,6 @@ def apply_suppressions(
 ) -> SuppressionResult:
     """Apply valid pragmas, retaining diagnostics and provenance until public conversion."""
     diagnostics: list[CandidateFinding] = []
-    claims: list[_Claim] = []
     diagnostic_limit = None if limit is None else max(0, limit - len(candidates))
     diagnostics_exceeded = False
 
@@ -79,35 +79,7 @@ def apply_suppressions(
             return
         diagnostics.append(candidate)
 
-    for token in source.tokens:
-        if token.type != tokenize.COMMENT or not _is_pragma(token):
-            continue
-        pragma, message = _parse_pragma(source, token)
-        if pragma is None:
-            add_diagnostic(_diagnostic(source, token, message))
-            continue
-        owner, placement_error = _owner_for_pragma(source, pragma)
-        if placement_error is not None:
-            add_diagnostic(_diagnostic(source, token, placement_error))
-            continue
-        pragma = _Pragma(pragma.action, pragma.ids, pragma.token, owner)
-        for rule_id in pragma.ids:
-            if not is_known_rule(rule_id):
-                add_diagnostic(_diagnostic(source, token, f"unknown suppression rule {rule_id}"))
-                continue
-            if rule_id not in enabled_rules:
-                add_diagnostic(
-                    _diagnostic(source, token, f"unused suppression for disabled rule {rule_id}")
-                )
-                continue
-            target = _target(pragma)
-            owned = tuple(
-                index
-                for index, candidate in enumerate(candidates)
-                if candidate.rule_id == rule_id and _owns(target[0], candidate)
-            )
-            claims.append(_Claim(pragma, rule_id, target, owned))
-
+    claims = _collect_claims(source, candidates, enabled_rules, add_diagnostic)
     conflicts = _conflicting_claims(claims)
     for index, claim in enumerate(claims):
         if index in conflicts:
@@ -136,6 +108,49 @@ def apply_suppressions(
     return result
 
 
+def _collect_claims(
+    source: SourceFile,
+    candidates: tuple[CandidateFinding, ...],
+    enabled_rules: Collection[str],
+    add_diagnostic: Callable[[CandidateFinding], None],
+) -> list[_Claim]:
+    """Scan pragma comments and build one claim per rule ID each pragma names.
+
+    Malformed, misplaced, unknown-rule, and disabled-rule pragmas report through
+    `add_diagnostic` as a side effect rather than appearing in the returned claims.
+    """
+    claims: list[_Claim] = []
+    for token in source.tokens:
+        if token.type != tokenize.COMMENT or not _is_pragma(token):
+            continue
+        pragma, message = _parse_pragma(source, token)
+        if pragma is None:
+            add_diagnostic(_diagnostic(source, token, message))
+            continue
+        owner, placement_error = _owner_for_pragma(source, pragma)
+        if placement_error is not None:
+            add_diagnostic(_diagnostic(source, token, placement_error))
+            continue
+        pragma = _Pragma(pragma.action, pragma.ids, pragma.token, owner)
+        for rule_id in pragma.ids:
+            if not is_known_rule(rule_id):
+                add_diagnostic(_diagnostic(source, token, f"unknown suppression rule {rule_id}"))
+                continue
+            if rule_id not in enabled_rules:
+                add_diagnostic(
+                    _diagnostic(source, token, f"unused suppression for disabled rule {rule_id}")
+                )
+                continue
+            target = _target(pragma)
+            owned = tuple(
+                index
+                for index, candidate in enumerate(candidates)
+                if candidate.rule_id == rule_id and _owns(target[0], candidate)
+            )
+            claims.append(_Claim(pragma, rule_id, target, owned))
+    return claims
+
+
 def _is_pragma(token: Token) -> bool:
     return bool(re.match(r"#\s*house-lint:", token.string))
 
@@ -152,8 +167,11 @@ def _parse_pragma(source: SourceFile, token: Token) -> tuple[_Pragma | None, str
         return None, "duplicate suppression rule IDs"
     if "HSL900" in ids:
         return None, "HSL900 cannot be suppressed"
-    if sum(character.isalnum() for character in reason) < 3:
-        return None, "suppression reason must contain at least three alphanumeric characters"
+    if sum(character.isalnum() for character in reason) < _MIN_REASON_ALNUM_CHARS:
+        return None, (
+            f"suppression reason must contain at least {_MIN_REASON_ALNUM_CHARS} "
+            "alphanumeric characters"
+        )
     return _Pragma(action, ids, token, None), ""
 
 

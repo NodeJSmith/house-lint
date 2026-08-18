@@ -1,6 +1,6 @@
 import pytest
 
-from house_lint.analysis import CandidateBudgetExceeded, SourceKind
+from house_lint.analysis import MAX_CANDIDATES_PER_FILE, CandidateBudgetExceeded, SourceKind
 from house_lint.config import HSL103Options
 from house_lint.rules.exception_names import detect
 from house_lint.source import SourceFile
@@ -56,9 +56,10 @@ def test_uses_exact_allowed_names_and_single_leading_star_suffix_patterns(write_
 
 def test_limits_materialized_candidates_when_requested(write_sample) -> None:
     handlers = "\n".join(
-        f"try:\n    pass\nexcept ValueError as err{i}:\n    pass" for i in range(10_002)
+        f"try:\n    pass\nexcept ValueError as err{i}:\n    pass"
+        for i in range(MAX_CANDIDATES_PER_FILE + 2)
     )
     path = write_sample(f"{handlers}\n")
 
     with pytest.raises(CandidateBudgetExceeded):
-        detect(SourceFile(path, path.parent), HSL103Options(), limit=10_000)
+        detect(SourceFile(path, path.parent), HSL103Options(), limit=MAX_CANDIDATES_PER_FILE)

@@ -1,6 +1,11 @@
 import pytest
 
-from house_lint.analysis import CandidateBudgetExceeded, SourceKind, StatementKey
+from house_lint.analysis import (
+    MAX_CANDIDATES_PER_FILE,
+    CandidateBudgetExceeded,
+    SourceKind,
+    StatementKey,
+)
 from house_lint.rules.llm_cruft import detect
 from house_lint.source import SourceFile
 
@@ -122,7 +127,7 @@ def test_ignores_ordinary_comments(write_sample) -> None:
 
 
 def test_limits_materialized_candidates_when_requested(write_sample) -> None:
-    path = write_sample("\n".join("# utilize this" for _ in range(10_002)))
+    path = write_sample("\n".join("# utilize this" for _ in range(MAX_CANDIDATES_PER_FILE + 2)))
 
     with pytest.raises(CandidateBudgetExceeded):
-        detect(SourceFile(path, path.parent), None, limit=10_000)
+        detect(SourceFile(path, path.parent), None, limit=MAX_CANDIDATES_PER_FILE)

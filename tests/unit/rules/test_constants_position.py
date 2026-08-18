@@ -1,6 +1,11 @@
 import pytest
 
-from house_lint.analysis import CandidateBudgetExceeded, SourceKind, StatementKey
+from house_lint.analysis import (
+    MAX_CANDIDATES_PER_FILE,
+    CandidateBudgetExceeded,
+    SourceKind,
+    StatementKey,
+)
 from house_lint.rules.constants_position import detect
 from house_lint.source import SourceFile
 
@@ -85,8 +90,8 @@ def test_handles_unpacking_and_skips_unsupported_assignment_targets(write_sample
 
 
 def test_limits_materialized_candidates_when_requested(write_sample) -> None:
-    constants = "\n".join(f"X{i} = {i}" for i in range(10_002))
+    constants = "\n".join(f"X{i} = {i}" for i in range(MAX_CANDIDATES_PER_FILE + 2))
     path = write_sample(f"class Example:\n    pass\n\n{constants}\n")
 
     with pytest.raises(CandidateBudgetExceeded):
-        detect(SourceFile(path, path.parent), None, limit=10_000)
+        detect(SourceFile(path, path.parent), None, limit=MAX_CANDIDATES_PER_FILE)
