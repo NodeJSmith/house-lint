@@ -1,4 +1,6 @@
-from house_lint.analysis import SourceKind, StatementKey
+import pytest
+
+from house_lint.analysis import CandidateBudgetExceeded, SourceKind, StatementKey
 from house_lint.rules.lazy_imports import detect
 from house_lint.source import SourceFile
 
@@ -26,3 +28,11 @@ def test_detects_imports_at_function_depth_including_async_methods_and_nested(wr
     ]
     assert all(finding.source_kind is SourceKind.STATEMENT for finding in findings)
     assert findings[0].owner == StatementKey(4, 5, 4, 16)
+
+
+def test_limits_materialized_candidates_when_requested(write_sample) -> None:
+    body = "\n".join(f"    import mod_{i}" for i in range(10_002))
+    path = write_sample(f"def example():\n{body}\n")
+
+    with pytest.raises(CandidateBudgetExceeded):
+        detect(SourceFile(path, path.parent), limit=10_000)

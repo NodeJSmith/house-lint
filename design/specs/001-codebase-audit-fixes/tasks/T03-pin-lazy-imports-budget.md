@@ -1,7 +1,7 @@
 ---
 task_id: "T03"
 title: "Pin lazy_imports' current budget-cutoff behavior with a test"
-status: "planned"
+status: "done"
 depends_on: []
 implements: ["FR#4", "AC#4"]
 ---
