@@ -16,8 +16,8 @@ from .analysis import (
     statement_key,
     statement_owner_for_line,
 )
-from .registry import is_known_rule
 from .results import Finding
+from .rule_catalog import is_known_rule
 from .source import SourceFile, Token
 
 _ID = re.compile(r"HSL[0-9]{3}\Z")

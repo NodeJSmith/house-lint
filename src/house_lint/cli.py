@@ -17,7 +17,7 @@ from house_lint.config import (
     selected_detector_inputs,
 )
 from house_lint.discovery import DiscoveryError, discover_files, resolve_project
-from house_lint.registry import detect_candidates, rule_ids, rule_metadata
+from house_lint.registry import detect_candidates
 from house_lint.reporters import (
     render_json,
     render_rule_list_json,
@@ -25,6 +25,7 @@ from house_lint.reporters import (
     render_text,
 )
 from house_lint.results import Finding, LintError, RuleInfo, RuleList, ScanResult
+from house_lint.rule_catalog import rule_ids, rule_metadata
 from house_lint.source import SourceFile
 from house_lint.suppressions import SuppressionBudgetExceeded, apply_suppressions
 

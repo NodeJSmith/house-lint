@@ -1,12 +1,12 @@
 """Static built-in rule metadata and detector dispatch."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Protocol, cast
 
 from .analysis import CandidateFinding
 from .config import DetectorInput, DetectorOptions, HSL101Options, HSL102Options, HSL103Options
+from .rule_catalog import ORDINARY_RULES
 from .source import SourceFile
 
 
@@ -14,51 +14,6 @@ class Detector(Protocol):
     def __call__(
         self, source: SourceFile, options: DetectorOptions, *, limit: int | None = None
     ) -> list[CandidateFinding]: ...
-
-
-@dataclass(frozen=True)
-class RuleMetadata:
-    """Fixed metadata for one built-in house rule."""
-
-    id: str
-    name: str
-    description: str
-    enablement: str
-    ownership_scope: str
-
-
-_RULES: Mapping[str, RuleMetadata] = MappingProxyType(
-    {
-        "HSL001": RuleMetadata(
-            "HSL001", "AI-writing cruft", "AI-writing tells", "default", "statement"
-        ),
-        "HSL002": RuleMetadata(
-            "HSL002", "Lazy imports", "Imports inside functions", "default", "statement"
-        ),
-        "HSL003": RuleMetadata(
-            "HSL003",
-            "TYPE_CHECKING position",
-            "TYPE_CHECKING blocks followed by imports",
-            "default",
-            "statement",
-        ),
-        "HSL004": RuleMetadata(
-            "HSL004", "Constants position", "Constants after definitions", "default", "statement"
-        ),
-        "HSL101": RuleMetadata(
-            "HSL101", "Spec tokens", "Configured spec tokens", "opt-in", "mixed"
-        ),
-        "HSL102": RuleMetadata(
-            "HSL102", "File length", "Files exceeding the line limit", "opt-in", "file"
-        ),
-        "HSL103": RuleMetadata(
-            "HSL103", "Exception names", "Exception binding names", "opt-in", "statement"
-        ),
-        "HSL900": RuleMetadata(
-            "HSL900", "Suppression diagnostics", "Invalid suppression pragmas", "always", "no-owner"
-        ),
-    }
-)
 
 
 def _hsl001(
@@ -129,6 +84,12 @@ _DETECTORS: Mapping[str, Detector] = MappingProxyType(
     }
 )
 
+if set(_DETECTORS) != set(ORDINARY_RULES):
+    raise RuntimeError(
+        "registry._DETECTORS is out of sync with rule_catalog.ORDINARY_RULES — "
+        "every ordinary rule needs exactly one dispatch function"
+    )
+
 
 def detect_candidates(
     source: SourceFile, detector_inputs: tuple[DetectorInput, ...], *, limit: int | None = None
@@ -145,19 +106,4 @@ def detect_candidates(
     return candidates
 
 
-def is_known_rule(rule_id: str) -> bool:
-    """Return whether a rule ID belongs to the fixed built-in registry."""
-    return rule_id in _RULES
-
-
-def rule_ids() -> tuple[str, ...]:
-    """Return built-in rule IDs in their stable display order."""
-    return tuple(_RULES)
-
-
-def rule_metadata(rule_id: str) -> RuleMetadata:
-    """Return display metadata for one known built-in rule."""
-    return _RULES[rule_id]
-
-
-__all__ = ["detect_candidates", "is_known_rule", "rule_ids", "rule_metadata"]
+__all__ = ["detect_candidates"]

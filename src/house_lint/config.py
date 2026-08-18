@@ -9,9 +9,9 @@ from typing import Any, cast
 
 from pathspec import GitIgnoreSpec
 
+from .rule_catalog import DEFAULT_SELECT, ORDINARY_RULES
+
 DEFAULT_INCLUDE = ("src", "tests", "scripts", "tools", "examples")
-DEFAULT_SELECT = ("HSL001", "HSL002", "HSL003", "HSL004")
-ORDINARY_RULES = frozenset((*DEFAULT_SELECT, "HSL101", "HSL102", "HSL103"))
 _PREFIX = re.compile(r"[A-Z][A-Z0-9_]*\Z")
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
