@@ -1,4 +1,6 @@
-from house_lint.analysis import SourceKind, StatementKey
+import pytest
+
+from house_lint.analysis import CandidateBudgetExceeded, SourceKind, StatementKey
 from house_lint.rules.type_checking_position import detect
 from house_lint.source import SourceFile
 
@@ -84,3 +86,11 @@ def test_reports_only_guards_with_later_top_level_imports(write_sample) -> None:
     assert [(finding.line, finding.message) for finding in findings] == [
         (4, "if TYPE_CHECKING block followed by imports")
     ]
+
+
+def test_limits_materialized_candidates_when_requested(write_sample) -> None:
+    guards = "if TYPE_CHECKING:\n    from a import A\n" * 10_002
+    path = write_sample(f"from typing import TYPE_CHECKING\n\n{guards}import os\n")
+
+    with pytest.raises(CandidateBudgetExceeded):
+        detect(SourceFile(path, path.parent), limit=10_000)

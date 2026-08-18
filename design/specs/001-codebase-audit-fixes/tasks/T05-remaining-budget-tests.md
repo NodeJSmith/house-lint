@@ -1,7 +1,7 @@
 ---
 task_id: "T05"
 title: "Add budget-cutoff tests to the remaining 5 rule test files"
-status: "planned"
+status: "done"
 depends_on: []
 implements: ["FR#4", "AC#4"]
 ---
