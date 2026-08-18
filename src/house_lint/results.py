@@ -15,7 +15,9 @@ def _validate_location(
         type(value) is int and value >= 1 for value in location
     ):
         raise ValueError("locations must be all null or valid 1-based coordinates")
-    assert line is not None and column is not None and end_line is not None and end_column is not None
+    assert (
+        line is not None and column is not None and end_line is not None and end_column is not None
+    )
     if (end_line, end_column) < (line, column):
         raise ValueError("location end must not precede its start")
 
@@ -78,7 +80,9 @@ class LintError:
         }
 
 
-def error(kind: str, phase: str, operation: str, message: str, *, path: str | None = None) -> LintError:
+def error(
+    kind: str, phase: str, operation: str, message: str, *, path: str | None = None
+) -> LintError:
     return LintError(
         f"{kind}-error", kind, path, None, None, None, None, phase, operation, None, message
     )
@@ -132,7 +136,7 @@ class ScanResult:
             "files_scanned": self.files_scanned,
             "files_skipped": self.files_skipped,
             "findings": [finding.to_dict() for finding in findings],
-            "errors": [error.to_dict() for error in errors],
+            "errors": [err.to_dict() for err in errors],
             "summary": {
                 "finding_count": len(findings),
                 "error_count": len(errors),

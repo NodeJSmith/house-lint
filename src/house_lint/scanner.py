@@ -44,7 +44,9 @@ def scan_file(
     source = _load_source(path, root=root, debug=debug)
     if isinstance(source, FileScanResult):
         return source
-    return _scan_ready_source(source, enabled_rules=enabled_rules, detector_inputs=detector_inputs, debug=debug)
+    return _scan_ready_source(
+        source, enabled_rules=enabled_rules, detector_inputs=detector_inputs, debug=debug
+    )
 
 
 def _load_source(path: Path, *, root: Path, debug: bool) -> SourceFile | FileScanResult:
@@ -58,7 +60,9 @@ def _load_source(path: Path, *, root: Path, debug: bool) -> SourceFile | FileSca
             return FileScanResult(errors=(source.error,))
         return source
     except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
-        error_path = source.relative_path if source is not None else path.relative_to(root).as_posix()
+        error_path = (
+            source.relative_path if source is not None else path.relative_to(root).as_posix()
+        )
         if debug:
             traceback.print_exc(file=sys.stderr)
         return FileScanResult(
@@ -100,9 +104,7 @@ def _scan_ready_source(
         if debug:
             traceback.print_exc(file=sys.stderr)
         return FileScanResult(
-            errors=(
-                internal_error("analysis", "rule-dispatch", path=source.relative_path),
-            ),
+            errors=(internal_error("analysis", "rule-dispatch", path=source.relative_path),),
             files_scanned=1,
             stop=True,
         )

@@ -194,7 +194,9 @@ class _FileSelector:
         if not is_file or path.suffix != ".py":
             if explicit_paths:
                 raise DiscoveryError(
-                    self._error(path, "path", "qualify", f"explicit path is not a Python file: {path}")
+                    self._error(
+                        path, "path", "qualify", f"explicit path is not a Python file: {path}"
+                    )
                 )
             self.files_skipped += 1
             return
@@ -238,7 +240,9 @@ class _FileSelector:
                     continue
                 if is_symlink:
                     self.errors.append(
-                        self._error(child, "traversal", "walk", "directory symlink is not traversed")
+                        self._error(
+                            child, "traversal", "walk", "directory symlink is not traversed"
+                        )
                     )
                     continue
                 kept_dirs.append(item)

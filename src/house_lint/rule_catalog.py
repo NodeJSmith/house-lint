@@ -29,9 +29,7 @@ RULES: Mapping[str, RuleMetadata] = MappingProxyType(
             "HSL004", "Constants position", "Constants after definitions", "default"
         ),
         "HSL101": RuleMetadata("HSL101", "Spec tokens", "Configured spec tokens", "opt-in"),
-        "HSL102": RuleMetadata(
-            "HSL102", "File length", "Files exceeding the line limit", "opt-in"
-        ),
+        "HSL102": RuleMetadata("HSL102", "File length", "Files exceeding the line limit", "opt-in"),
         "HSL103": RuleMetadata("HSL103", "Exception names", "Exception binding names", "opt-in"),
         "HSL900": RuleMetadata(
             "HSL900", "Suppression diagnostics", "Invalid suppression pragmas", "always"
