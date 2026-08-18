@@ -660,3 +660,23 @@ def test_cli_boundary_internal_error_preserves_resolved_context(
     assert code == 4
     assert result["root"] == str(repository.resolve())
     assert result["config"] is None
+
+
+def test_root_resolution_runtime_error_is_caught_as_internal_error(
+    repository: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    original_resolve = Path.resolve
+
+    def fail_resolve(self: Path, *args: object, **kwargs: object) -> Path:
+        if self == repository:
+            raise RuntimeError("simulated symlink cycle")
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_resolve)
+
+    code = cli.check(root=repository, format="json")
+    result = json.loads(capsys.readouterr().out)
+
+    assert code == 4
+    assert result["errors"][0]["kind"] == "internal"
+    assert result["root"] is None

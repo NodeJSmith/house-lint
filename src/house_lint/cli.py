@@ -175,9 +175,14 @@ def check(
         return 2
     cli_select = _flatten_ids(select)
     cli_ignore = _flatten_ids(ignore)
-    resolved_root: Path | None = root.expanduser().resolve() if root is not None else None
-    resolved_config: Path | None = config.expanduser().resolve() if config is not None else None
+    resolved_root: Path | None = None
+    resolved_config: Path | None = None
     try:
+        # Best-effort fallback for error reporting: resolve_project() below performs
+        # this same resolution and overwrites these on success, but if it raises before
+        # returning, the except handlers still need a resolved root/config to report.
+        resolved_root = root.expanduser().resolve() if root is not None else None
+        resolved_config = config.expanduser().resolve() if config is not None else None
         resolution = resolve_project(root=root, config=config)
         resolved_root = resolution.root
         resolved_config = resolution.config
