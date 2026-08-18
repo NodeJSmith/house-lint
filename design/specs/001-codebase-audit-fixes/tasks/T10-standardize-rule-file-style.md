@@ -1,7 +1,7 @@
 ---
 task_id: "T10"
 title: "Standardize guard clause and __all__ across the 7 rule files"
-status: "planned"
+status: "done"
 depends_on: ["T04", "T08"]
 implements: ["FR#9", "AC#9"]
 ---

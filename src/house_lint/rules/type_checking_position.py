@@ -10,8 +10,9 @@ def detect(
     source: SourceFile, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
     """Return HSL003 candidates for misplaced top-level type-checking guards."""
-    if source.error is not None or source.tree is None:
+    if source.error is not None:
         return []
+    assert source.tree is not None
     findings: list[CandidateFinding] = []
     for index, node in enumerate(source.tree.body):
         if not isinstance(node, ast.If) or not _is_type_checking_guard(node.test):
@@ -40,3 +41,6 @@ def _is_type_checking_guard(test: ast.expr) -> bool:
         and isinstance(test.value, ast.Name)
         and test.value.id == "typing"
     )
+
+
+__all__ = ["detect"]

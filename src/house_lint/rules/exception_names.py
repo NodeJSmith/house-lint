@@ -11,8 +11,9 @@ def detect(
     source: SourceFile, options: HSL103Options, *, limit: int | None = None
 ) -> list[CandidateFinding]:
     """Return HSL103 candidates for disallowed bound exception names."""
-    if source.error is not None or source.tree is None:
+    if source.error is not None:
         return []
+    assert source.tree is not None
     findings: list[CandidateFinding] = []
     for try_statement in ast.walk(source.tree):
         if not isinstance(try_statement, (ast.Try, ast.TryStar)):

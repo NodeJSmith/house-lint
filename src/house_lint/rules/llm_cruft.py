@@ -80,3 +80,6 @@ def _comment_candidate(source: SourceFile, line: int, message: str) -> Candidate
         line,
         comment_owner_for_line(source, line, comment),
     )
+
+
+__all__ = ["detect"]

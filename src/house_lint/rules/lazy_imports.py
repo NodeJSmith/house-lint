@@ -10,8 +10,9 @@ def detect(
     source: SourceFile, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
     """Return HSL002 candidates for imports reached at function depth."""
-    if source.error is not None or source.tree is None:
+    if source.error is not None:
         return []
+    assert source.tree is not None
     visitor = _LazyImportVisitor(source, limit)
     visitor.visit(source.tree)
     return visitor.findings
@@ -48,3 +49,6 @@ class _LazyImportVisitor(ast.NodeVisitor):
 
 def _candidate(source: SourceFile, node: ast.Import | ast.ImportFrom) -> CandidateFinding:
     return candidate_for_statement(source, "HSL002", "import inside function body", node)
+
+
+__all__ = ["detect"]
