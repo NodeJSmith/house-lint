@@ -255,6 +255,19 @@ def test_json_missing_explicit_config_preserves_resolved_root_and_config(reposit
     assert result["files_scanned"] == result["files_skipped"] == 0
 
 
+def test_json_root_not_a_directory_reports_canonical_root(tmp_path: Path) -> None:
+    (tmp_path / "notadir").write_text("not a directory\n")
+    cwd = tmp_path / "sub"
+    cwd.mkdir()
+
+    completed = _run(cwd, "check", "--root", "../notadir", "--format", "json")
+
+    result = json.loads(completed.stdout)
+    assert completed.returncode == 2
+    assert result["root"] == str((tmp_path / "notadir").resolve())
+    assert "root is not a directory" in result["errors"][0]["message"]
+
+
 def test_json_auto_discovery_config_error_preserves_resolved_root(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[tool.house-lint\n")
 

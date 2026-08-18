@@ -50,9 +50,7 @@ def _render_error(err: LintError) -> str:
 def _result_for_config_error(
     exc: ConfigError, *, root: Path | None = None, config: Path | None = None
 ) -> ScanResult:
-    return ScanResult(
-        root, config, (), 0, 0, errors=(error("config", "config", "load", str(exc)),)
-    )
+    return ScanResult(root, config, (), 0, 0, errors=(error("config", "config", "load", str(exc)),))
 
 
 def _write_result(
@@ -177,8 +175,8 @@ def check(
         return 2
     cli_select = _flatten_ids(select)
     cli_ignore = _flatten_ids(ignore)
-    resolved_root: Path | None = root.expanduser() if root is not None else None
-    resolved_config: Path | None = config.expanduser() if config is not None else None
+    resolved_root: Path | None = root.expanduser().resolve() if root is not None else None
+    resolved_config: Path | None = config.expanduser().resolve() if config is not None else None
     try:
         resolution = resolve_project(root=root, config=config)
         resolved_root = resolution.root
