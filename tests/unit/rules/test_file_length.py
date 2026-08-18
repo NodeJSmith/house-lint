@@ -28,3 +28,8 @@ def test_legacy_file_size_exemption_comment_does_not_suppress_finding(write_samp
     findings = detect(SourceFile(path, path.parent), HSL102Options(max_lines=3))
 
     assert [finding.message for finding in findings] == ["4 lines (threshold: 3)"]
+
+
+# No budget-cutoff test here: detect() emits at most one file-owned candidate per call
+# (see src/house_lint/rules/file_length.py), so the append_candidate safety limit can
+# never be exceeded by this rule regardless of source size.

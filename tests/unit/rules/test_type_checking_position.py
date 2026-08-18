@@ -1,4 +1,11 @@
-from house_lint.analysis import SourceKind, StatementKey
+import pytest
+
+from house_lint.analysis import (
+    MAX_CANDIDATES_PER_FILE,
+    CandidateBudgetExceeded,
+    SourceKind,
+    StatementKey,
+)
 from house_lint.rules.type_checking_position import detect
 from house_lint.source import SourceFile
 
@@ -17,7 +24,7 @@ def test_detects_both_top_level_guards_followed_by_later_imports(write_sample) -
         from pathlib import Path
     """)
 
-    findings = detect(SourceFile(path, path.parent))
+    findings = detect(SourceFile(path, path.parent), None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (4, "if TYPE_CHECKING block followed by imports"),
@@ -40,7 +47,7 @@ def test_ignores_final_and_nested_type_checking_guards(write_sample) -> None:
             from pathlib import Path
     """)
 
-    assert detect(SourceFile(path, path.parent)) == []
+    assert detect(SourceFile(path, path.parent), None) == []
 
 
 def test_ignores_final_and_nested_qualified_type_checking_guards(write_sample) -> None:
@@ -59,7 +66,7 @@ def test_ignores_final_and_nested_qualified_type_checking_guards(write_sample) -
             pass
     """)
 
-    assert detect(SourceFile(path, path.parent)) == []
+    assert detect(SourceFile(path, path.parent), None) == []
 
 
 def test_reports_only_guards_with_later_top_level_imports(write_sample) -> None:
@@ -79,8 +86,16 @@ def test_reports_only_guards_with_later_top_level_imports(write_sample) -> None:
             pass
     """)
 
-    findings = detect(SourceFile(path, path.parent))
+    findings = detect(SourceFile(path, path.parent), None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (4, "if TYPE_CHECKING block followed by imports")
     ]
+
+
+def test_limits_materialized_candidates_when_requested(write_sample) -> None:
+    guards = "if TYPE_CHECKING:\n    from a import A\n" * (MAX_CANDIDATES_PER_FILE + 2)
+    path = write_sample(f"from typing import TYPE_CHECKING\n\n{guards}import os\n")
+
+    with pytest.raises(CandidateBudgetExceeded):
+        detect(SourceFile(path, path.parent), None, limit=MAX_CANDIDATES_PER_FILE)

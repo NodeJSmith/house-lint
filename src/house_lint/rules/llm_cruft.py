@@ -34,7 +34,9 @@ FILLER_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
-def detect(source: SourceFile, *, limit: int | None = None) -> list[CandidateFinding]:
+def detect(
+    source: SourceFile, options: object, *, limit: int | None = None
+) -> list[CandidateFinding]:
     """Return HSL001 candidates using only cached source representations."""
     if source.error is not None:
         return []
@@ -78,3 +80,6 @@ def _comment_candidate(source: SourceFile, line: int, message: str) -> Candidate
         line,
         comment_owner_for_line(source, line, comment),
     )
+
+
+__all__ = ["detect"]

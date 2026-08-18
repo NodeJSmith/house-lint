@@ -8,7 +8,7 @@ import tokenize
 from pathlib import Path
 from typing import TypeAlias
 
-from .results import LintError
+from house_lint.results import LintError
 
 MAX_SOURCE_BYTES = 10 * 1024 * 1024
 

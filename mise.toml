@@ -1,0 +1,3 @@
+[tasks."worktree:setup"]
+description = "Set up a new worktree (venv + deps)"
+run = "uv sync --locked"

@@ -2,14 +2,12 @@
 
 import os
 import re
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from pathspec import GitIgnoreSpec
 
-from house_lint.config import DEFAULT_INCLUDE, ConfigError, get_house_lint_table
+from house_lint.config import DEFAULT_INCLUDE, ConfigError, get_house_lint_table, load_toml
 from house_lint.results import LintError
 
 BUILTIN_EXCLUDES = (".git/", ".venv/", ".nox/", "__pycache__/", "site-packages/", "node_modules/")
@@ -45,6 +43,22 @@ def _inside(root: Path, path: Path) -> bool:
     return True
 
 
+def _gitignore_error(operation: str, message: str) -> LintError:
+    return LintError(
+        code="traversal-error",
+        kind="traversal",
+        path=".gitignore",
+        line=None,
+        column=None,
+        end_line=None,
+        end_column=None,
+        phase="discovery",
+        operation=operation,
+        rule_id=None,
+        message=message,
+    )
+
+
 def _patterns(
     root: Path, excludes: tuple[str, ...], use_gitignore: bool
 ) -> tuple[GitIgnoreSpec, GitIgnoreSpec, GitIgnoreSpec, tuple[LintError, ...]]:
@@ -56,21 +70,7 @@ def _patterns(
         try:
             is_file = ignore.is_file()
         except OSError as exc:
-            errors.append(
-                LintError(
-                    "traversal-error",
-                    "traversal",
-                    ".gitignore",
-                    None,
-                    None,
-                    None,
-                    None,
-                    "discovery",
-                    "stat",
-                    None,
-                    str(exc),
-                )
-            )
+            errors.append(_gitignore_error("stat", str(exc)))
             is_file = False
         if is_file:
             try:
@@ -78,37 +78,9 @@ def _patterns(
                     ignore.read_text(encoding="utf-8").splitlines()
                 )
             except (OSError, UnicodeDecodeError) as exc:
-                errors.append(
-                    LintError(
-                        "traversal-error",
-                        "traversal",
-                        ".gitignore",
-                        None,
-                        None,
-                        None,
-                        None,
-                        "discovery",
-                        "read",
-                        None,
-                        str(exc),
-                    )
-                )
+                errors.append(_gitignore_error("read", str(exc)))
             except (TypeError, ValueError, re.error) as exc:
-                errors.append(
-                    LintError(
-                        "traversal-error",
-                        "traversal",
-                        ".gitignore",
-                        None,
-                        None,
-                        None,
-                        None,
-                        "discovery",
-                        "parse",
-                        None,
-                        str(exc),
-                    )
-                )
+                errors.append(_gitignore_error("parse", str(exc)))
     return (
         GitIgnoreSpec.from_lines(BUILTIN_EXCLUDES),
         exclude_spec,
@@ -196,7 +168,9 @@ class _FileSelector:
         if not is_file or path.suffix != ".py":
             if explicit_paths:
                 raise DiscoveryError(
-                    self._error(path, "path", "qualify", f"explicit path is not a Python file: {path}")
+                    self._error(
+                        path, "path", "qualify", f"explicit path is not a Python file: {path}"
+                    )
                 )
             self.files_skipped += 1
             return
@@ -220,9 +194,9 @@ class _FileSelector:
         self.selected[resolved] = path
 
     def _walk(self, directory: Path) -> None:
-        def onerror(error: OSError) -> None:
-            failed_path = Path(error.filename) if error.filename is not None else directory
-            self.errors.append(self._error(failed_path, "traversal", "walk", str(error)))
+        def onerror(err: OSError) -> None:
+            failed_path = Path(err.filename) if err.filename is not None else directory
+            self.errors.append(self._error(failed_path, "traversal", "walk", str(err)))
 
         for current, dirs, names in os.walk(
             directory, topdown=True, followlinks=False, onerror=onerror
@@ -230,33 +204,37 @@ class _FileSelector:
             if self.limit_reached:
                 break
             current_path = Path(current)
-            kept_dirs: list[str] = []
-            for item in sorted(dirs):
-                child = current_path / item
-                try:
-                    is_symlink = child.is_symlink()
-                except OSError as exc:
-                    self.errors.append(self._error(child, "traversal", "stat", str(exc)))
-                    continue
-                if is_symlink:
-                    self.errors.append(
-                        self._error(child, "traversal", "walk", "directory symlink is not traversed")
-                    )
-                    continue
-                kept_dirs.append(item)
-            dirs[:] = kept_dirs
+            dirs[:] = self._traversable_dirs(current_path, dirs)
             for name in sorted(names):
                 self._consider(current_path / name, explicit_paths=False)
                 if self.limit_reached:
                     break
 
+    def _traversable_dirs(self, current_path: Path, dirs: list[str]) -> list[str]:
+        """Return child directory names with symlinks excluded, recording why each was dropped."""
+        kept: list[str] = []
+        for item in sorted(dirs):
+            child = current_path / item
+            try:
+                is_symlink = child.is_symlink()
+            except OSError as exc:
+                self.errors.append(self._error(child, "traversal", "stat", str(exc)))
+                continue
+            if is_symlink:
+                self.errors.append(
+                    self._error(child, "traversal", "walk", "directory symlink is not traversed")
+                )
+                continue
+            kept.append(item)
+        return kept
+
     def _filesystem_error(
         self, path: Path, operation: str, message: str, *, explicit_paths: bool
     ) -> None:
-        error = self._error(path, "path" if explicit_paths else "traversal", operation, message)
+        err = self._error(path, "path" if explicit_paths else "traversal", operation, message)
         if explicit_paths:
-            raise DiscoveryError(error)
-        self.errors.append(error)
+            raise DiscoveryError(err)
+        self.errors.append(err)
 
     def _error(self, path: Path, kind: str, operation: str, message: str) -> LintError:
         try:
@@ -319,13 +297,9 @@ def resolve_project(
         for candidate in (start, *start.parents):
             pyproject = candidate / "pyproject.toml"
             if pyproject.is_file():
-                try:
-                    with pyproject.open("rb") as stream:
-                        data: dict[str, Any] = tomllib.load(stream)
-                    if get_house_lint_table(data) is not None:
-                        return ProjectResolution(candidate, pyproject)
-                except (OSError, tomllib.TOMLDecodeError) as exc:
-                    raise ConfigError(f"invalid project configuration: {exc}") from exc
+                document = load_toml(pyproject)
+                if get_house_lint_table(document) is not None:
+                    return ProjectResolution(candidate, pyproject)
                 found_marker = found_marker or candidate
             if (candidate / ".git").exists():
                 found_marker = found_marker or candidate
@@ -339,11 +313,7 @@ def resolve_project(
         return ProjectResolution(resolved_root, resolved_config)
     candidate = resolved_root / "pyproject.toml"
     if candidate.is_file():
-        try:
-            with candidate.open("rb") as stream:
-                data = tomllib.load(stream)
-            if get_house_lint_table(data) is not None:
-                return ProjectResolution(resolved_root, candidate)
-        except (OSError, tomllib.TOMLDecodeError) as exc:
-            raise ConfigError(f"invalid project configuration: {exc}") from exc
+        document = load_toml(candidate)
+        if get_house_lint_table(document) is not None:
+            return ProjectResolution(resolved_root, candidate)
     return ProjectResolution(resolved_root, None)

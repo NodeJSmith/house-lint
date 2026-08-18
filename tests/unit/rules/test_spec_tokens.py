@@ -1,6 +1,13 @@
 from pathlib import Path
 
-from house_lint.analysis import SourceKind, StatementKey
+import pytest
+
+from house_lint.analysis import (
+    MAX_CANDIDATES_PER_FILE,
+    CandidateBudgetExceeded,
+    SourceKind,
+    StatementKey,
+)
 from house_lint.config import HSL101Options, TokenFamily
 from house_lint.rules.spec_tokens import detect
 from house_lint.source import SourceFile
@@ -113,3 +120,14 @@ def test_default_hash_mode_forbids_hash_and_default_cap_is_200(write_sample) -> 
     assert len(findings) == 200
     assert findings[0].message == "spec token AC001 in comment"
     assert findings[-1].message == "spec token AC200 in comment"
+
+
+def test_limits_materialized_candidates_when_requested(write_sample) -> None:
+    # range starts at 1 (not 0) for readable token text, so +3 here produces the same
+    # MAX_CANDIDATES_PER_FILE + 2 total tokens as the other rules' budget-cutoff tests
+    tokens = " ".join(f"AC{i}" for i in range(1, MAX_CANDIDATES_PER_FILE + 3))
+    path = write_sample(f"# {tokens}\n")
+    options = HSL101Options((TokenFamily(("AC",), ("comments",)),), max_findings_per_file=20_000)
+
+    with pytest.raises(CandidateBudgetExceeded):
+        detect(SourceFile(path, path.parent), options, limit=MAX_CANDIDATES_PER_FILE)

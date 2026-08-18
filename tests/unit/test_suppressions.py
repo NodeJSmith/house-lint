@@ -62,7 +62,7 @@ def test_trailing_ignore_owns_the_last_statement_on_a_semicolon_separated_line(
         write_sample,
         "def load() -> None:\n    value = 1; import module  # house-lint: ignore[HSL002] - generated import\n",
     )
-    candidates = tuple(detect_lazy_imports(source))
+    candidates = tuple(detect_lazy_imports(source, None))
 
     result = apply_suppressions(source, candidates, {"HSL002", "HSL900"})
 
@@ -96,7 +96,7 @@ def test_trailing_ignore_suppresses_hsl001_inline_comment_in_multiline_statement
         write_sample,
         "value = (\n    1\n)  # house-lint: ignore[HSL001] - Please note that generated value\n",
     )
-    candidates = tuple(detect_llm_cruft(source))
+    candidates = tuple(detect_llm_cruft(source, None))
 
     result = apply_suppressions(source, candidates, {"HSL001", "HSL900"})
 

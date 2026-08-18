@@ -58,3 +58,19 @@ def test_text_reporter_makes_clean_empty_scans_explicit(tmp_path: Path) -> None:
     result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0, 0)
 
     assert "empty scan: no Python files selected" in render_text(result).splitlines()
+    assert json.loads(render_json(result))["findings"] == []
+
+
+def test_json_reporter_escapes_non_ascii_while_text_reporter_keeps_it_raw(tmp_path: Path) -> None:
+    result = ScanResult(
+        tmp_path,
+        None,
+        ("HSL002",),
+        1,
+        0,
+        (Finding("HSL002", "src/café.py", None, None, None, None, "café finding"),),
+    )
+
+    assert "café" not in render_json(result)
+    assert "\\u00e9" in render_json(result)
+    assert "café" in render_text(result)

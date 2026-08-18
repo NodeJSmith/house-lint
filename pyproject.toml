@@ -29,11 +29,7 @@ dev = [
   "pytest>=8.0",
   "ruff>=0.9",
   "pyright>=1.1",
-  "flake8>=7.0",
-  "flake8-async>=24.0",
-  "Flake8-pyproject>=1.2",
   "pyyaml>=6.0",
-  "typos>=1.0",
 ]
 
 [build-system]
@@ -54,7 +50,3 @@ exclude = ["design"]
 [tool.pyright]
 include = ["src"]
 typeCheckingMode = "strict"
-
-[tool.flake8]
-exclude = [".venv", ".git"]
-max-line-length = 100

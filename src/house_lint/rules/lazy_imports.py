@@ -2,16 +2,24 @@
 
 import ast
 
-from house_lint.analysis import CandidateBudgetExceeded, CandidateFinding, candidate_for_statement
+from house_lint.analysis import (
+    CandidateFinding,
+    append_candidate,
+    candidate_for_statement,
+    parsed_tree,
+)
 from house_lint.source import SourceFile
 
 
-def detect(source: SourceFile, *, limit: int | None = None) -> list[CandidateFinding]:
+def detect(
+    source: SourceFile, options: object, *, limit: int | None = None
+) -> list[CandidateFinding]:
     """Return HSL002 candidates for imports reached at function depth."""
-    if source.error is not None or source.tree is None:
+    tree = parsed_tree(source)
+    if tree is None:
         return []
     visitor = _LazyImportVisitor(source, limit)
-    visitor.visit(source.tree)
+    visitor.visit(tree)
     return visitor.findings
 
 
@@ -41,12 +49,11 @@ class _LazyImportVisitor(ast.NodeVisitor):
             self._append(node)
 
     def _append(self, node: ast.Import | ast.ImportFrom) -> None:
-        if self.limit is not None and len(self.findings) >= self.limit:
-            raise CandidateBudgetExceeded(
-                self.source.relative_path, candidates=tuple(self.findings)
-            )
-        self.findings.append(_candidate(self.source, node))
+        append_candidate(self.findings, _candidate(self.source, node), self.source, self.limit)
 
 
 def _candidate(source: SourceFile, node: ast.Import | ast.ImportFrom) -> CandidateFinding:
     return candidate_for_statement(source, "HSL002", "import inside function body", node)
+
+
+__all__ = ["detect"]

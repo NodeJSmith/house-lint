@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from house_lint import cli
+from house_lint import cli, scanner
+from house_lint.analysis import MAX_CANDIDATES_PER_FILE
 
 
 def _run(
@@ -255,6 +256,33 @@ def test_json_missing_explicit_config_preserves_resolved_root_and_config(reposit
     assert result["files_scanned"] == result["files_skipped"] == 0
 
 
+def test_json_root_not_a_directory_reports_canonical_root(tmp_path: Path) -> None:
+    (tmp_path / "notadir").write_text("not a directory\n")
+    cwd = tmp_path / "sub"
+    cwd.mkdir()
+
+    completed = _run(cwd, "check", "--root", "../notadir", "--format", "json")
+
+    result = json.loads(completed.stdout)
+    assert completed.returncode == 2
+    assert result["root"] == str((tmp_path / "notadir").resolve())
+    assert result["errors"][0]["kind"] == "config"
+    assert "root is not a directory" in result["errors"][0]["message"]
+
+
+def test_json_auto_discovery_config_error_preserves_resolved_root(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[tool.house-lint\n")
+
+    completed = _run(tmp_path, "check", "--format", "json")
+
+    result = json.loads(completed.stdout)
+    assert completed.returncode == 2
+    assert completed.stderr == ""
+    assert result["root"] is not None
+    assert result["config"] is None
+    assert result["errors"][0]["kind"] == "config"
+
+
 def test_source_checkout_module_entry_point_does_not_require_distribution_metadata(
     repository: Path,
 ) -> None:
@@ -280,9 +308,9 @@ runpy.run_module("house_lint", run_name="__main__")
 def test_candidate_budget_is_an_incomplete_subprocess_result(repository: Path) -> None:
     (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
     prelude = """
-from house_lint import cli
+from house_lint import cli, scanner
 
-cli.MAX_CANDIDATES_PER_FILE = 0
+scanner.MAX_CANDIDATES_PER_FILE = 0
 cli.main()
 """
 
@@ -304,7 +332,7 @@ cli.main()
 
 def test_hsl001_stops_at_the_candidate_budget(repository: Path) -> None:
     (repository / "src" / "overflow.py").write_text(
-        "\n".join("# utilize this" for _ in range(10_002))
+        "\n".join("# utilize this" for _ in range(MAX_CANDIDATES_PER_FILE + 2))
     )
 
     completed = _run(
@@ -321,16 +349,16 @@ def test_hsl001_stops_at_the_candidate_budget(repository: Path) -> None:
     result = json.loads(completed.stdout)
     assert completed.returncode == 3
     assert result["errors"][0]["kind"] == "budget"
-    assert len(result["findings"]) == 10_000
+    assert len(result["findings"]) == MAX_CANDIDATES_PER_FILE
     assert {finding["rule_id"] for finding in result["findings"]} == {"HSL001"}
 
 
 def test_suppression_diagnostics_respect_the_candidate_budget(repository: Path) -> None:
     (repository / "src" / "pragma.py").write_text("# house-lint: ignore[] - generated module\n")
     prelude = """
-from house_lint import cli
+from house_lint import cli, scanner
 
-cli.MAX_CANDIDATES_PER_FILE = 0
+scanner.MAX_CANDIDATES_PER_FILE = 0
 cli.main()
 """
 
@@ -352,7 +380,7 @@ cli.main()
 
 def test_suppression_budget_preserves_the_bounded_candidate_prefix(repository: Path) -> None:
     (repository / "src" / "overflow.py").write_text(
-        "\n".join("# utilize this" for _ in range(10_000))
+        "\n".join("# utilize this" for _ in range(MAX_CANDIDATES_PER_FILE))
         + "\n# house-lint: ignore[] - generated module\n"
     )
 
@@ -370,7 +398,7 @@ def test_suppression_budget_preserves_the_bounded_candidate_prefix(repository: P
     result = json.loads(completed.stdout)
     assert completed.returncode == 3
     assert result["errors"][0]["kind"] == "budget"
-    assert len(result["findings"]) == 10_000
+    assert len(result["findings"]) == MAX_CANDIDATES_PER_FILE
     assert {finding["rule_id"] for finding in result["findings"]} == {"HSL001"}
 
 
@@ -378,7 +406,7 @@ def test_detector_and_suppression_budget_preserve_the_bounded_candidate_prefix(
     repository: Path,
 ) -> None:
     (repository / "src" / "overflow.py").write_text(
-        "\n".join("# utilize this" for _ in range(10_001))
+        "\n".join("# utilize this" for _ in range(MAX_CANDIDATES_PER_FILE + 1))
         + "\n# house-lint: ignore[] - generated module\n"
     )
 
@@ -396,7 +424,7 @@ def test_detector_and_suppression_budget_preserve_the_bounded_candidate_prefix(
     result = json.loads(completed.stdout)
     assert completed.returncode == 3
     assert result["errors"][0]["kind"] == "budget"
-    assert len(result["findings"]) == 10_000
+    assert len(result["findings"]) == MAX_CANDIDATES_PER_FILE
     assert {finding["rule_id"] for finding in result["findings"]} == {"HSL001"}
 
 
@@ -404,7 +432,7 @@ def test_budget_error_preserves_findings_from_completed_files(repository: Path) 
     first = repository / "src" / "a.py"
     overflow = repository / "src" / "overflow.py"
     first.write_text("def example():\n    import module\n")
-    overflow.write_text("\n".join("# utilize this" for _ in range(10_001)))
+    overflow.write_text("\n".join("# utilize this" for _ in range(MAX_CANDIDATES_PER_FILE + 1)))
 
     completed = _run(
         repository,
@@ -430,7 +458,7 @@ def test_budget_error_preserves_findings_from_completed_files(repository: Path) 
 def test_zero_capacity_detector_overflow_applies_known_suppressions(repository: Path) -> None:
     (repository / "src" / "overflow.py").write_text(
         "# house-lint: ignore-file[HSL001] - generated module\n"
-        + "\n".join("# utilize this" for _ in range(10_000))
+        + "\n".join("# utilize this" for _ in range(MAX_CANDIDATES_PER_FILE))
         + "\ndef example():\n    import package  # house-lint: ignore[HSL002] - lazy dependency\n"
     )
 
@@ -448,13 +476,13 @@ def test_zero_capacity_detector_overflow_applies_known_suppressions(repository: 
     result = json.loads(completed.stdout)
     assert completed.returncode == 3
     assert result["findings"] == []
-    assert result["summary"]["suppressed_count"] == 10_000
+    assert result["summary"]["suppressed_count"] == MAX_CANDIDATES_PER_FILE
 
 
 def test_suppression_budget_applies_completed_suppressions(repository: Path) -> None:
     (repository / "src" / "overflow.py").write_text(
         "# house-lint: ignore-file[HSL001] - generated module\n"
-        + "\n".join("# utilize this" for _ in range(9_999))
+        + "\n".join("# utilize this" for _ in range(MAX_CANDIDATES_PER_FILE - 1))
         + "\n# house-lint: ignore[] - generated module\n"
         + "# house-lint: ignore[] - generated module\n"
     )
@@ -473,7 +501,7 @@ def test_suppression_budget_applies_completed_suppressions(repository: Path) -> 
     result = json.loads(completed.stdout)
     assert completed.returncode == 3
     assert [finding["rule_id"] for finding in result["findings"]] == ["HSL900"]
-    assert result["summary"]["suppressed_count"] == 9_999
+    assert result["summary"]["suppressed_count"] == MAX_CANDIDATES_PER_FILE - 1
 
 
 def test_budget_error_counts_the_file_when_rule_execution_begins(
@@ -481,7 +509,7 @@ def test_budget_error_counts_the_file_when_rule_execution_begins(
 ) -> None:
     source = repository / "src" / "finding.py"
     source.write_text("def example():\n    import module\n")
-    monkeypatch.setattr(cli, "MAX_CANDIDATES_PER_FILE", 0)
+    monkeypatch.setattr(scanner, "MAX_CANDIDATES_PER_FILE", 0)
 
     code = cli.check(paths=[source], root=repository, format="json")
     result = json.loads(capsys.readouterr().out)
@@ -492,12 +520,12 @@ def test_budget_error_counts_the_file_when_rule_execution_begins(
 
 def test_subprocess_internal_failure_exits_four_with_parseable_json(repository: Path) -> None:
     prelude = """
-from house_lint import cli
+from house_lint import cli, scanner
 
 def fail(*_args: object) -> object:
     raise RuntimeError("simulated failure")
 
-cli.detect_candidates = fail
+scanner.detect_candidates = fail
 cli.main()
 """
 
@@ -528,16 +556,16 @@ def test_subprocess_internal_error_precedes_incomplete_scan_and_preserves_findin
     broken.write_text("def broken()\n    pass\n")
     failing.write_text("value = 1\n")
     prelude = """
-from house_lint import cli
+from house_lint import cli, scanner
 
-original = cli.detect_candidates
+original = scanner.detect_candidates
 
 def fail_c(source, detector_inputs, **kwargs):
     if source.relative_path == "src/c.py":
         raise RuntimeError("simulated failure")
     return original(source, detector_inputs, **kwargs)
 
-cli.detect_candidates = fail_c
+scanner.detect_candidates = fail_c
 cli.main()
 """
 
@@ -568,14 +596,16 @@ def test_internal_error_preserves_completed_results_and_writes_debug_to_stderr(
     second = repository / "src" / "b.py"
     first.write_text("def example():\n    import module\n")
     second.write_text("value = 1\n")
-    original = cli.detect_candidates
+    original = scanner.detect_candidates
 
-    def fail_second(source: cli.SourceFile, detector_inputs: object, **kwargs: object) -> object:
+    def fail_second(
+        source: scanner.SourceFile, detector_inputs: object, **kwargs: object
+    ) -> object:
         if source.relative_path == "src/b.py":
             raise RuntimeError("simulated failure")
         return original(source, detector_inputs, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(cli, "detect_candidates", fail_second)
+    monkeypatch.setattr(scanner, "detect_candidates", fail_second)
 
     code = cli.check(paths=[first, second], root=repository, format="json", debug=True)
     captured = capsys.readouterr()
@@ -599,14 +629,14 @@ def test_source_construction_failure_preserves_completed_results(
     second = repository / "src" / "b.py"
     first.write_text("def example():\n    import module\n")
     second.write_text("value = 1\n")
-    source_file = cli.SourceFile
+    source_file = scanner.SourceFile
 
-    def fail_second(path: Path, root: Path) -> cli.SourceFile:
+    def fail_second(path: Path, root: Path) -> scanner.SourceFile:
         if path == second:
             raise RuntimeError("simulated construction failure")
         return source_file(path, root)
 
-    monkeypatch.setattr(cli, "SourceFile", fail_second)
+    monkeypatch.setattr(scanner, "SourceFile", fail_second)
 
     code = cli.check(paths=[first, second], root=repository, format="json")
     result = json.loads(capsys.readouterr().out)
@@ -614,6 +644,7 @@ def test_source_construction_failure_preserves_completed_results(
     assert code == 4
     assert [finding["path"] for finding in result["findings"]] == ["src/a.py"]
     assert result["files_scanned"] == 1
+    assert result["errors"][0]["kind"] == "internal"
     assert result["errors"][0]["operation"] == "source-load"
 
 
@@ -631,3 +662,23 @@ def test_cli_boundary_internal_error_preserves_resolved_context(
     assert code == 4
     assert result["root"] == str(repository.resolve())
     assert result["config"] is None
+
+
+def test_root_resolution_runtime_error_is_caught_as_internal_error(
+    repository: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    original_resolve = Path.resolve
+
+    def fail_resolve(self: Path, *args: object, **kwargs: object) -> Path:
+        if self == repository:
+            raise RuntimeError("simulated symlink cycle")
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_resolve)
+
+    code = cli.check(root=repository, format="json")
+    result = json.loads(capsys.readouterr().out)
+
+    assert code == 4
+    assert result["errors"][0]["kind"] == "internal"
+    assert result["root"] is None
