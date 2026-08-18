@@ -1,7 +1,7 @@
 ---
 task_id: "T11"
 title: "Close reporter test gaps: render_json empty-scan and Unicode round-trip"
-status: "planned"
+status: "done"
 depends_on: []
 implements: ["FR#10", "AC#10"]
 ---
