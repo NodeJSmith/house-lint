@@ -266,6 +266,7 @@ def test_json_root_not_a_directory_reports_canonical_root(tmp_path: Path) -> Non
     result = json.loads(completed.stdout)
     assert completed.returncode == 2
     assert result["root"] == str((tmp_path / "notadir").resolve())
+    assert result["errors"][0]["kind"] == "config"
     assert "root is not a directory" in result["errors"][0]["message"]
 
 
@@ -643,6 +644,7 @@ def test_source_construction_failure_preserves_completed_results(
     assert code == 4
     assert [finding["path"] for finding in result["findings"]] == ["src/a.py"]
     assert result["files_scanned"] == 1
+    assert result["errors"][0]["kind"] == "internal"
     assert result["errors"][0]["operation"] == "source-load"
 
 
