@@ -1,7 +1,7 @@
 ---
 task_id: "T04"
 title: "Route lazy_imports' budget check through analysis.append_candidate"
-status: "planned"
+status: "done"
 depends_on: ["T03"]
 implements: ["FR#3", "AC#3"]
 ---

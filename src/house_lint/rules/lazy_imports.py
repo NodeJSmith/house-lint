@@ -2,7 +2,7 @@
 
 import ast
 
-from house_lint.analysis import CandidateBudgetExceeded, CandidateFinding, candidate_for_statement
+from house_lint.analysis import CandidateFinding, append_candidate, candidate_for_statement
 from house_lint.source import SourceFile
 
 
@@ -41,11 +41,7 @@ class _LazyImportVisitor(ast.NodeVisitor):
             self._append(node)
 
     def _append(self, node: ast.Import | ast.ImportFrom) -> None:
-        if self.limit is not None and len(self.findings) >= self.limit:
-            raise CandidateBudgetExceeded(
-                self.source.relative_path, candidates=tuple(self.findings)
-            )
-        self.findings.append(_candidate(self.source, node))
+        append_candidate(self.findings, _candidate(self.source, node), self.source, self.limit)
 
 
 def _candidate(source: SourceFile, node: ast.Import | ast.ImportFrom) -> CandidateFinding:
