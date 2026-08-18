@@ -1,0 +1,74 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+
+reviews:
+  profile: assertive
+  auto_review:
+    enabled: false
+    drafts: false
+    base_branches:
+      - master
+
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+
+  path_instructions:
+    - path: "src/house_lint/rules/**"
+      instructions: |
+        Detector modules. Each detector has signature
+        `(source, options, *, limit=None) -> list[CandidateFinding]` and is
+        lazily imported from `registry.py`'s `_DETECTORS` map. A new or renamed
+        rule needs matching entries in both `rule_catalog.py` (RULES) and
+        `registry.py` (_DETECTORS) or the import-time consistency check raises
+        RuntimeError. HSL900 (suppression-pragma validation) must never become
+        disableable or suppressible — flag any change that would let it be
+        skipped via config or pragma.
+
+    - path: "src/house_lint/rule_catalog.py"
+      instructions: |
+        Single source of truth for rule IDs, display info, and enablement tier
+        (default vs opt-in vs always-on). Check that any new/changed rule entry
+        stays consistent with its corresponding registry.py dispatch entry and
+        that tier placement (HSL0xx default, HSL1xx opt-in, HSL900 always-on)
+        is correct.
+
+    - path: "src/house_lint/registry.py"
+      instructions: |
+        Dispatch only — lazily imports rules/<name>.py per rule ID to avoid
+        import cost for unused rules. Check that _DETECTORS stays in sync with
+        rule_catalog.ORDINARY_RULES, and that no eager top-level imports of
+        rule modules are introduced (defeats the lazy-import point).
+
+    - path: "src/house_lint/reporters/**"
+      instructions: |
+        Output formatting (text/json reporters consumed by the CLI). Check
+        that output stays stable/parseable for the json reporter and that
+        stdout is reserved for data while diagnostics go to stderr, per the
+        CLI's documented contract.
+
+    - path: "src/house_lint/cli.py"
+      instructions: |
+        cyclopts-based CLI entry point and the process's exception boundary.
+        Verify that fallible operations (path resolution, config loading,
+        file discovery) run inside the try/except that converts unexpected
+        exceptions into the documented internal-error result and exit code,
+        rather than escaping uncaught. Check exit codes match the documented
+        contract (2 config error, 3 findings/budget, 4 internal error).
+
+    - path: "tests/unit/rules/**"
+      instructions: |
+        Mirrors src/house_lint/rules/ 1:1. Use the write_sample(content) fixture
+        from tests/conftest.py (dedents and writes to tmp_path/sample.py)
+        instead of ad hoc file writes. Check new rule tests cover both a
+        triggering case and a non-triggering (clean) case.
+
+    - path: "tests/integration/**"
+      instructions: |
+        End-to-end CLI behavior tests (subprocess or in-process cli.check()
+        calls). Check that error-path tests assert on both the exit code and
+        the structured JSON error kind, matching the sibling tests already in
+        the file, rather than only checking exit code.
+
+chat:
+  auto_reply: true
