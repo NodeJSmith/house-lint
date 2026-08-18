@@ -111,11 +111,13 @@ def candidate_for_line(
     )
 
 
-def statement_owner_for_line(
-    source: SourceFile, line: int, column: int | None = None
-) -> ast.stmt | None:
-    """Return a comment's owner: innermost for trailing text, outermost at line ends."""
-    if column is not None and source.lines[line - 1][:column].strip():
+def statement_owner_for_line(source: SourceFile, line: int, column: int) -> ast.stmt | None:
+    """Return the statement a comment or docstring line is attached to.
+
+    Trailing comments (code precedes them on the line) resolve to their innermost enclosing
+    statement; standalone comments resolve to whichever statement starts or ends on that line.
+    """
+    if source.lines[line - 1][:column].strip():
         candidates = [
             statement
             for statement in source.statements
@@ -129,9 +131,7 @@ def statement_owner_for_line(
         ]
     if not candidates:
         return None
-    if column is not None:
-        return max(candidates, key=lambda statement: (statement.lineno, statement.col_offset))
-    return min(candidates, key=statement_span)
+    return max(candidates, key=lambda statement: (statement.lineno, statement.col_offset))
 
 
 def comment_owner_for_line(source: SourceFile, line: int, comment: str) -> ast.stmt | None:
@@ -150,12 +150,3 @@ def docstring_owner_for_line(source: SourceFile, line: int) -> ast.stmt:
         ):
             return statement
     raise RuntimeError("docstring line has no string-expression statement")
-
-
-def statement_span(statement: ast.stmt) -> tuple[int, int, int, int]:
-    return (
-        (statement.end_lineno or statement.lineno) - statement.lineno,
-        (statement.end_col_offset or statement.col_offset) - statement.col_offset,
-        statement.lineno,
-        statement.col_offset,
-    )

@@ -1,7 +1,7 @@
 ---
 task_id: "T02"
 title: "Remove confirmed dead code from analysis.py"
-status: "planned"
+status: "done"
 depends_on: []
 implements: ["FR#2", "AC#2"]
 ---
