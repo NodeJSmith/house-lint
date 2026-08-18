@@ -1,7 +1,7 @@
 ---
 task_id: "T06"
 title: "Extract a shared TOML-loading helper"
-status: "planned"
+status: "done"
 depends_on: []
 implements: ["FR#5", "AC#5"]
 ---

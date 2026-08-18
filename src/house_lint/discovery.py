@@ -2,14 +2,12 @@
 
 import os
 import re
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from pathspec import GitIgnoreSpec
 
-from house_lint.config import DEFAULT_INCLUDE, ConfigError, get_house_lint_table
+from house_lint.config import DEFAULT_INCLUDE, ConfigError, get_house_lint_table, load_toml
 from house_lint.results import LintError
 
 BUILTIN_EXCLUDES = (".git/", ".venv/", ".nox/", "__pycache__/", "site-packages/", "node_modules/")
@@ -319,13 +317,9 @@ def resolve_project(
         for candidate in (start, *start.parents):
             pyproject = candidate / "pyproject.toml"
             if pyproject.is_file():
-                try:
-                    with pyproject.open("rb") as stream:
-                        data: dict[str, Any] = tomllib.load(stream)
-                    if get_house_lint_table(data) is not None:
-                        return ProjectResolution(candidate, pyproject)
-                except (OSError, tomllib.TOMLDecodeError) as exc:
-                    raise ConfigError(f"invalid project configuration: {exc}") from exc
+                data = load_toml(pyproject)
+                if get_house_lint_table(data) is not None:
+                    return ProjectResolution(candidate, pyproject)
                 found_marker = found_marker or candidate
             if (candidate / ".git").exists():
                 found_marker = found_marker or candidate
@@ -339,11 +333,7 @@ def resolve_project(
         return ProjectResolution(resolved_root, resolved_config)
     candidate = resolved_root / "pyproject.toml"
     if candidate.is_file():
-        try:
-            with candidate.open("rb") as stream:
-                data = tomllib.load(stream)
-            if get_house_lint_table(data) is not None:
-                return ProjectResolution(resolved_root, candidate)
-        except (OSError, tomllib.TOMLDecodeError) as exc:
-            raise ConfigError(f"invalid project configuration: {exc}") from exc
+        data = load_toml(candidate)
+        if get_house_lint_table(data) is not None:
+            return ProjectResolution(resolved_root, candidate)
     return ProjectResolution(resolved_root, None)

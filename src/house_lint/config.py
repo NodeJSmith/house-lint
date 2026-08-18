@@ -259,6 +259,15 @@ def _rule_options(raw: dict[str, Any]) -> tuple[HSL101Options, HSL102Options, HS
     return hsl101, hsl102, HSL103Options(allowed)
 
 
+def load_toml(path: Path) -> dict[str, Any]:
+    """Parse a TOML file, raising ConfigError with a consistent message on failure."""
+    try:
+        with path.open("rb") as stream:
+            return tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ConfigError(f"invalid project configuration: {exc}") from exc
+
+
 def get_house_lint_table(document: dict[str, Any]) -> dict[str, Any] | None:
     """Return the house-lint table when this TOML document contains one."""
     tool = document.get("tool")
@@ -272,13 +281,7 @@ def load_config(
     path: Path, *, cli_select: Iterable[str] | None = None, cli_ignore: Iterable[str] | None = None
 ) -> LintConfig:
     """Load and validate one TOML configuration file."""
-    try:
-        with path.open("rb") as stream:
-            document: dict[str, Any] = tomllib.load(stream)
-    except OSError as exc:
-        raise ConfigError(f"cannot read config {path}: {exc}") from exc
-    except tomllib.TOMLDecodeError as exc:
-        raise ConfigError(f"invalid TOML in {path}: {exc}") from exc
+    document = load_toml(path)
     house = get_house_lint_table(document)
     if house is None:
         raise ConfigError("config lacks [tool.house-lint]")
