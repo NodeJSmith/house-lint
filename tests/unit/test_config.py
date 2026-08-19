@@ -157,6 +157,13 @@ def test_per_file_ignores_rejects_non_root_relative_or_empty_patterns(
         load_config(config_path)
 
 
+def test_per_file_ignores_rejects_negated_patterns(tmp_path: Path) -> None:
+    config_path = tmp_path / "pyproject.toml"
+    config_path.write_text('[tool.house-lint.per-file-ignores]\n"!tests/**" = ["HSL001"]\n')
+    with pytest.raises(ConfigError, match="must not be negated patterns"):
+        load_config(config_path)
+
+
 def test_per_file_ignores_rejects_non_array_values(tmp_path: Path) -> None:
     config_path = tmp_path / "pyproject.toml"
     config_path.write_text('[tool.house-lint.per-file-ignores]\n"tests/**" = "HSL001"\n')

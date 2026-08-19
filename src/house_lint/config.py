@@ -250,6 +250,8 @@ def _per_file_ignores(raw: Any) -> Mapping[str, tuple[str, ...]]:
     for pattern, value in table.items():
         if not pattern:
             raise ConfigError("per-file-ignores keys must be non-empty Git-ignore-style patterns")
+        if pattern.startswith("!"):
+            raise ConfigError("per-file-ignores keys must not be negated patterns")
         _validate_git_ignore_patterns((pattern,), "per-file-ignores")
         result[pattern] = _ids(value, f"per-file-ignores.{pattern!r}")
     return MappingProxyType(result)
