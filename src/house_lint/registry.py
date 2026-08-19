@@ -1,5 +1,4 @@
 """Static built-in rule metadata and detector dispatch."""
-# house-lint: ignore-file[HSL002] - every detector below lazy-loads to avoid unused import cost
 
 from collections.abc import Mapping
 from types import MappingProxyType
@@ -14,6 +13,15 @@ from house_lint.config import (
     HSL103Options,
 )
 from house_lint.rule_catalog import ORDINARY_RULES
+from house_lint.rules import (
+    constants_position,
+    exception_names,
+    file_length,
+    lazy_imports,
+    llm_cruft,
+    spec_tokens,
+    type_checking_position,
+)
 from house_lint.source import SourceFile
 
 
@@ -23,68 +31,36 @@ class Detector(Protocol):
     ) -> list[CandidateFinding]: ...
 
 
-def _hsl001(
-    source: SourceFile, options: object, *, limit: int | None = None
-) -> list[CandidateFinding]:
-    from house_lint.rules import llm_cruft
-
-    return llm_cruft.detect(source, options, limit=limit)
-
-
-def _hsl002(
-    source: SourceFile, options: object, *, limit: int | None = None
-) -> list[CandidateFinding]:
-    from house_lint.rules import lazy_imports
-
-    return lazy_imports.detect(source, options, limit=limit)
-
-
-def _hsl003(
-    source: SourceFile, options: object, *, limit: int | None = None
-) -> list[CandidateFinding]:
-    from house_lint.rules import type_checking_position
-
-    return type_checking_position.detect(source, options, limit=limit)
-
-
-def _hsl004(
-    source: SourceFile, options: object, *, limit: int | None = None
-) -> list[CandidateFinding]:
-    from house_lint.rules import constants_position
-
-    return constants_position.detect(source, options, limit=limit)
-
-
+# HSL101-103 accept their own narrow HSL10xOptions type, which the protocol's
+# DetectorOptions can't be assigned to without a cast — hence the adapters
+# below. detect_candidates always pairs each rule_id with the matching options
+# type, so the casts are sound.
 def _hsl101(
-    source: SourceFile, options: object, *, limit: int | None = None
+    source: SourceFile, options: DetectorOptions, *, limit: int | None = None
 ) -> list[CandidateFinding]:
-    from house_lint.rules import spec_tokens
-
     return spec_tokens.detect(source, cast("HSL101Options", options), limit=limit)
 
 
 def _hsl102(
-    source: SourceFile, options: object, *, limit: int | None = None
+    source: SourceFile, options: DetectorOptions, *, limit: int | None = None
 ) -> list[CandidateFinding]:
-    from house_lint.rules import file_length
-
     return file_length.detect(source, cast("HSL102Options", options), limit=limit)
 
 
 def _hsl103(
-    source: SourceFile, options: object, *, limit: int | None = None
+    source: SourceFile, options: DetectorOptions, *, limit: int | None = None
 ) -> list[CandidateFinding]:
-    from house_lint.rules import exception_names
-
     return exception_names.detect(source, cast("HSL103Options", options), limit=limit)
 
 
+# HSL001-004 accept options: object (they ignore it), so their detect functions
+# satisfy the Detector protocol directly and are referenced here as-is.
 _DETECTORS: Mapping[str, Detector] = MappingProxyType(
     {
-        "HSL001": _hsl001,
-        "HSL002": _hsl002,
-        "HSL003": _hsl003,
-        "HSL004": _hsl004,
+        "HSL001": llm_cruft.detect,
+        "HSL002": lazy_imports.detect,
+        "HSL003": type_checking_position.detect,
+        "HSL004": constants_position.detect,
         "HSL101": _hsl101,
         "HSL102": _hsl102,
         "HSL103": _hsl103,
