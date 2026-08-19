@@ -133,16 +133,195 @@ def test_invalid_root_gitignore_keeps_configured_excludes(
     assert result.errors[0].operation == "parse"
 
 
-def test_nested_gitignore_is_not_loaded(tmp_path: Path) -> None:
+def test_nested_gitignore_is_applied(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / ".gitignore").write_text("ignored.py\n")
+    (source / "ignored.py").write_text("x = 1\n")
+    kept = source / "kept.py"
+    kept.write_text("x = 1\n")
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert result.files == (kept,)
+    # 2 skips: ignored.py (matched) + the .gitignore file itself (non-.py)
+    assert result.files_skipped == 2
+
+
+def test_nested_gitignore_patterns_are_relative_to_their_own_directory(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    sub = source / "sub"
+    sub.mkdir(parents=True)
+    # "ignored.py" without a leading slash matches at any depth under src/,
+    # including inside src/sub/ — same semantics as a root .gitignore.
+    (source / ".gitignore").write_text("ignored.py\n")
+    nested_ignored = sub / "ignored.py"
+    nested_ignored.write_text("x = 1\n")
+    kept = sub / "kept.py"
+    kept.write_text("x = 1\n")
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert result.files == (kept,)
+    # 2 skips: ignored.py (matched) + the .gitignore file itself (non-.py)
+    assert result.files_skipped == 2
+
+
+def test_multi_level_nested_gitignore_files_all_apply(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    sub = source / "sub"
+    sub.mkdir(parents=True)
+    (source / ".gitignore").write_text("from_src.py\n")
+    (sub / ".gitignore").write_text("from_sub.py\n")
+    (sub / "from_src.py").write_text("x = 1\n")
+    (sub / "from_sub.py").write_text("x = 1\n")
+    kept = sub / "kept.py"
+    kept.write_text("x = 1\n")
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert result.files == (kept,)
+    # 4 skips: from_src.py + from_sub.py (matched) + the two .gitignore files (non-.py)
+    assert result.files_skipped == 4
+
+
+def test_nested_gitignore_negation_overrides_root_gitignore(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("*.py\n")
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / ".gitignore").write_text("!important.py\n")
+    important = source / "important.py"
+    important.write_text("x = 1\n")
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert result.files == (important,)
+
+
+def test_closer_nested_gitignore_negation_overrides_a_farther_one(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    sub = source / "sub"
+    sub.mkdir(parents=True)
+    (source / ".gitignore").write_text("*.py\n")
+    (sub / ".gitignore").write_text("!keep.py\n")
+    keep = sub / "keep.py"
+    keep.write_text("x = 1\n")
+    other = sub / "other.py"
+    other.write_text("x = 1\n")
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert result.files == (keep,)
+    assert other not in result.files
+
+
+def test_directory_names_with_gitignore_metacharacters_are_treated_as_literal(
+    tmp_path: Path,
+) -> None:
+    bracketed = tmp_path / "sub[1]"
+    bracketed.mkdir()
+    (bracketed / ".gitignore").write_text("secret.py\n")
+    secret = bracketed / "secret.py"
+    secret.write_text("x = 1\n")
+    # A sibling whose name resembles what the (buggy) unescaped bracket pattern would
+    # actually match, proving the fix isn't just "nothing matches anymore".
+    lookalike = tmp_path / "sub1"
+    lookalike.mkdir()
+    (lookalike / "secret.py").write_text("x = 1\n")
+
+    result = discover_files(tmp_path, include=("sub[1]", "sub1"))
+
+    assert result.files == (lookalike / "secret.py",)
+    assert secret not in result.files
+
+
+def test_directory_name_starting_with_bang_is_not_read_as_negation(tmp_path: Path) -> None:
+    source = tmp_path / "!important"
+    source.mkdir()
+    (source / ".gitignore").write_text("secret.py\n")
+    secret = source / "secret.py"
+    secret.write_text("x = 1\n")
+
+    result = discover_files(tmp_path, include=("!important",))
+
+    assert result.files == ()
+
+
+def test_no_gitignore_disables_nested_gitignore_too(tmp_path: Path) -> None:
     source = tmp_path / "src"
     source.mkdir()
     (source / ".gitignore").write_text("ignored.py\n")
     ignored = source / "ignored.py"
     ignored.write_text("x = 1\n")
 
-    result = discover_files(tmp_path, include=("src",))
+    result = discover_files(tmp_path, include=("src",), use_gitignore=False)
 
     assert result.files == (ignored,)
+
+
+def test_nested_gitignore_applies_when_explicit_path_starts_below_it(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / ".gitignore").write_text("ignored.py\n")
+    ignored = source / "ignored.py"
+    ignored.write_text("x = 1\n")
+
+    result = discover_files(tmp_path, explicit=(ignored,))
+
+    assert result.files == ()
+    assert result.files_skipped == 1
+
+
+def test_invalid_nested_gitignore_pattern_reports_a_structured_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    kept = source / "kept.py"
+    kept.write_text("x = 1\n")
+    (source / ".gitignore").write_text("ignored/\n")
+    from_lines = discovery.GitIgnoreSpec.from_lines
+
+    def fail_gitignore(lines: Iterable[str]) -> discovery.GitIgnoreSpec:
+        values = list(lines)
+        if values == ["ignored/"]:
+            raise ValueError("invalid pattern")
+        return from_lines(values)
+
+    monkeypatch.setattr(discovery.GitIgnoreSpec, "from_lines", fail_gitignore)
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert result.files == (kept,)
+    assert result.errors[0].kind == "traversal"
+    assert result.errors[0].path == "src/.gitignore"
+    assert result.errors[0].operation == "parse"
+
+
+def test_unreadable_nested_gitignore_reports_an_error_and_keeps_reachable_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    kept = source / "kept.py"
+    kept.write_text("x = 1\n")
+    ignore = source / ".gitignore"
+    ignore.write_text("ignored/\n")
+    read_text = Path.read_text
+
+    def fail_read_text(self: Path, *, encoding: str) -> str:
+        if self == ignore:
+            raise OSError("permission denied")
+        return read_text(self, encoding=encoding)
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert result.files == (kept,)
+    assert result.errors[0].kind == "traversal"
+    assert result.errors[0].path == "src/.gitignore"
+    assert result.errors[0].operation == "read"
 
 
 def test_unreadable_root_gitignore_reports_an_error_and_keeps_reachable_files(
