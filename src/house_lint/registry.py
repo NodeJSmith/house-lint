@@ -31,11 +31,10 @@ class Detector(Protocol):
     ) -> list[CandidateFinding]: ...
 
 
-# HSL001-004 accept options: object (they ignore it), so their detect functions
-# satisfy the Detector protocol directly. HSL101-103 accept their own narrow
-# HSL10xOptions type, which the protocol's DetectorOptions can't be assigned to
-# without a cast — hence the adapters below. detect_candidates always pairs
-# each rule_id with the matching options type, so the casts are sound.
+# HSL101-103 accept their own narrow HSL10xOptions type, which the protocol's
+# DetectorOptions can't be assigned to without a cast — hence the adapters
+# below. detect_candidates always pairs each rule_id with the matching options
+# type, so the casts are sound.
 def _hsl101(
     source: SourceFile, options: DetectorOptions, *, limit: int | None = None
 ) -> list[CandidateFinding]:
@@ -54,6 +53,8 @@ def _hsl103(
     return exception_names.detect(source, cast("HSL103Options", options), limit=limit)
 
 
+# HSL001-004 accept options: object (they ignore it), so their detect functions
+# satisfy the Detector protocol directly and are referenced here as-is.
 _DETECTORS: Mapping[str, Detector] = MappingProxyType(
     {
         "HSL001": llm_cruft.detect,
