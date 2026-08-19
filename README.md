@@ -131,9 +131,10 @@ repos:
         language: system
         types: [python]
         files: \.py$
+        require_serial: true
 ```
 
-The distributed `.pre-commit-hooks.yaml` exposes the same `house-lint` hook for a published repository. Both forms filter to existing `*.py` files before invocation. The CLI remains strict, so manual explicit paths still fail for missing or non-Python files.
+The distributed `.pre-commit-hooks.yaml` exposes the same `house-lint` hook for a published repository. Both forms filter to existing `*.py` files before invocation. The CLI remains strict, so manual explicit paths still fail for missing or non-Python files. `require_serial: true` forces pre-commit to run all matched files through a single serial `house-lint check` invocation instead of splitting them across multiple concurrent invocations. The CLI already accepts multiple paths at once, so this avoids paying repeated startup cost per file.
 
 ## Output and exits
 
