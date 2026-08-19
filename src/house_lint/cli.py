@@ -6,6 +6,15 @@ from pathlib import Path
 
 from cyclopts import App, CycloptsError
 
+from house_lint.cache import (
+    CachedFileResult,
+    default_cache_base,
+    hash_effective_config,
+    hash_file_content,
+    read_cached_result,
+    versioned_cache_dir,
+    write_cached_result,
+)
 from house_lint.config import (
     ConfigError,
     LintConfig,
@@ -32,7 +41,7 @@ from house_lint.results import (
     internal_error,
 )
 from house_lint.rule_catalog import rule_ids, rule_metadata
-from house_lint.scanner import scan_file
+from house_lint.scanner import FileScanResult, scan_file
 
 app = App(name="house-lint", help="Opinionated Python house-style linter.")
 
@@ -99,6 +108,49 @@ def _requested_format(arguments: list[str]) -> str:
     return "text"
 
 
+def _cache_keys(
+    path: Path, config: LintConfig, file_enabled_rules: tuple[str, ...]
+) -> tuple[str, str] | tuple[None, None]:
+    """Compute this file's (content_hash, config_hash) cache key, or (None, None) if the file
+    can't be safely hashed — that just means this file's result is never cached, not a failure.
+    """
+    content_hash = hash_file_content(path)
+    if content_hash is None:
+        return None, None
+    config_hash = hash_effective_config(
+        file_enabled_rules, config.hsl101, config.hsl102, config.hsl103, filename=path.name
+    )
+    return content_hash, config_hash
+
+
+def _write_cache_entry(
+    cache_dir: Path,
+    content_hash: str | None,
+    config_hash: str | None,
+    file_result: FileScanResult,
+    *,
+    debug: bool,
+) -> None:
+    """Persist `file_result` for future runs — unless it can't be hashed, or it's a `stop=True`
+    internal-error abort. `stop` signals a non-deterministic process-boundary failure, not a
+    reproducible scan outcome, so it must never be replayed from cache on a later hit.
+    """
+    if content_hash is None or config_hash is None or file_result.stop:
+        return
+    write_cached_result(
+        cache_dir,
+        content_hash,
+        config_hash,
+        CachedFileResult(
+            file_result.findings,
+            file_result.errors,
+            file_result.suppressed_count,
+            file_result.files_scanned,
+        ),
+        debug=debug,
+    )
+
+
 def _scan(
     paths: tuple[Path, ...],
     *,
@@ -106,6 +158,8 @@ def _scan(
     config_path: Path | None,
     config: LintConfig,
     use_gitignore: bool,
+    read_cache: bool,
+    cache_dir: Path,
     debug: bool,
 ) -> ScanResult:
     """Run the complete file pipeline, retaining all completed-file results."""
@@ -134,10 +188,10 @@ def _scan(
     suppressed_count = 0
     files_scanned = 0
     for path in discovered.files:
+        relative = path.relative_to(root).as_posix()
         file_enabled_rules = config.enabled_rules
         file_detector_inputs = detector_inputs
         if compiled_per_file_ignores:
-            relative = path.relative_to(root).as_posix()
             file_enabled_rules = per_file_enabled_rules(
                 config.enabled_rules, compiled_per_file_ignores, relative
             )
@@ -150,6 +204,23 @@ def _scan(
                 file_detector_inputs = selected_detector_inputs(
                     config, enabled_rules=file_enabled_rules
                 )
+        # Computed unconditionally (even under --no-cache) because a write still happens on a
+        # miss regardless of read_cache — --no-cache only disables the read below, not the
+        # write further down, so the hashes are needed either way.
+        content_hash, config_hash = _cache_keys(path, config, file_enabled_rules)
+        cached = (
+            read_cached_result(
+                cache_dir, content_hash, config_hash, relative_path=relative, debug=debug
+            )
+            if read_cache and content_hash is not None and config_hash is not None
+            else None
+        )
+        if cached is not None:
+            findings.extend(cached.findings)
+            errors.extend(cached.errors)
+            suppressed_count += cached.suppressed_count
+            files_scanned += cached.files_scanned
+            continue
         file_result = scan_file(
             path,
             root=root,
@@ -161,6 +232,7 @@ def _scan(
         errors.extend(file_result.errors)
         suppressed_count += file_result.suppressed_count
         files_scanned += file_result.files_scanned
+        _write_cache_entry(cache_dir, content_hash, config_hash, file_result, debug=debug)
         if file_result.stop:
             break
     return ScanResult(
@@ -187,6 +259,8 @@ def check(
     extend_select: list[str] | None = None,
     extend_ignore: list[str] | None = None,
     no_gitignore: bool = False,
+    no_cache: bool = False,
+    cache_dir: Path | None = None,
     debug: bool = False,
 ) -> int:
     """Scan configured roots or explicit Python paths."""
@@ -225,12 +299,20 @@ def check(
                 cli_extend_ignore=cli_extend_ignore,
             )
         )
+        cache_base = (
+            cache_dir.expanduser().resolve()
+            if cache_dir is not None
+            else default_cache_base(resolution.root)
+        )
+        resolved_cache_dir = versioned_cache_dir(cache_base)
         result = _scan(
             tuple(paths or ()),
             root=resolution.root,
             config_path=resolution.config,
             config=lint_config,
             use_gitignore=not no_gitignore,
+            read_cache=not no_cache,
+            cache_dir=resolved_cache_dir,
             debug=debug,
         )
     except ConfigError as exc:

@@ -110,6 +110,12 @@ Explicit paths are strict. Missing, out-of-root, and non-Python file arguments a
 
 The linter loads the selected root's `.gitignore` plus every nested `.gitignore` between the root and each discovered file, combined with git's own precedence (a closer `.gitignore` can override a farther one, including via negation), plus built-in and configured excludes. It does not shell out to Git. Use `--no-gitignore` to disable `.gitignore` handling at every level.
 
+## Caching
+
+`check` caches each file's result under `<root>/.house-lint-cache/<house-lint version>/` (gitignored by default), keyed by the file's content and its effective rule set for that file. A cache hit skips tokenization, parsing, and rule execution entirely for that file; an upgrade to a new house-lint version starts from an empty cache automatically, since the version is part of the cache path.
+
+`--no-cache` disables reading from the cache but still writes to it, keeping it warm for the next run. `--cache-dir` overrides where the cache lives (still version-namespaced underneath the path you give it).
+
 ## Suppressions
 
 Suppress a finding only with a rule ID and a meaningful reason (at least three alphanumeric characters):

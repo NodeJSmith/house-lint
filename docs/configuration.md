@@ -38,6 +38,14 @@ Applied after the base selection and `extend-select`/`extend-ignore` resolve, pe
 
 The root `.gitignore` and every nested `.gitignore` between the root and each discovered file are loaded and combined with git's own precedence — a closer `.gitignore` can override a farther one, including via negation (`!pattern`). Built-in excludes are `.git/`, `.venv/`, `.nox/`, `__pycache__/`, `site-packages/`, and `node_modules/`; configured excludes are added afterwards. `--no-gitignore` disables `.gitignore` handling at every level.
 
+## Caching
+
+There is no TOML key for caching — it's controlled entirely by CLI flags, since it's a run-to-run performance concern rather than a project convention.
+
+Each file's result is cached under `<root>/.house-lint-cache/<house-lint version>/` (gitignored by default), flat and keyed by two hashes: the file's raw content, and the file's *effective* rule set for that run (`select`/`ignore`/`extend-select`/`extend-ignore`/`per-file-ignores` and CLI overrides already resolved, plus all three `HSL101`/`HSL102`/`HSL103` option tables, whether or not each of those rules is currently enabled — simpler than tracking which options are actually load-bearing, at the cost of some extra cache invalidation when an unused rule's options change). The file's own name is folded in too whenever an enabled `HSL101` token family scopes to `"filenames"`, since that's the one detector whose output depends on the filename rather than purely the content. house-lint is a single-file analyzer with no cross-file dependencies, so this flat scheme is sufficient — there is no dependency graph to invalidate. A cache hit skips tokenization, parsing, and rule execution for that file entirely; a version upgrade starts from an empty cache automatically, since the version is part of the cache path.
+
+`--no-cache` disables reading from the cache but still writes to it, keeping it warm for the next run — the same semantics as Ruff's and mypy's `--no-cache`/`--no-incremental`. `--cache-dir <path>` overrides the base directory (the version segment is still appended underneath it).
+
 ## Rule options
 
 ```toml

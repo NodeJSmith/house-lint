@@ -200,6 +200,128 @@ def test_per_file_ignores_flags_a_pragma_naming_a_rule_disabled_for_that_file(
     ]
 
 
+def test_cache_is_populated_and_reused_across_runs(repository: Path) -> None:
+    (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
+
+    first = _run(
+        repository, "check", "--root", str(repository), "--select", "HSL002", "--format", "json"
+    )
+    assert first.returncode == 1
+
+    # repository also contains a clean src/clean.py with no findings, so it gets its own
+    # (empty) cache entry — select finding.py's entry specifically by its non-empty content.
+    entries = list((repository / ".house-lint-cache").rglob("*.json"))
+    assert len(entries) == 2
+    entry = next(e for e in entries if json.loads(e.read_text())["findings"])
+
+    # Poison the cache entry directly (bypassing the real scan) to prove a normal run reads
+    # it back rather than re-deriving the same result independently.
+    poisoned = {
+        "findings": [
+            {
+                "rule_id": "HSL002",
+                "line": 1,
+                "column": 1,
+                "end_line": 1,
+                "end_column": 2,
+                "message": "poisoned cache entry",
+            }
+        ],
+        "errors": [],
+        "suppressed_count": 0,
+        "files_scanned": 1,
+    }
+    entry.write_text(json.dumps(poisoned))
+
+    second = _run(
+        repository, "check", "--root", str(repository), "--select", "HSL002", "--format", "json"
+    )
+    second_result = json.loads(second.stdout)
+    assert [finding["message"] for finding in second_result["findings"]] == ["poisoned cache entry"]
+
+    # --no-cache must ignore the poisoned entry (real scan runs) but still overwrite it
+    # afterward, keeping the cache warm for the next normal run.
+    third = _run(
+        repository,
+        "check",
+        "--root",
+        str(repository),
+        "--select",
+        "HSL002",
+        "--no-cache",
+        "--format",
+        "json",
+    )
+    third_result = json.loads(third.stdout)
+    assert [finding["message"] for finding in third_result["findings"]] == [
+        "import inside function body"
+    ]
+    assert json.loads(entry.read_text())["findings"][0]["message"] == "import inside function body"
+
+
+def test_cache_dir_flag_overrides_the_default_location(repository: Path) -> None:
+    (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
+    custom_cache = repository.parent / "custom-cache"
+
+    completed = _run(
+        repository,
+        "check",
+        "--root",
+        str(repository),
+        "--select",
+        "HSL002",
+        "--cache-dir",
+        str(custom_cache),
+        "--format",
+        "json",
+    )
+
+    assert completed.returncode == 1
+    assert not (repository / ".house-lint-cache").exists()
+    assert list(custom_cache.rglob("*.json"))
+
+
+def test_cache_hit_never_calls_scan_file(
+    repository: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
+
+    first_code = cli.check(root=repository, select=["HSL002"], format="json")
+    first_output = capsys.readouterr().out
+    assert first_code == 1
+
+    def fail_if_called(*args: object, **kwargs: object) -> None:
+        raise AssertionError("scan_file must not be called on a cache hit")
+
+    monkeypatch.setattr(cli, "scan_file", fail_if_called)
+
+    second_code = cli.check(root=repository, select=["HSL002"], format="json")
+    second_output = capsys.readouterr().out
+
+    assert second_code == first_code
+    assert json.loads(second_output) == json.loads(first_output)
+
+
+def test_cache_does_not_cross_contaminate_hsl101_filename_findings_between_same_content_files(
+    repository: Path,
+) -> None:
+    # Both files have identical content, so a cache key that ignores the filename would let
+    # whichever file is scanned first "poison" the entry the other one reads back.
+    (repository / "src" / "TASK123.py").write_text("x = 1\n")
+    (repository / "src" / "plain.py").write_text("x = 1\n")
+    (repository / "pyproject.toml").write_text(
+        '[tool.house-lint]\nselect = ["HSL101"]\n'
+        "[[tool.house-lint.rules.HSL101.tokens]]\n"
+        'prefixes = ["TASK"]\nscopes = ["filenames"]\n'
+    )
+
+    completed = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    result = json.loads(completed.stdout)
+    assert completed.returncode == 1
+    assert [finding["path"] for finding in result["findings"]] == ["src/TASK123.py"]
+
+
 @pytest.mark.parametrize(
     ("option", "value"),
     [

@@ -15,6 +15,21 @@ MAX_SOURCE_BYTES = 10 * 1024 * 1024
 Token: TypeAlias = tokenize.TokenInfo
 
 
+def read_regular_file_bytes(path: Path, *, max_bytes: int) -> bytes | None:
+    """Read up to `max_bytes` + 1 from a regular file via a nonblocking descriptor.
+
+    The nonblocking descriptor prevents a raced FIFO from stalling the read. Returns None if
+    the path isn't a regular file; raises OSError for other failures (missing file, permission
+    denied, etc.) so callers can decide how to report them — `SourceFile` turns both cases into
+    a `LintError`, while cache-key hashing just treats either as an uncacheable file.
+    """
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(descriptor, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            return None
+        return handle.read(max_bytes + 1)
+
+
 class SourceFile:
     """Load one Python file, failing closed before any rule can inspect it."""
 
@@ -55,15 +70,12 @@ class SourceFile:
             return
         self._loaded = True
         try:
-            # A nonblocking descriptor prevents a raced FIFO from stalling the scan.
-            descriptor = os.open(self.resolved_path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
-            with os.fdopen(descriptor, "rb") as handle:
-                if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                    self._error = self._make_error(
-                        "path-error", "path", "source-check", "regular-file", "not a regular file"
-                    )
-                    return
-                source_bytes = handle.read(MAX_SOURCE_BYTES + 1)
+            source_bytes = read_regular_file_bytes(self.resolved_path, max_bytes=MAX_SOURCE_BYTES)
+            if source_bytes is None:
+                self._error = self._make_error(
+                    "path-error", "path", "source-check", "regular-file", "not a regular file"
+                )
+                return
             if len(source_bytes) > MAX_SOURCE_BYTES:
                 self._error = self._make_error(
                     "source-too-large",
@@ -258,4 +270,4 @@ class SourceFile:
         )
 
 
-__all__ = ["MAX_SOURCE_BYTES", "SourceFile"]
+__all__ = ["MAX_SOURCE_BYTES", "SourceFile", "read_regular_file_bytes"]
