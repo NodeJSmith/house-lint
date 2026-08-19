@@ -181,6 +181,9 @@ class _FileSelector:
     combined_gitignore_spec_cache: dict[Path, GitIgnoreSpec] = field(
         default_factory=lambda: dict[Path, GitIgnoreSpec]()
     )
+    spec_by_lines_cache: dict[tuple[str, ...], GitIgnoreSpec] = field(
+        default_factory=lambda: dict[tuple[str, ...], GitIgnoreSpec]()
+    )
 
     def select(self, requested: tuple[Path, ...], *, explicit_paths: bool) -> None:
         seen_arguments: set[Path] = set()
@@ -302,8 +305,8 @@ class _FileSelector:
             if self.limit_reached:
                 break
             current_path = Path(current)
-            dirs[:] = self._traversable_dirs(current_path, dirs)
             combined_spec = self._combined_gitignore_spec(current_path)
+            dirs[:] = self._traversable_dirs(current_path, dirs, combined_spec)
             for name in sorted(names):
                 self._consider(
                     current_path / name,
@@ -324,7 +327,11 @@ class _FileSelector:
         explicit "leaving a directory" signal, so a manual stack would need the same
         relative-path bookkeeping this does anyway. `_own_gitignore_lines` memoizes each
         directory's own `.gitignore` read, and the combined spec itself is cached per directory,
-        so the rebuild only repeats cheap dict lookups, not I/O or reparsing.
+        so the rebuild only repeats cheap dict lookups, not I/O or reparsing. A sibling
+        directory with no `.gitignore` of its own accumulates the exact same line tuple as its
+        parent, so `spec_by_lines_cache` is keyed on the accumulated lines themselves (not the
+        directory) to skip `GitIgnoreSpec.from_lines` entirely on that repeat, while
+        `combined_gitignore_spec_cache` still keeps the per-directory lookup itself O(1).
         """
         if directory in self.combined_gitignore_spec_cache:
             return self.combined_gitignore_spec_cache[directory]
@@ -349,14 +356,23 @@ class _FileSelector:
             lines.extend(
                 _prefix_pattern(prefix, line) for line in self._own_gitignore_lines(current)
             )
-        try:
-            spec = GitIgnoreSpec.from_lines(lines)
-        except (TypeError, ValueError, re.error) as exc:
-            # Each source's own lines are already validated in `_load_gitignore_lines`, but
-            # `_prefix_pattern`'s rewrite of them is not independently re-validated — a valid
-            # original line could in principle become invalid once prefixed, so this stays live.
-            self.errors.append(self._error(directory, "traversal", "combine", str(exc)))
-            spec = GitIgnoreSpec.from_lines(())
+        lines_key = tuple(lines)
+        cached_spec = self.spec_by_lines_cache.get(lines_key)
+        if cached_spec is not None:
+            spec = cached_spec
+        else:
+            try:
+                spec = GitIgnoreSpec.from_lines(lines)
+            except (TypeError, ValueError, re.error) as exc:
+                # Each source's own lines are already validated in `_load_gitignore_lines`, but
+                # `_prefix_pattern`'s rewrite of them is not independently re-validated — a valid
+                # original line could in principle become invalid once prefixed, so this stays
+                # live. The error is intentionally *not* cached by line content below: it must
+                # still be reported once per offending directory, not just once per line tuple.
+                self.errors.append(self._error(directory, "traversal", "combine", str(exc)))
+                spec = GitIgnoreSpec.from_lines(())
+            else:
+                self.spec_by_lines_cache[lines_key] = spec
         self.combined_gitignore_spec_cache[directory] = spec
         return spec
 
@@ -372,8 +388,24 @@ class _FileSelector:
         self.own_gitignore_lines_cache[directory] = lines
         return lines
 
-    def _traversable_dirs(self, current_path: Path, dirs: list[str]) -> list[str]:
-        """Return child directory names with symlinks excluded, recording why each was dropped."""
+    def _traversable_dirs(
+        self, current_path: Path, dirs: list[str], combined_gitignore_spec: GitIgnoreSpec
+    ) -> list[str]:
+        """Return child directory names to descend into, recording why each was dropped.
+
+        Drops symlinked directories (never traversed) and directories already excluded by
+        `combined_gitignore_spec` — the spec accumulated from root down to `current_path`
+        (the parent), deliberately *not* including the child's own, not-yet-read
+        `.gitignore`. Checking a child against its own nested `.gitignore` before deciding
+        whether to descend into it would let a negation inside that file "resurrect" files
+        that should stay excluded because the directory itself is ignored — real git never
+        reads ignore files inside a directory it never descends into. Skipping the
+        directory here means `_own_gitignore_lines`/`_combined_gitignore_spec` are simply
+        never called for it, so its nested `.gitignore` (if any) is never read at all.
+        `combined_gitignore_spec` already folds in `use_gitignore` (it's an empty spec when
+        disabled), and `builtin_spec`/`exclude_spec` inside `_ignored` apply unconditionally,
+        matching how file-level ignoring already treats those two specs.
+        """
         kept: list[str] = []
         for item in sorted(dirs):
             child = current_path / item
@@ -386,6 +418,11 @@ class _FileSelector:
                 self.errors.append(
                     self._error(child, "traversal", "walk", "directory symlink is not traversed")
                 )
+                continue
+            if _ignored(
+                self.root, child, self.builtin_spec, self.exclude_spec, combined_gitignore_spec
+            ):
+                self.files_skipped += 1
                 continue
             kept.append(item)
         return kept

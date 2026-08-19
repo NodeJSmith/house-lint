@@ -167,6 +167,50 @@ def test_nested_gitignore_patterns_are_relative_to_their_own_directory(tmp_path:
     assert result.files_skipped == 2
 
 
+def test_nested_gitignore_leading_slash_anchors_to_its_own_directory(tmp_path: Path) -> None:
+    source = tmp_path / "src"
+    sub = source / "sub"
+    sub.mkdir(parents=True)
+    # A leading slash anchors the pattern to the directory that owns the .gitignore, so it
+    # must match src/ignored.py but not src/sub/ignored.py.
+    (source / ".gitignore").write_text("/ignored.py\n")
+    anchored_ignored = source / "ignored.py"
+    anchored_ignored.write_text("x = 1\n")
+    not_anchored = sub / "ignored.py"
+    not_anchored.write_text("x = 1\n")
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert anchored_ignored not in result.files
+    assert not_anchored in result.files
+    assert result.files == (not_anchored,)
+
+
+def test_nested_gitignore_trailing_slash_directory_pattern_matches_at_any_depth(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src"
+    sub = source / "sub"
+    sub.mkdir(parents=True)
+    # A trailing-slash directory pattern with no other slash matches "build/" at any depth
+    # under its owning directory, same as the no-slash file case above.
+    (source / ".gitignore").write_text("build/\n")
+    direct_build = source / "build" / "direct.py"
+    direct_build.parent.mkdir(parents=True)
+    direct_build.write_text("x = 1\n")
+    nested_build = sub / "build" / "nested.py"
+    nested_build.parent.mkdir(parents=True)
+    nested_build.write_text("x = 1\n")
+    kept = sub / "kept.py"
+    kept.write_text("x = 1\n")
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert direct_build not in result.files
+    assert nested_build not in result.files
+    assert result.files == (kept,)
+
+
 def test_multi_level_nested_gitignore_files_all_apply(tmp_path: Path) -> None:
     source = tmp_path / "src"
     sub = source / "sub"
@@ -241,10 +285,86 @@ def test_directory_name_starting_with_bang_is_not_read_as_negation(tmp_path: Pat
     (source / ".gitignore").write_text("secret.py\n")
     secret = source / "secret.py"
     secret.write_text("x = 1\n")
+    # A control file the .gitignore does not name — without it, `result.files == ()` would
+    # also pass if the whole "!important" directory were (wrongly) skipped outright, which
+    # wouldn't prove the directory's own .gitignore was correctly read and applied to just
+    # the one file it names.
+    kept = source / "kept.py"
+    kept.write_text("x = 1\n")
 
     result = discover_files(tmp_path, include=("!important",))
 
-    assert result.files == ()
+    assert result.files == (kept,)
+    assert secret not in result.files
+
+
+def test_gitignored_directory_is_never_descended_so_nested_negation_cannot_resurrect_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Real git never reads .gitignore files inside a directory it never descends into, so a
+    # negation nested inside an excluded directory must not "resurrect" files under it.
+    source = tmp_path / "src"
+    source.mkdir()
+    (tmp_path / ".gitignore").write_text("src/generated/\n")
+    generated = source / "generated"
+    generated.mkdir()
+    nested_ignore = generated / ".gitignore"
+    nested_ignore.write_text("!foo.py\n")
+    foo = generated / "foo.py"
+    foo.write_text("x = 1\n")
+    kept = source / "kept.py"
+    kept.write_text("x = 1\n")
+    read_text = Path.read_text
+    read_calls: list[Path] = []
+
+    def spy_read_text(self: Path, *, encoding: str) -> str:
+        read_calls.append(self)
+        return read_text(self, encoding=encoding)
+
+    monkeypatch.setattr(Path, "read_text", spy_read_text)
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert result.files == (kept,)
+    assert foo not in result.files
+    assert result.files_skipped == 1
+    # The nested .gitignore was never even read, proving we didn't descend into `generated/`
+    # rather than descending and merely discarding its (negating) effect afterward.
+    assert nested_ignore not in read_calls
+
+
+def test_directories_with_identical_accumulated_gitignore_lines_reuse_the_same_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # sibling1/ and sibling2/ each have no .gitignore of their own, so both accumulate the same
+    # (root-only) line tuple. Parsing should happen once, not once per directory.
+    (tmp_path / ".gitignore").write_text("*.log\n")
+    source = tmp_path / "src"
+    sibling1 = source / "sibling1"
+    sibling2 = source / "sibling2"
+    sibling1.mkdir(parents=True)
+    sibling2.mkdir(parents=True)
+    (sibling1 / "a.py").write_text("x = 1\n")
+    (sibling2 / "b.py").write_text("x = 1\n")
+    from_lines = discovery.GitIgnoreSpec.from_lines
+    parse_call_count = 0
+
+    def counting_from_lines(lines: Iterable[str]) -> discovery.GitIgnoreSpec:
+        nonlocal parse_call_count
+        parse_call_count += 1
+        return from_lines(lines)
+
+    monkeypatch.setattr(discovery.GitIgnoreSpec, "from_lines", counting_from_lines)
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert result.files == (sibling1 / "a.py", sibling2 / "b.py")
+    # One parse for BUILTIN_EXCLUDES, one for excludes=(), one to validate the root .gitignore's
+    # own lines in `_load_gitignore_lines`, and one to build the combined spec for the
+    # (root-only) accumulated lines shared by src/, sibling1/, and sibling2/ — the sibling
+    # directories reuse that fourth parse's result via `spec_by_lines_cache` instead of
+    # triggering a fifth and sixth call.
+    assert parse_call_count == 4
 
 
 def test_no_gitignore_disables_nested_gitignore_too(tmp_path: Path) -> None:
