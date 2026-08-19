@@ -15,6 +15,8 @@ each reconstructed finding/error.
 
 import hashlib
 import json
+import os
+import shutil
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -66,6 +68,7 @@ def hash_effective_config(
     hsl103: HSL103Options,
     *,
     filename: str,
+    python_version: tuple[int, int] | None = None,
 ) -> str:
     """Hash the config inputs that can change a file's scan outcome, given fixed content.
 
@@ -78,12 +81,23 @@ def hash_effective_config(
     tokens against the filename itself (see `_filename_candidates` in rules/spec_tokens.py).
     Without this, two files with identical content but different names could otherwise collide
     on the same cache entry and silently swap each other's filename-derived findings.
+
+    `python_version` (major, minor) defaults to the running interpreter's `sys.version_info[:2]`
+    and is always folded into the hash. `SourceFile._analyze` parses source with `ast.parse`,
+    whose accepted grammar differs across the Python versions this project supports (e.g. `type
+    Alias = int` is a `SyntaxError` before 3.12) — without this, a cache shared across venvs of
+    different Python versions could replay a stale `SyntaxError` (or a stale success) that no
+    longer matches the interpreter actually running the scan. Accepting it as a parameter (rather
+    than reading `sys.version_info` internally) keeps this directly testable.
     """
     payload: dict[str, object] = {
         "enabled_rules": sorted(enabled_rules),
         "hsl101": asdict(hsl101),
         "hsl102": asdict(hsl102),
         "hsl103": asdict(hsl103),
+        "python_version": list(
+            python_version if python_version is not None else sys.version_info[:2]
+        ),
     }
     if "HSL101" in enabled_rules and any("filenames" in family.scopes for family in hsl101.tokens):
         payload["filename"] = filename
@@ -168,6 +182,50 @@ def read_cached_result(
         return None
 
 
+def _write_self_ignore_marker(base: Path, *, debug: bool = False) -> None:
+    """Write a `.gitignore` containing `*` into the cache *base* directory, once.
+
+    Mirrors how pytest/mypy self-ignore their own cache directories: a downstream project that
+    runs house-lint gets an untracked, `git status`-invisible `.house-lint-cache/` without having
+    to add it to their own `.gitignore` by hand. Written at `base` (the unversioned
+    `.house-lint-cache/` directory), not the version-namespaced subdirectory, since that's the
+    path a `git status` in the scanned repo would actually flag. Best-effort: a failed marker
+    write must never fail the scan.
+    """
+    marker = base / ".gitignore"
+    try:
+        if not marker.exists():
+            marker.write_text("*\n", encoding="utf-8")
+    except OSError as exc:
+        if debug:
+            print(f"debug: cache self-ignore marker write failed: {exc}", file=sys.stderr)
+
+
+def _prune_stale_version_dirs(cache_dir: Path, *, debug: bool = False) -> None:
+    """Remove sibling version directories under `cache_dir`'s base, best-effort.
+
+    `versioned_cache_dir` namespaces the cache by `__version__` so an upgrade invalidates stale
+    entries, but nothing else ever deletes the old version's directory — left alone, upgrades
+    accumulate `<base>/<old-version>/`, `<base>/<older-version>/`, etc. forever. Run only here,
+    at the point a cache entry is actually about to be written (not on every read), so a plain
+    read-only invocation of this house-lint version never triggers deletion of another version's
+    directory. This narrows, but does not eliminate, the risk window: a *concurrent* process
+    actively writing under a different version during an overlapping run can still have its
+    directory removed by this call — best-effort here means "safe to fail," not "race-free."
+    """
+    base = cache_dir.parent
+    try:
+        siblings = [child for child in base.iterdir() if child.is_dir() and child != cache_dir]
+    except OSError:
+        return
+    for sibling in siblings:
+        try:
+            shutil.rmtree(sibling)
+        except OSError as exc:
+            if debug:
+                print(f"debug: cache prune of stale version dir failed: {exc}", file=sys.stderr)
+
+
 def write_cached_result(
     cache_dir: Path,
     content_hash: str,
@@ -179,6 +237,10 @@ def write_cached_result(
     """Write a cache entry, best-effort. A failed write must never fail the scan itself —
     but is reported under `--debug`, so `house-lint check --debug` can diagnose "why isn't
     caching working" for a broken cache directory or permissions issue.
+
+    Writes atomically (temp file + `os.replace`) so an interrupted process or two concurrent
+    house-lint runs writing the same entry can never leave a partially-written, corrupted file
+    in place of a real one.
     """
     path = _entry_path(cache_dir, content_hash, config_hash)
     payload = {
@@ -189,7 +251,11 @@ def write_cached_result(
     }
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload), encoding="utf-8")
+        _prune_stale_version_dirs(cache_dir, debug=debug)
+        _write_self_ignore_marker(cache_dir.parent, debug=debug)
+        temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        temporary.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(temporary, path)
     except OSError as exc:
         if debug:
             print(f"debug: cache write failed: {exc}", file=sys.stderr)

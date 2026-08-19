@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import pytest
@@ -59,6 +60,34 @@ def test_hash_effective_config_is_order_independent_and_content_sensitive() -> N
     assert h(("HSL001", "HSL002")) == h(("HSL002", "HSL001"))
     assert h(("HSL001",)) != h(("HSL001", "HSL002"))
     assert h(("HSL102",), hsl102=HSL102Options(max_lines=100)) != h(("HSL102",))
+
+
+def test_hash_effective_config_changes_with_python_version() -> None:
+    hsl101, hsl102, hsl103 = HSL101Options(), HSL102Options(), HSL103Options()
+
+    def h(python_version: tuple[int, int]) -> str:
+        return hash_effective_config(
+            ("HSL001",), hsl101, hsl102, hsl103, filename="a.py", python_version=python_version
+        )
+
+    assert h((3, 11)) != h((3, 12))
+    assert h((3, 12)) == h((3, 12))
+
+
+def test_hash_effective_config_defaults_python_version_to_the_running_interpreter() -> None:
+    hsl101, hsl102, hsl103 = HSL101Options(), HSL102Options(), HSL103Options()
+
+    default = hash_effective_config(("HSL001",), hsl101, hsl102, hsl103, filename="a.py")
+    explicit = hash_effective_config(
+        ("HSL001",),
+        hsl101,
+        hsl102,
+        hsl103,
+        filename="a.py",
+        python_version=tuple(sys.version_info[:2]),
+    )
+
+    assert default == explicit
 
 
 def test_hash_effective_config_includes_filename_only_when_hsl101_scopes_to_filenames() -> None:
@@ -204,3 +233,72 @@ def test_write_cached_result_is_best_effort_and_does_not_raise_on_a_bad_director
     result = CachedFileResult(findings=(), errors=(), suppressed_count=0, files_scanned=1)
 
     write_cached_result(blocked / "cache", "x", "y", result)  # must not raise
+
+
+def test_write_cached_result_writes_atomically_and_leaves_no_temp_file(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "cache"
+    result = CachedFileResult()
+
+    write_cached_result(cache_dir, "content-hash", "config-hash", result)
+
+    entries = list(cache_dir.iterdir())
+    assert [entry.name for entry in entries] == ["content-hash-config-hash.json"]
+    assert not any(entry.name.endswith(".tmp") for entry in entries)
+
+
+def test_write_cached_result_creates_self_ignoring_gitignore_in_the_base_directory(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / ".house-lint-cache"
+    cache_dir = base / "1.2.3"
+    result = CachedFileResult()
+
+    write_cached_result(cache_dir, "content-hash", "config-hash", result)
+
+    marker = base / ".gitignore"
+    assert marker.read_text(encoding="utf-8") == "*\n"
+
+
+def test_write_cached_result_does_not_overwrite_an_existing_gitignore_marker(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / ".house-lint-cache"
+    base.mkdir(parents=True)
+    (base / ".gitignore").write_text("custom content\n", encoding="utf-8")
+    cache_dir = base / "1.2.3"
+    result = CachedFileResult()
+
+    write_cached_result(cache_dir, "content-hash", "config-hash", result)
+
+    assert (base / ".gitignore").read_text(encoding="utf-8") == "custom content\n"
+
+
+def test_write_cached_result_prunes_sibling_version_directories(tmp_path: Path) -> None:
+    base = tmp_path / ".house-lint-cache"
+    old_version_dir = base / "0.9.0"
+    old_version_dir.mkdir(parents=True)
+    (old_version_dir / "stale-entry.json").write_text("{}")
+
+    current_version_dir = base / "1.0.0"
+    result = CachedFileResult()
+
+    write_cached_result(current_version_dir, "content-hash", "config-hash", result)
+
+    assert not old_version_dir.exists()
+    assert current_version_dir.exists()
+    assert (current_version_dir / "content-hash-config-hash.json").exists()
+
+
+def test_write_cached_result_leaves_the_current_version_directory_untouched(
+    tmp_path: Path,
+) -> None:
+    base = tmp_path / ".house-lint-cache"
+    current_version_dir = base / "1.0.0"
+    current_version_dir.mkdir(parents=True)
+    (current_version_dir / "existing-entry.json").write_text("{}")
+    result = CachedFileResult()
+
+    write_cached_result(current_version_dir, "content-hash", "config-hash", result)
+
+    assert (current_version_dir / "existing-entry.json").exists()
+    assert (current_version_dir / "content-hash-config-hash.json").exists()
