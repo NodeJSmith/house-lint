@@ -603,7 +603,7 @@ def test_internal_error_preserves_completed_results_and_writes_debug_to_stderr(
     ) -> object:
         if source.relative_path == "src/b.py":
             raise RuntimeError("simulated failure")
-        return original(source, detector_inputs, **kwargs)  # type: ignore[arg-type]
+        return original(source, detector_inputs, **kwargs)
 
     monkeypatch.setattr(scanner, "detect_candidates", fail_second)
 

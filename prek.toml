@@ -1,0 +1,124 @@
+# Configuration file for prek, a fast Rust-based Git hook manager.
+# See https://prek.j178.dev for more information.
+#:schema https://www.schemastore.org/prek.json
+
+# ---------------------------------------------------------------------------
+# Builtin hooks — Rust-native reimplementations, no venv or network fetch
+# ---------------------------------------------------------------------------
+[[repos]]
+repo = "builtin"
+hooks = [
+    { id = "trailing-whitespace", stages = ["pre-commit"] },
+    { id = "end-of-file-fixer", stages = ["pre-commit"] },
+    { id = "mixed-line-ending", stages = ["pre-commit"] },
+    { id = "check-case-conflict", stages = ["pre-commit"] },
+    { id = "check-shebang-scripts-are-executable", stages = ["pre-commit"] },
+]
+
+# Hooks not yet reimplemented as builtins
+[[repos]]
+repo = "https://github.com/pre-commit/pre-commit-hooks"
+rev = "v6.0.0"
+hooks = [
+    { id = "check-builtin-literals", stages = ["pre-commit"] },
+    { id = "debug-statements", stages = ["pre-commit"] },
+]
+
+# ---------------------------------------------------------------------------
+# External repos
+# ---------------------------------------------------------------------------
+[[repos]]
+repo = "https://github.com/crate-ci/typos"
+rev = "v1.46.3"
+hooks = [
+    { id = "typos", args = ["--force-exclude"], stages = ["pre-commit", "pre-push"] },
+]
+
+# ---------------------------------------------------------------------------
+# Local hooks — security, pygrep patterns, and project checks.
+# `repo = "local"` is repeated per section purely to keep the banner comments
+# attached to their hooks; prek treats these identically to one combined block.
+# ---------------------------------------------------------------------------
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "zizmor"
+name = "zizmor (GitHub Actions security)"
+language = "system"
+# --offline already skips zizmor's own network calls; -u strips any locally
+# set GH_TOKEN/GITHUB_TOKEN so a scan of workflow files can't pick up and
+# leak a live credential into its output.
+entry = "env -u GH_TOKEN -u GITHUB_TOKEN uvx zizmor@1.26.1 --offline"
+files = '^\.github/workflows/'
+stages = ["pre-commit", "pre-push"]
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "no-type-ignore"
+name = 'Ban "type: ignore" comments (use pyright suppressions instead)'
+language = "pygrep"
+types = ["python"]
+entry = "# type: ignore"
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "no-future-annotations"
+name = "Ban from __future__ import annotations (breaks runtime type inspection)"
+language = "pygrep"
+types = ["python"]
+entry = "^from __future__ import annotations"
+stages = ["pre-commit"]
+
+# ---------------------------------------------------------------------------
+# Local hooks — project checks (shelled through `uv run` for CI parity;
+# ruff/pyright versions here must match what `uv sync --locked` installs,
+# not an independently pinned hook version)
+# ---------------------------------------------------------------------------
+[[repos]]
+repo = "local"
+
+# `files` (not `types`) so a `pyproject.toml`-only change (e.g. narrowing
+# [tool.ruff]/[tool.pyright]) still triggers these — `pass_filenames = false`
+# only suppresses passed filenames, it doesn't make selection unconditional.
+[[repos.hooks]]
+id = "ruff-check"
+name = "ruff check"
+language = "system"
+entry = "env -u VIRTUAL_ENV uv run ruff check --fix ."
+files = '(\.py$|^pyproject\.toml$)'
+pass_filenames = false
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "ruff-format"
+name = "ruff format"
+language = "system"
+entry = "env -u VIRTUAL_ENV uv run ruff format ."
+files = '(\.py$|^pyproject\.toml$)'
+pass_filenames = false
+stages = ["pre-commit"]
+
+[[repos.hooks]]
+id = "pyright"
+name = "pyright"
+language = "system"
+entry = "env -u VIRTUAL_ENV uv run pyright"
+files = '(\.py$|^pyproject\.toml$)'
+pass_filenames = false
+stages = ["pre-push"]
+
+# Reuses the shape of .pre-commit-hooks.yaml's `house-lint` hook (entry,
+# types, files, require_serial) so this repo lints itself the same way
+# consumers do, via `uv run` instead of an isolated python-language install.
+[[repos.hooks]]
+id = "house-lint"
+name = "house-lint"
+language = "system"
+entry = "env -u VIRTUAL_ENV uv run house-lint check"
+types = ["python"]
+files = '\.py$'
+require_serial = true
+stages = ["pre-commit"]
