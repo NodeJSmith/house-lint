@@ -3,7 +3,7 @@
 import re
 import tomllib
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, cast
@@ -66,7 +66,9 @@ class LintConfig:
     hsl101: HSL101Options = HSL101Options()
     hsl102: HSL102Options = HSL102Options()
     hsl103: HSL103Options = HSL103Options()
-    per_file_ignores: Mapping[str, tuple[str, ...]] = MappingProxyType({})
+    per_file_ignores: Mapping[str, tuple[str, ...]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 DetectorOptions = HSL101Options | HSL102Options | HSL103Options | None
