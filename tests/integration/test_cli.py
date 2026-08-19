@@ -119,9 +119,58 @@ def test_check_selects_repeatable_comma_separated_rule_ids(repository: Path) -> 
     assert [finding["rule_id"] for finding in result["findings"]] == ["HSL002"]
 
 
+def test_cli_extend_select_adds_a_rule_without_dropping_configured_select(
+    repository: Path,
+) -> None:
+    (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
+    (repository / "pyproject.toml").write_text('[tool.house-lint]\nselect = ["HSL002"]\n')
+
+    completed = _run(
+        repository,
+        "check",
+        "--root",
+        str(repository),
+        "--format",
+        "json",
+        "--extend-select",
+        "HSL001",
+    )
+
+    result = json.loads(completed.stdout)
+    assert completed.returncode == 1
+    assert result["enabled_rules"] == ["HSL001", "HSL002", "HSL900"]
+
+
+def test_cli_extend_ignore_subtracts_from_extend_select(repository: Path) -> None:
+    (repository / "pyproject.toml").write_text('[tool.house-lint]\nselect = ["HSL001"]\n')
+
+    completed = _run(
+        repository,
+        "check",
+        "--root",
+        str(repository),
+        "--format",
+        "json",
+        "--extend-select",
+        "HSL002",
+        "--extend-ignore",
+        "HSL002",
+    )
+
+    result = json.loads(completed.stdout)
+    assert completed.returncode == 0
+    assert result["enabled_rules"] == ["HSL001", "HSL900"]
+
+
 @pytest.mark.parametrize(
     ("option", "value"),
-    [("--select", "HSL001,"), ("--select", "HSL001,,HSL002"), ("--ignore", " ")],
+    [
+        ("--select", "HSL001,"),
+        ("--select", "HSL001,,HSL002"),
+        ("--ignore", " "),
+        ("--extend-select", "HSL001,"),
+        ("--extend-ignore", " "),
+    ],
 )
 def test_empty_cli_rule_id_elements_are_usage_errors(
     repository: Path, option: str, value: str

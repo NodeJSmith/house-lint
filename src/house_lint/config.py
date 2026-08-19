@@ -88,10 +88,21 @@ def selected_detector_inputs(config: LintConfig) -> tuple[DetectorInput, ...]:
 
 
 def default_config(
-    *, cli_select: Iterable[str] | None = None, cli_ignore: Iterable[str] | None = None
+    *,
+    cli_select: Iterable[str] | None = None,
+    cli_ignore: Iterable[str] | None = None,
+    cli_extend_select: Iterable[str] | None = None,
+    cli_extend_ignore: Iterable[str] | None = None,
 ) -> LintConfig:
     """Build built-in configuration with the same CLI selection semantics as TOML."""
-    enabled_rules = _effective_rule_selection(DEFAULT_SELECT, (), cli_select, cli_ignore)
+    enabled_rules = _effective_rule_selection(
+        DEFAULT_SELECT,
+        (),
+        cli_select,
+        cli_ignore,
+        cli_extend_select=cli_extend_select,
+        cli_extend_ignore=cli_extend_ignore,
+    )
     if "HSL101" in enabled_rules:
         raise ConfigError("HSL101 requires tokens when selected")
     return LintConfig(enabled_rules=enabled_rules)
@@ -130,8 +141,27 @@ def _effective_rule_selection(
     configured_ignore: Iterable[str],
     cli_select: Iterable[str] | None,
     cli_ignore: Iterable[str] | None,
+    *,
+    configured_extend_select: Iterable[str] = (),
+    configured_extend_ignore: Iterable[str] = (),
+    cli_extend_select: Iterable[str] | None = None,
+    cli_extend_ignore: Iterable[str] | None = None,
 ) -> tuple[str, ...]:
-    """Apply the one selection precedence algorithm shared by defaults and TOML."""
+    """Apply the one selection precedence algorithm shared by defaults and TOML.
+
+    Order:
+    1. `select`/`ignore` establish the base set — or a CLI `--select` gives a wholesale
+       override, replacing configured `select`/`ignore` entirely rather than adding to them.
+    2. `extend-select`/`extend-ignore` layer on top of that base *regardless of its source*.
+       Config and CLI variants of each are merged together (concatenated, not one overriding
+       the other) before being applied, since — unlike `select` vs. `--select` — neither is
+       meant to replace the other.
+    3. `extend-ignore` is subtractive against the *whole* pool from steps 1-2, not just
+       against `extend-select`'s own additions — `select = ["HSL001"]` combined with
+       `extend-ignore = ["HSL001"]` drops HSL001 entirely, the same as if it had never been
+       selected.
+    4. CLI `--ignore` is applied last and always wins over everything above.
+    """
     configured = _ids(list(configured_select), "select")
     configured_ignored = _ids(list(configured_ignore), "ignore")
     selected = (
@@ -139,8 +169,15 @@ def _effective_rule_selection(
         if cli_select is not None
         else tuple(rule_id for rule_id in configured if rule_id not in configured_ignored)
     )
+    extend_selected = _ids(list(configured_extend_select), "extend-select") + _ids(
+        list(cli_extend_select or ()), "--extend-select"
+    )
+    extend_ignored = _ids(list(configured_extend_ignore), "extend-ignore") + _ids(
+        list(cli_extend_ignore or ()), "--extend-ignore"
+    )
+    extended = (set(selected) | set(extend_selected)) - set(extend_ignored)
     cli_ignored = _ids(list(cli_ignore or ()), "--ignore")
-    return tuple(sorted(set(selected) - set(cli_ignored))) + ("HSL900",)
+    return tuple(sorted(extended - set(cli_ignored))) + ("HSL900",)
 
 
 def _validate_include(values: tuple[str, ...]) -> tuple[str, ...]:
@@ -294,14 +331,23 @@ def get_house_lint_table(document: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def load_config(
-    path: Path, *, cli_select: Iterable[str] | None = None, cli_ignore: Iterable[str] | None = None
+    path: Path,
+    *,
+    cli_select: Iterable[str] | None = None,
+    cli_ignore: Iterable[str] | None = None,
+    cli_extend_select: Iterable[str] | None = None,
+    cli_extend_ignore: Iterable[str] | None = None,
 ) -> LintConfig:
     """Load and validate one TOML configuration file."""
     document = load_toml(path)
     house = get_house_lint_table(document)
     if house is None:
         raise ConfigError("config lacks [tool.house-lint]")
-    _strict_keys(house, {"include", "exclude", "select", "ignore", "rules"}, "tool.house-lint")
+    _strict_keys(
+        house,
+        {"include", "exclude", "select", "ignore", "extend-select", "extend-ignore", "rules"},
+        "tool.house-lint",
+    )
     include = _validate_include(_strings(house.get("include", list(DEFAULT_INCLUDE)), "include"))
     exclude = _validate_exclude(_strings(house.get("exclude", []), "exclude"))
     enabled = _effective_rule_selection(
@@ -309,6 +355,10 @@ def load_config(
         house.get("ignore", []),
         cli_select,
         cli_ignore,
+        configured_extend_select=house.get("extend-select", []),
+        configured_extend_ignore=house.get("extend-ignore", []),
+        cli_extend_select=cli_extend_select,
+        cli_extend_ignore=cli_extend_ignore,
     )
     options = _rule_options(house)
     if "HSL101" in enabled and not options[0].tokens:

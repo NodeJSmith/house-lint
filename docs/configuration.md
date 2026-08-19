@@ -8,9 +8,11 @@ include = ["src", "tests", "scripts", "tools", "examples"]
 exclude = []
 select = ["HSL001", "HSL002", "HSL003", "HSL004"]
 ignore = []
+extend-select = []
+extend-ignore = []
 ```
 
-`include` contains literal root-relative files or directories, not globs. An empty array intentionally selects no roots for a full scan. `exclude` uses root-relative Git-ignore-style patterns. Unknown keys, absolute paths, parent traversal, invalid patterns, duplicate IDs, and `HSL900` in `select` or `ignore` are configuration errors.
+`include` contains literal root-relative files or directories, not globs. An empty array intentionally selects no roots for a full scan. `exclude` uses root-relative Git-ignore-style patterns. Unknown keys, absolute paths, parent traversal, invalid patterns, duplicate IDs, and `HSL900` in `select`, `ignore`, `extend-select`, or `extend-ignore` are configuration errors. Unlike the rest of this schema, `extend-select`/`extend-ignore` are hyphenated by design, matching Ruff's spelling for the same additive-selection concept.
 
 ## Discovery and precedence
 
@@ -18,9 +20,11 @@ ignore = []
 2. `--config` selects an exact configuration. Without `--root`, its parent is the root; with `--root`, it must be inside the root.
 3. With `--root` and no `--config`, only `<root>/pyproject.toml` is considered.
 4. Without either option, the command searches upward from the current directory for the nearest `pyproject.toml` containing `[tool.house-lint]`. If none exists, it uses the nearest ancestor containing `.git` or any `pyproject.toml`; otherwise it uses the current directory.
-5. CLI `--select` replaces configured selection, then CLI `--ignore` subtracts IDs. `HSL900` is always added.
+5. The base selection is configured `select` minus configured `ignore`, or a CLI `--select` wholesale override when given.
+6. `extend-select`/`extend-ignore` (config and CLI, unioned together) layer additively on top of that base, regardless of whether the base came from config or `--select`. `extend-ignore` removes rules from the whole base, not just from `extend-select` — `select = ["HSL001"]` with `extend-ignore = ["HSL001"]` drops HSL001 entirely, it isn't limited to canceling out `extend-select` additions.
+7. CLI `--ignore` is applied last and always wins over everything above. `HSL900` is always added.
 
-Only the root `.gitignore` is loaded. Built-in excludes are `.git/`, `.venv/`, `.nox/`, `__pycache__/`, `site-packages/`, and `node_modules/`; configured excludes are added afterwards. `--no-gitignore` disables only the root `.gitignore`.
+The root `.gitignore` and every nested `.gitignore` between the root and each discovered file are loaded and combined with git's own precedence — a closer `.gitignore` can override a farther one, including via negation (`!pattern`). Built-in excludes are `.git/`, `.venv/`, `.nox/`, `__pycache__/`, `site-packages/`, and `node_modules/`; configured excludes are added afterwards. `--no-gitignore` disables `.gitignore` handling at every level.
 
 ## Rule options
 

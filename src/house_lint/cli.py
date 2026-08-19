@@ -165,6 +165,8 @@ def check(
     format: str = "text",
     select: list[str] | None = None,
     ignore: list[str] | None = None,
+    extend_select: list[str] | None = None,
+    extend_ignore: list[str] | None = None,
     no_gitignore: bool = False,
     debug: bool = False,
 ) -> int:
@@ -175,6 +177,8 @@ def check(
         return 2
     cli_select = _flatten_ids(select)
     cli_ignore = _flatten_ids(ignore)
+    cli_extend_select = _flatten_ids(extend_select)
+    cli_extend_ignore = _flatten_ids(extend_ignore)
     resolved_root: Path | None = None
     resolved_config: Path | None = None
     try:
@@ -187,12 +191,19 @@ def check(
         resolved_root = resolution.root
         resolved_config = resolution.config
         lint_config = (
-            default_config(cli_select=cli_select, cli_ignore=cli_ignore)
+            default_config(
+                cli_select=cli_select,
+                cli_ignore=cli_ignore,
+                cli_extend_select=cli_extend_select,
+                cli_extend_ignore=cli_extend_ignore,
+            )
             if resolution.config is None
             else load_config(
                 resolution.config,
                 cli_select=cli_select,
                 cli_ignore=cli_ignore,
+                cli_extend_select=cli_extend_select,
+                cli_extend_ignore=cli_extend_ignore,
             )
         )
         result = _scan(

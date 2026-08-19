@@ -81,6 +81,14 @@ house-lint check --select HSL002,HSL103 --ignore HSL103
 
 Each `--select` or `--ignore` occurrence accepts one comma-separated list. Selection is strict: unknown, duplicate, empty, and `HSL900` IDs are usage errors.
 
+To add or remove rules without replacing the rest of your configured selection, use `extend-select`/`extend-ignore` (in `[tool.house-lint]` or as `--extend-select`/`--extend-ignore`) instead of `select`/`ignore`:
+
+```bash
+house-lint check --extend-select HSL101
+```
+
+`extend-select`/`extend-ignore` layer additively on top of the base selection (configured `select`/`ignore`, or a CLI `--select` override) regardless of where that base came from. A final CLI `--ignore` still always wins.
+
 Read [configuration](docs/configuration.md) for discovery, precedence, validation, excludes, and token-family options.
 
 ## Paths, roots, and Git ignores
@@ -93,7 +101,7 @@ house-lint check src/service.py tests
 
 Explicit paths are strict. Missing, out-of-root, and non-Python file arguments are errors; ignored or excluded explicit Python files are counted as skipped. `--root` fixes the project boundary and only considers `<root>/pyproject.toml`. Without `--root`, discovery starts at the current directory. `--config` selects an exact configuration file; without `--root`, its parent becomes the root.
 
-The linter loads only the selected root's `.gitignore`, plus built-in and configured excludes. It does not search nested `.gitignore` files or shell out to Git. Use `--no-gitignore` to disable only the root `.gitignore`.
+The linter loads the selected root's `.gitignore` plus every nested `.gitignore` between the root and each discovered file, combined with git's own precedence (a closer `.gitignore` can override a farther one, including via negation), plus built-in and configured excludes. It does not shell out to Git. Use `--no-gitignore` to disable `.gitignore` handling at every level.
 
 ## Suppressions
 
