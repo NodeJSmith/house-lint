@@ -80,12 +80,15 @@ stages = ["pre-commit"]
 [[repos]]
 repo = "local"
 
+# `files` (not `types`) so a `pyproject.toml`-only change (e.g. narrowing
+# [tool.ruff]/[tool.pyright]) still triggers these — `pass_filenames = false`
+# only suppresses passed filenames, it doesn't make selection unconditional.
 [[repos.hooks]]
 id = "ruff-check"
 name = "ruff check"
 language = "system"
 entry = "env -u VIRTUAL_ENV uv run ruff check --fix ."
-types = ["python"]
+files = '(\.py$|^pyproject\.toml$)'
 pass_filenames = false
 stages = ["pre-commit"]
 
@@ -94,7 +97,7 @@ id = "ruff-format"
 name = "ruff format"
 language = "system"
 entry = "env -u VIRTUAL_ENV uv run ruff format ."
-types = ["python"]
+files = '(\.py$|^pyproject\.toml$)'
 pass_filenames = false
 stages = ["pre-commit"]
 
@@ -103,7 +106,7 @@ id = "pyright"
 name = "pyright"
 language = "system"
 entry = "env -u VIRTUAL_ENV uv run pyright"
-types = ["python"]
+files = '(\.py$|^pyproject\.toml$)'
 pass_filenames = false
 stages = ["pre-push"]
 
