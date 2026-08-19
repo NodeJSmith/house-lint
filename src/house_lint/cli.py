@@ -9,8 +9,10 @@ from cyclopts import App, CycloptsError
 from house_lint.config import (
     ConfigError,
     LintConfig,
+    compile_per_file_ignores,
     default_config,
     load_config,
+    per_file_enabled_rules,
     selected_detector_inputs,
 )
 from house_lint.discovery import DiscoveryError, discover_files, resolve_project
@@ -128,14 +130,31 @@ def _scan(
     findings: list[Finding] = []
     errors = list(discovered.errors)
     detector_inputs = selected_detector_inputs(config)
+    compiled_per_file_ignores = compile_per_file_ignores(config.per_file_ignores)
     suppressed_count = 0
     files_scanned = 0
     for path in discovered.files:
+        file_enabled_rules = config.enabled_rules
+        file_detector_inputs = detector_inputs
+        if compiled_per_file_ignores:
+            relative = path.relative_to(root).as_posix()
+            file_enabled_rules = per_file_enabled_rules(
+                config.enabled_rules, compiled_per_file_ignores, relative
+            )
+            if file_enabled_rules != config.enabled_rules:
+                # Suppression handling only flags pragmas naming a disabled rule (see
+                # apply_suppressions/_collect_claims in suppressions.py) — it does not filter
+                # candidate findings by enabled_rules. detector_inputs must be recomputed here
+                # so a per-file-ignored rule's detector never runs for this file; skipping this
+                # recompute would let its findings leak through unfiltered.
+                file_detector_inputs = selected_detector_inputs(
+                    config, enabled_rules=file_enabled_rules
+                )
         file_result = scan_file(
             path,
             root=root,
-            enabled_rules=config.enabled_rules,
-            detector_inputs=detector_inputs,
+            enabled_rules=file_enabled_rules,
+            detector_inputs=file_detector_inputs,
             debug=debug,
         )
         findings.extend(file_result.findings)

@@ -162,6 +162,44 @@ def test_cli_extend_ignore_subtracts_from_extend_select(repository: Path) -> Non
     assert result["enabled_rules"] == ["HSL001", "HSL900"]
 
 
+def test_per_file_ignores_silences_a_rule_only_for_matching_files(repository: Path) -> None:
+    (repository / "tests").mkdir()
+    (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
+    (repository / "tests" / "test_finding.py").write_text("def example():\n    import module\n")
+    (repository / "pyproject.toml").write_text(
+        '[tool.house-lint]\nselect = ["HSL002"]\n'
+        '[tool.house-lint.per-file-ignores]\n"tests/**" = ["HSL002"]\n'
+    )
+
+    completed = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    result = json.loads(completed.stdout)
+    assert completed.returncode == 1
+    assert result["enabled_rules"] == ["HSL002", "HSL900"]
+    assert [finding["path"] for finding in result["findings"]] == ["src/finding.py"]
+
+
+def test_per_file_ignores_flags_a_pragma_naming_a_rule_disabled_for_that_file(
+    repository: Path,
+) -> None:
+    (repository / "tests").mkdir()
+    (repository / "tests" / "test_finding.py").write_text(
+        "def example():\n    import module  # house-lint: ignore[HSL002] - stale suppression\n"
+    )
+    (repository / "pyproject.toml").write_text(
+        '[tool.house-lint]\nselect = ["HSL002"]\n'
+        '[tool.house-lint.per-file-ignores]\n"tests/**" = ["HSL002"]\n'
+    )
+
+    completed = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    result = json.loads(completed.stdout)
+    assert completed.returncode == 1
+    assert [(finding["rule_id"], finding["message"]) for finding in result["findings"]] == [
+        ("HSL900", "unused suppression for disabled rule HSL002")
+    ]
+
+
 @pytest.mark.parametrize(
     ("option", "value"),
     [

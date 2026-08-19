@@ -12,7 +12,19 @@ extend-select = []
 extend-ignore = []
 ```
 
-`include` contains literal root-relative files or directories, not globs. An empty array intentionally selects no roots for a full scan. `exclude` uses root-relative Git-ignore-style patterns. Unknown keys, absolute paths, parent traversal, invalid patterns, duplicate IDs, and `HSL900` in `select`, `ignore`, `extend-select`, or `extend-ignore` are configuration errors. Unlike the rest of this schema, `extend-select`/`extend-ignore` are hyphenated by design, matching Ruff's spelling for the same additive-selection concept.
+`include` contains literal root-relative files or directories, not globs. An empty array intentionally selects no roots for a full scan. `exclude` uses root-relative Git-ignore-style patterns. Unknown keys, absolute paths, parent traversal, invalid patterns, duplicate IDs, and `HSL900` in `select`, `ignore`, `extend-select`, `extend-ignore`, or `per-file-ignores` are configuration errors. Unlike the rest of this schema, `extend-select`/`extend-ignore`/`per-file-ignores` are hyphenated by design, matching Ruff's spelling for the same concepts.
+
+## Per-file rule overrides
+
+`[tool.house-lint.per-file-ignores]` maps root-relative Git-ignore-style glob patterns to rule IDs to drop for matching files, without changing the global selection for everything else:
+
+```toml
+[tool.house-lint.per-file-ignores]
+"tests/**" = ["HSL002"]
+"legacy/*.py" = ["HSL001", "HSL003"]
+```
+
+Applied after the base selection and `extend-select`/`extend-ignore` resolve, per file: a rule dropped by `per-file-ignores` for a matching file is not detected for that file at all, so a `# house-lint: ignore[...]` pragma naming it there is flagged the same way as suppressing an already-disabled rule. `HSL900` can never appear in a `per-file-ignores` value.
 
 ## Discovery and precedence
 

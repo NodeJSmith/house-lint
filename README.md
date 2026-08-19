@@ -89,6 +89,13 @@ house-lint check --extend-select HSL101
 
 `extend-select`/`extend-ignore` layer additively on top of the base selection (configured `select`/`ignore`, or a CLI `--select` override) regardless of where that base came from. A final CLI `--ignore` still always wins.
 
+To silence a rule only for files matching a glob, without touching the selection everywhere else, use `[tool.house-lint.per-file-ignores]`:
+
+```toml
+[tool.house-lint.per-file-ignores]
+"tests/**" = ["HSL002"]
+```
+
 Read [configuration](docs/configuration.md) for discovery, precedence, validation, excludes, and token-family options.
 
 ## Paths, roots, and Git ignores

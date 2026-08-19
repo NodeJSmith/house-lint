@@ -2,7 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from house_lint.config import ConfigError, default_config, get_house_lint_table, load_config
+from house_lint.config import (
+    ConfigError,
+    compile_per_file_ignores,
+    default_config,
+    get_house_lint_table,
+    load_config,
+    per_file_enabled_rules,
+)
 
 
 def test_defaults_and_cli_selection_precedence(tmp_path: Path) -> None:
@@ -96,6 +103,76 @@ def test_extend_select_and_extend_ignore_reject_duplicate_and_always_on_ids(
     config_path.write_text('[tool.house-lint]\nextend-ignore = ["HSL900"]\n')
     with pytest.raises(ConfigError, match="unknown or forbidden rule ID"):
         load_config(config_path)
+
+
+def test_per_file_ignores_removes_rules_only_for_matching_files(tmp_path: Path) -> None:
+    config_path = tmp_path / "pyproject.toml"
+    config_path.write_text(
+        '[tool.house-lint]\nselect = ["HSL001", "HSL002"]\n'
+        '[tool.house-lint.per-file-ignores]\n"tests/**" = ["HSL002"]\n'
+    )
+
+    config = load_config(config_path)
+
+    assert config.per_file_ignores == {"tests/**": ("HSL002",)}
+    compiled = compile_per_file_ignores(config.per_file_ignores)
+    assert per_file_enabled_rules(config.enabled_rules, compiled, "tests/test_foo.py") == (
+        "HSL001",
+        "HSL900",
+    )
+    assert per_file_enabled_rules(config.enabled_rules, compiled, "src/foo.py") == (
+        "HSL001",
+        "HSL002",
+        "HSL900",
+    )
+
+
+def test_per_file_ignores_cannot_target_hsl900_or_repeat_a_rule(tmp_path: Path) -> None:
+    config_path = tmp_path / "pyproject.toml"
+    config_path.write_text('[tool.house-lint.per-file-ignores]\n"tests/**" = ["HSL900"]\n')
+    with pytest.raises(ConfigError, match="unknown or forbidden rule ID"):
+        load_config(config_path)
+
+    config_path.write_text(
+        '[tool.house-lint.per-file-ignores]\n"tests/**" = ["HSL001", "HSL001"]\n'
+    )
+    with pytest.raises(ConfigError, match="duplicate rule IDs"):
+        load_config(config_path)
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        '[tool.house-lint.per-file-ignores]\n"../outside" = ["HSL001"]\n',
+        '[tool.house-lint.per-file-ignores]\n"/absolute" = ["HSL001"]\n',
+        '[tool.house-lint.per-file-ignores]\n"" = ["HSL001"]\n',
+    ],
+)
+def test_per_file_ignores_rejects_non_root_relative_or_empty_patterns(
+    tmp_path: Path, table: str
+) -> None:
+    config_path = tmp_path / "pyproject.toml"
+    config_path.write_text(table)
+    with pytest.raises(ConfigError, match="root-relative|non-empty"):
+        load_config(config_path)
+
+
+def test_per_file_ignores_rejects_non_array_values(tmp_path: Path) -> None:
+    config_path = tmp_path / "pyproject.toml"
+    config_path.write_text('[tool.house-lint.per-file-ignores]\n"tests/**" = "HSL001"\n')
+    with pytest.raises(ConfigError, match="must be an array"):
+        load_config(config_path)
+
+
+def test_per_file_ignores_rejects_invalid_gitignore_pattern(tmp_path: Path) -> None:
+    config_path = tmp_path / "pyproject.toml"
+    config_path.write_text('[tool.house-lint.per-file-ignores]\n"\\\\" = ["HSL001"]\n')
+    with pytest.raises(ConfigError, match="invalid Git-ignore"):
+        load_config(config_path)
+
+
+def test_default_config_has_no_per_file_ignores() -> None:
+    assert default_config().per_file_ignores == {}
 
 
 def test_default_config_uses_the_shared_selection_precedence() -> None:
