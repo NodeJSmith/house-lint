@@ -232,7 +232,22 @@ def _scan(
         errors.extend(file_result.errors)
         suppressed_count += file_result.suppressed_count
         files_scanned += file_result.files_scanned
-        _write_cache_entry(cache_dir, content_hash, config_hash, file_result, debug=debug)
+        # Re-hash post-scan to narrow a TOCTOU race: scan_file() reads the file's bytes
+        # independently of the read that produced content_hash above, so if the file changed
+        # in between (e.g. an editor autosaving mid-scan), file_result reflects content that
+        # content_hash no longer describes. Writing it under that stale key would let a later
+        # run replay these findings against content they were never derived from. This closes
+        # the common case, not every case — content that changes and then reverts to the exact
+        # original bytes within this window would still slip through undetected, but that's not
+        # a practical concern here. The scan result itself is still correct and used for
+        # findings/errors above — only the cache write is skipped.
+        if content_hash is None or hash_file_content(path) == content_hash:
+            _write_cache_entry(cache_dir, content_hash, config_hash, file_result, debug=debug)
+        elif debug:
+            print(
+                f"debug: skip cache write for {relative}: content changed during scan",
+                file=sys.stderr,
+            )
         if file_result.stop:
             break
     return ScanResult(

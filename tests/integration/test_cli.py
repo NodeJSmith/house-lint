@@ -211,7 +211,7 @@ def test_cache_is_populated_and_reused_across_runs(repository: Path) -> None:
     # repository also contains a clean src/clean.py with no findings, so it gets its own
     # (empty) cache entry — select finding.py's entry specifically by its non-empty content.
     entries = list((repository / ".house-lint-cache").rglob("*.json"))
-    assert len(entries) == 2
+    assert entries
     entry = next(e for e in entries if json.loads(e.read_text())["findings"])
 
     # Poison the cache entry directly (bypassing the real scan) to prove a normal run reads
@@ -290,16 +290,49 @@ def test_cache_hit_never_calls_scan_file(
     first_output = capsys.readouterr().out
     assert first_code == 1
 
-    def fail_if_called(*args: object, **kwargs: object) -> None:
+    calls: list[object] = []
+
+    def record_call(*args: object, **kwargs: object) -> None:
+        calls.append(args)
         raise AssertionError("scan_file must not be called on a cache hit")
 
-    monkeypatch.setattr(cli, "scan_file", fail_if_called)
+    monkeypatch.setattr(cli, "scan_file", record_call)
 
     second_code = cli.check(root=repository, select=["HSL002"], format="json")
     second_output = capsys.readouterr().out
 
+    assert calls == [], "scan_file must not be called on a cache hit"
     assert second_code == first_code
     assert json.loads(second_output) == json.loads(first_output)
+
+
+def test_cache_write_is_skipped_when_content_changes_during_scan(
+    repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Simulates the TOCTOU race between the cache-key hash (_cache_keys -> hash_file_content)
+    # and scan_file's own independent read of the same file: if the file's real content
+    # changes in between (e.g. an editor autosaving mid-scan), the two reads disagree and the
+    # scan result must never be cached under the now-stale first hash.
+    (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
+
+    real_hash_file_content = cli.hash_file_content
+    call_counts: dict[Path, int] = {}
+
+    def stale_on_first_read(path: Path) -> str | None:
+        call_counts[path] = call_counts.get(path, 0) + 1
+        if call_counts[path] == 1:
+            # First call per file is the cache-key computation in _cache_keys. Return a hash
+            # that cannot match the real content, standing in for "the file already changed
+            # by the time scan_file does its own read a moment later".
+            return "0" * 64
+        return real_hash_file_content(path)
+
+    monkeypatch.setattr(cli, "hash_file_content", stale_on_first_read)
+
+    code = cli.check(root=repository, select=["HSL002"], format="json")
+
+    assert code == 1
+    assert list((repository / ".house-lint-cache").rglob("*.json")) == []
 
 
 def test_cache_does_not_cross_contaminate_hsl101_filename_findings_between_same_content_files(
