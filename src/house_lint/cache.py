@@ -28,6 +28,7 @@ from house_lint.results import Finding, LintError
 from house_lint.source import MAX_SOURCE_BYTES, read_regular_file_bytes
 
 CACHE_DIRNAME = ".house-lint-cache"
+_VERSION_DIR_MARKER = ".house-lint-version"
 
 
 def default_cache_base(root: Path) -> Path:
@@ -166,6 +167,16 @@ def read_cached_result(
         return None
     try:
         payload = json.loads(raw)
+        suppressed_count = payload["suppressed_count"]
+        files_scanned = payload["files_scanned"]
+        # Dataclasses don't enforce annotations at runtime, so a corrupted-but-valid-JSON entry
+        # (e.g. `"suppressed_count": "1"`) would otherwise construct successfully here and only
+        # fail later when the caller accumulates it (`suppressed_count += cached.suppressed_count`
+        # in `cli.py`), turning what should be a graceful cache miss into an internal-error exit.
+        if not isinstance(suppressed_count, int) or isinstance(suppressed_count, bool):
+            raise TypeError("suppressed_count must be an int")
+        if not isinstance(files_scanned, int) or isinstance(files_scanned, bool):
+            raise TypeError("files_scanned must be an int")
         return CachedFileResult(
             findings=tuple(
                 _finding_from_payload(item, path=relative_path) for item in payload["findings"]
@@ -173,8 +184,8 @@ def read_cached_result(
             errors=tuple(
                 _error_from_payload(item, path=relative_path) for item in payload["errors"]
             ),
-            suppressed_count=payload["suppressed_count"],
-            files_scanned=payload["files_scanned"],
+            suppressed_count=suppressed_count,
+            files_scanned=files_scanned,
         )
     except (ValueError, KeyError, TypeError) as exc:
         if debug:
@@ -201,6 +212,23 @@ def _write_self_ignore_marker(base: Path, *, debug: bool = False) -> None:
             print(f"debug: cache self-ignore marker write failed: {exc}", file=sys.stderr)
 
 
+def _write_version_dir_marker(cache_dir: Path, *, debug: bool = False) -> None:
+    """Mark `cache_dir` as a house-lint-owned version directory, best-effort.
+
+    `_prune_stale_version_dirs` only deletes sibling directories carrying this marker — without
+    it, a `--cache-dir` pointed at a pre-existing shared directory (e.g. `~/.cache`) would have
+    every unrelated sibling directory recursively deleted on the first cache write, since nothing
+    would distinguish "an old house-lint version directory" from "someone else's data."
+    """
+    marker = cache_dir / _VERSION_DIR_MARKER
+    try:
+        if not marker.exists():
+            marker.write_text("", encoding="utf-8")
+    except OSError as exc:
+        if debug:
+            print(f"debug: cache version-dir marker write failed: {exc}", file=sys.stderr)
+
+
 def _prune_stale_version_dirs(cache_dir: Path, *, debug: bool = False) -> None:
     """Remove sibling version directories under `cache_dir`'s base, best-effort.
 
@@ -212,6 +240,10 @@ def _prune_stale_version_dirs(cache_dir: Path, *, debug: bool = False) -> None:
     directory. This narrows, but does not eliminate, the risk window: a *concurrent* process
     actively writing under a different version during an overlapping run can still have its
     directory removed by this call — best-effort here means "safe to fail," not "race-free."
+
+    Only siblings carrying `_VERSION_DIR_MARKER` are eligible — a directory without it was never
+    created by house-lint's own versioned-cache writes, so it's left untouched regardless of how
+    it got there (a pre-existing directory under a shared `--cache-dir`, something else entirely).
     """
     base = cache_dir.parent
     try:
@@ -219,6 +251,8 @@ def _prune_stale_version_dirs(cache_dir: Path, *, debug: bool = False) -> None:
     except OSError:
         return
     for sibling in siblings:
+        if not (sibling / _VERSION_DIR_MARKER).is_file():
+            continue
         try:
             shutil.rmtree(sibling)
         except OSError as exc:
@@ -251,6 +285,7 @@ def write_cached_result(
     }
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
+        _write_version_dir_marker(cache_dir, debug=debug)
         _prune_stale_version_dirs(cache_dir, debug=debug)
         _write_self_ignore_marker(cache_dir.parent, debug=debug)
         temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")

@@ -196,6 +196,22 @@ def test_read_cached_result_is_a_miss_when_a_required_field_is_missing(tmp_path:
     )
 
 
+def test_read_cached_result_is_a_miss_when_a_scalar_field_has_the_wrong_type(
+    tmp_path: Path,
+) -> None:
+    """A corrupted-but-valid-JSON entry (e.g. `suppressed_count` as a string) must be treated
+    as a cache miss here, not accepted and left to raise `TypeError` later when the caller
+    accumulates it (`suppressed_count += cached.suppressed_count` in `cli.py`)."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True)
+    payload = '{"findings": [], "errors": [], "suppressed_count": "1", "files_scanned": 1}'
+    (cache_dir / "content-hash-config-hash.json").write_text(payload)
+
+    assert (
+        read_cached_result(cache_dir, "content-hash", "config-hash", relative_path="a.py") is None
+    )
+
+
 def test_corrupted_entry_is_silent_by_default_but_reported_under_debug(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -241,9 +257,9 @@ def test_write_cached_result_writes_atomically_and_leaves_no_temp_file(tmp_path:
 
     write_cached_result(cache_dir, "content-hash", "config-hash", result)
 
-    entries = list(cache_dir.iterdir())
-    assert [entry.name for entry in entries] == ["content-hash-config-hash.json"]
-    assert not any(entry.name.endswith(".tmp") for entry in entries)
+    entries = {entry.name for entry in cache_dir.iterdir()}
+    assert entries == {"content-hash-config-hash.json", ".house-lint-version"}
+    assert not any(name.endswith(".tmp") for name in entries)
 
 
 def test_write_cached_result_creates_self_ignoring_gitignore_in_the_base_directory(
@@ -278,6 +294,7 @@ def test_write_cached_result_prunes_sibling_version_directories(tmp_path: Path) 
     old_version_dir = base / "0.9.0"
     old_version_dir.mkdir(parents=True)
     (old_version_dir / "stale-entry.json").write_text("{}")
+    (old_version_dir / ".house-lint-version").write_text("")
 
     current_version_dir = base / "1.0.0"
     result = CachedFileResult()
@@ -287,6 +304,26 @@ def test_write_cached_result_prunes_sibling_version_directories(tmp_path: Path) 
     assert not old_version_dir.exists()
     assert current_version_dir.exists()
     assert (current_version_dir / "content-hash-config-hash.json").exists()
+
+
+def test_write_cached_result_does_not_prune_directories_without_the_version_marker(
+    tmp_path: Path,
+) -> None:
+    """A `--cache-dir` pointed at a pre-existing shared directory (e.g. `~/.cache`) must never
+    have its unrelated sibling directories swept up as "stale house-lint versions" — only
+    directories house-lint itself created (marked via `.house-lint-version`) are eligible."""
+    base = tmp_path / ".cache"
+    unrelated_dir = base / "some-other-tool"
+    unrelated_dir.mkdir(parents=True)
+    (unrelated_dir / "important-data.txt").write_text("do not delete")
+
+    current_version_dir = base / "1.0.0"
+    result = CachedFileResult()
+
+    write_cached_result(current_version_dir, "content-hash", "config-hash", result)
+
+    assert unrelated_dir.exists()
+    assert (unrelated_dir / "important-data.txt").exists()
 
 
 def test_write_cached_result_leaves_the_current_version_directory_untouched(
