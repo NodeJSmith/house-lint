@@ -167,6 +167,41 @@ def test_nested_gitignore_patterns_are_relative_to_their_own_directory(tmp_path:
     assert result.files_skipped == 2
 
 
+def test_nested_gitignore_pattern_preserves_a_significant_leading_space(tmp_path: Path) -> None:
+    # A leading space is part of the pattern per gitwildmatch (verified directly against
+    # `GitIgnoreSpec`) -- it must match a file whose name itself starts with a space, not the
+    # same name with the space stripped.
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / ".gitignore").write_text(" ignored.py\n")
+    space_prefixed = source / " ignored.py"
+    space_prefixed.write_text("x = 1\n")
+    kept = source / "ignored.py"
+    kept.write_text("x = 1\n")
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert kept in result.files
+    assert space_prefixed not in result.files
+
+
+def test_nested_gitignore_pattern_preserves_an_escaped_trailing_space(tmp_path: Path) -> None:
+    # Trailing whitespace is insignificant per gitwildmatch *unless* escaped with a backslash,
+    # in which case it's part of the pattern -- verified directly against `GitIgnoreSpec`.
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / ".gitignore").write_text("ignored.py\\ \n")
+    space_suffixed = source / "ignored.py "
+    space_suffixed.write_text("x = 1\n")
+    kept = source / "ignored.py"
+    kept.write_text("x = 1\n")
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert kept in result.files
+    assert space_suffixed not in result.files
+
+
 def test_nested_gitignore_leading_slash_anchors_to_its_own_directory(tmp_path: Path) -> None:
     source = tmp_path / "src"
     sub = source / "sub"
@@ -330,6 +365,38 @@ def test_gitignored_directory_is_never_descended_so_nested_negation_cannot_resur
     assert result.files_skipped == 1
     # The nested .gitignore was never even read, proving we didn't descend into `generated/`
     # rather than descending and merely discarding its (negating) effect afterward.
+    assert nested_ignore not in read_calls
+
+
+def test_explicit_path_inside_ignored_directory_cannot_be_resurrected_by_nested_negation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Same scenario as the walked-directory version above, but reached via an explicit path
+    # rather than a directory scan. Explicit paths skip `_traversable_dirs`'s walk-time pruning
+    # and go straight to `_combined_gitignore_spec`, which must independently refuse to read a
+    # nested .gitignore that lives inside an already-ignored ancestor.
+    source = tmp_path / "src"
+    source.mkdir()
+    (tmp_path / ".gitignore").write_text("src/generated/\n")
+    generated = source / "generated"
+    generated.mkdir()
+    nested_ignore = generated / ".gitignore"
+    nested_ignore.write_text("!foo.py\n")
+    foo = generated / "foo.py"
+    foo.write_text("x = 1\n")
+    read_text = Path.read_text
+    read_calls: list[Path] = []
+
+    def spy_read_text(self: Path, *, encoding: str) -> str:
+        read_calls.append(self)
+        return read_text(self, encoding=encoding)
+
+    monkeypatch.setattr(Path, "read_text", spy_read_text)
+
+    result = discover_files(tmp_path, explicit=(foo,))
+
+    assert result.files == ()
+    assert result.files_skipped == 1
     assert nested_ignore not in read_calls
 
 

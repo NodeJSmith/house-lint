@@ -102,6 +102,21 @@ def _escape_gitignore_literal(segment: str) -> str:
     return _GITIGNORE_METACHARS.sub(r"\\\1", segment)
 
 
+def _strip_unescaped_trailing_whitespace(text: str) -> str:
+    """Trim trailing spaces/tabs, except one immediately preceded by a backslash escape.
+
+    Mirrors gitwildmatch's own trailing-whitespace rule ("trailing spaces are ignored unless
+    they are quoted with backslash") so a nested pattern's rewrite doesn't discard whitespace
+    that `GitIgnoreSpec` would otherwise treat as significant.
+    """
+    end = len(text)
+    while end > 0 and text[end - 1] in " \t":
+        if end >= 2 and text[end - 2] == "\\":
+            break
+        end -= 1
+    return text[:end]
+
+
 def _prefix_pattern(prefix: str, line: str) -> str:
     """Rewrite a gitignore pattern owned by `prefix` into an equivalent root-anchored pattern.
 
@@ -112,12 +127,22 @@ def _prefix_pattern(prefix: str, line: str) -> str:
     `GitIgnoreSpec` matches against both "src/foo.py" and "src/sub/foo.py" — "**" matches zero or
     more directories), one with an embedded (or leading) slash is anchored to that directory, and
     a leading "!" negates independent of anchoring.
+
+    Only *unescaped trailing* whitespace is insignificant per gitwildmatch — a leading space is
+    part of the pattern (matches a filename that itself starts with a space), and "#"/"!" only
+    carry their special meaning as the pattern's literal first character. Blindly stripping the
+    whole line (as an earlier version of this function did) silently dropped a leading space from
+    the matched filename and could misidentify a leading-whitespace-prefixed "#"/"!" as
+    comment/negation syntax that real gitignore parsing (verified against `GitIgnoreSpec` directly)
+    does not treat as such — so only `.strip()`'s result is used to test for an all-whitespace
+    (blank) line; the pattern body itself is built from the unstripped `line`.
     """
-    stripped = line.strip()
-    if not stripped or stripped.startswith("#"):
+    if not line.strip():
         return line
-    negated = stripped.startswith("!")
-    body = stripped[1:] if negated else stripped
+    if line.startswith("#"):
+        return line
+    negated = line.startswith("!")
+    body = _strip_unescaped_trailing_whitespace(line[1:] if negated else line)
     if body in ("", "/"):
         # A bare "/" (or an empty pattern after stripping "!") has no defined gitignore meaning;
         # treat it as inert rather than accidentally suppressing the whole owning directory.
@@ -332,6 +357,14 @@ class _FileSelector:
         parent, so `spec_by_lines_cache` is keyed on the accumulated lines themselves (not the
         directory) to skip `GitIgnoreSpec.from_lines` entirely on that repeat, while
         `combined_gitignore_spec_cache` still keeps the per-directory lookup itself O(1).
+
+        Checks each ancestor against the lines accumulated from *its* ancestors before reading
+        that ancestor's own `.gitignore` and folding its patterns in. Real git never reads ignore
+        files inside a directory it doesn't descend into, so once an ancestor is already excluded,
+        a nested negation further down must not be allowed to resurrect it. Normal tree walks
+        never hit this — `_traversable_dirs` already prunes an ignored directory before this
+        method is ever called for anything beneath it — but an *explicit* path (`house-lint check
+        src/ignored/foo.py`) reaches straight in here without going through that walk-time pruning.
         """
         if directory in self.combined_gitignore_spec_cache:
             return self.combined_gitignore_spec_cache[directory]
@@ -349,6 +382,8 @@ class _FileSelector:
         current = self.root
         for part in relative_parts:
             current = current / part
+            if lines and _ignored(self.root, current, self._spec_for_lines(tuple(lines), current)):
+                break
             prefix = "/".join(
                 _escape_gitignore_literal(segment)
                 for segment in current.relative_to(self.root).parts
@@ -356,24 +391,32 @@ class _FileSelector:
             lines.extend(
                 _prefix_pattern(prefix, line) for line in self._own_gitignore_lines(current)
             )
-        lines_key = tuple(lines)
-        cached_spec = self.spec_by_lines_cache.get(lines_key)
-        if cached_spec is not None:
-            spec = cached_spec
-        else:
-            try:
-                spec = GitIgnoreSpec.from_lines(lines)
-            except (TypeError, ValueError, re.error) as exc:
-                # Each source's own lines are already validated in `_load_gitignore_lines`, but
-                # `_prefix_pattern`'s rewrite of them is not independently re-validated — a valid
-                # original line could in principle become invalid once prefixed, so this stays
-                # live. The error is intentionally *not* cached by line content below: it must
-                # still be reported once per offending directory, not just once per line tuple.
-                self.errors.append(self._error(directory, "traversal", "combine", str(exc)))
-                spec = GitIgnoreSpec.from_lines(())
-            else:
-                self.spec_by_lines_cache[lines_key] = spec
+        spec = self._spec_for_lines(tuple(lines), directory)
         self.combined_gitignore_spec_cache[directory] = spec
+        return spec
+
+    def _spec_for_lines(self, lines: tuple[str, ...], directory: Path) -> GitIgnoreSpec:
+        """Build (or reuse) the `GitIgnoreSpec` for an accumulated line tuple.
+
+        `directory` is used only for error attribution if the lines fail to parse; it is not
+        part of the cache key, since two directories that accumulate the same lines (e.g. a
+        directory with no `.gitignore` of its own repeating its parent's accumulated lines) share
+        one parsed spec.
+        """
+        cached_spec = self.spec_by_lines_cache.get(lines)
+        if cached_spec is not None:
+            return cached_spec
+        try:
+            spec = GitIgnoreSpec.from_lines(lines)
+        except (TypeError, ValueError, re.error) as exc:
+            # Each source's own lines are already validated in `_load_gitignore_lines`, but
+            # `_prefix_pattern`'s rewrite of them is not independently re-validated — a valid
+            # original line could in principle become invalid once prefixed, so this stays
+            # live. The error is intentionally *not* cached by line content below: it must
+            # still be reported once per offending directory, not just once per line tuple.
+            self.errors.append(self._error(directory, "traversal", "combine", str(exc)))
+            return GitIgnoreSpec.from_lines(())
+        self.spec_by_lines_cache[lines] = spec
         return spec
 
     def _own_gitignore_lines(self, directory: Path) -> tuple[str, ...]:
