@@ -346,6 +346,9 @@ def _write_marker_if_absent(
     fails with `EEXIST` on a symlink whether or not its target exists, which is exactly the
     "create only if nothing is here" test this needs, in one unraceable syscall.
     """
+    # Split across two `try` blocks rather than one: only the open can raise `FileExistsError`
+    # for the reason this function cares about, and merging them would let a write-time
+    # `FileExistsError` take the silent "already there, nothing to do" path.
     try:
         descriptor = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
     except FileExistsError:
