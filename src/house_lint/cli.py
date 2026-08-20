@@ -222,11 +222,25 @@ def _scan(
     cache_writes_failed = False
     for path in discovered.files:
         relative = path.relative_to(root).as_posix()
+        # Pattern matching runs on the file's resolved location, reporting on the spelling the
+        # user typed. `discovered.files` preserves the argument as given, so an accepted path
+        # containing `..` — `src/../tests/a.py`, with both directories present — reaches
+        # `relative` as `src/../tests/a.py`, which a configured `"tests/**"` never matches:
+        # house-lint then runs a rule the config disabled for everything under `tests/`.
+        #
+        # Resolved, not collapsed lexically. A purely lexical `..` collapse is only correct when
+        # no traversed component is a symlink: with `link/ -> x/y/`, the OS reads `link/../foo.py`
+        # as `x/foo.py` while the lexical form reads `foo.py`, so a pattern written for the
+        # file's real location silently stops matching. Resolving cannot drift from the file
+        # actually opened, and it is already the identity discovery itself uses — `selected` is
+        # keyed by resolved path, which is what makes a symlink and its target deduplicate. A
+        # per-file-ignore therefore follows the file, not the spelling that reached it.
+        match_relative = discovered.resolved_paths[path].relative_to(root).as_posix()
         file_enabled_rules = config.enabled_rules
         file_detector_inputs = detector_inputs
         if compiled_per_file_ignores:
             file_enabled_rules = per_file_enabled_rules(
-                config.enabled_rules, compiled_per_file_ignores, relative
+                config.enabled_rules, compiled_per_file_ignores, match_relative
             )
             if file_enabled_rules != config.enabled_rules:
                 # Suppression handling only flags pragmas naming a disabled rule (see

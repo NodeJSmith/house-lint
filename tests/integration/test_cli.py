@@ -186,6 +186,56 @@ def test_per_file_ignores_silences_a_rule_only_for_matching_files(repository: Pa
     assert [finding["path"] for finding in result["findings"]] == ["src/finding.py"]
 
 
+def test_per_file_ignores_match_a_path_spelled_with_parent_traversal(repository: Path) -> None:
+    """An explicit path keeps the spelling the user typed all the way to pattern matching, so
+    `src/../tests/x.py` was matched literally and `"tests/**"` missed it — running a rule the
+    config disabled for everything under `tests/`."""
+    (repository / "tests").mkdir()
+    (repository / "tests" / "test_finding.py").write_text("def example():\n    import module\n")
+    (repository / "pyproject.toml").write_text(
+        '[tool.house-lint]\nselect = ["HSL002"]\n'
+        '[tool.house-lint.per-file-ignores]\n"tests/**" = ["HSL002"]\n'
+    )
+
+    completed = _run(
+        repository,
+        "check",
+        "--root",
+        str(repository),
+        "--format",
+        "json",
+        "src/../tests/test_finding.py",
+    )
+
+    result = json.loads(completed.stdout)
+    assert completed.returncode == 0
+    assert result["findings"] == []
+
+
+def test_per_file_ignores_follow_a_symlinked_component_rather_than_the_spelling(
+    repository: Path,
+) -> None:
+    """A lexical `..` collapse is only correct when nothing traversed is a symlink. With
+    `link/ -> src/nested/`, the OS reads `link/../finding.py` as `src/finding.py` while the
+    lexical form reads `finding.py` — so a pattern written for the file's real location would
+    stop matching the file house-lint actually opens."""
+    (repository / "src" / "nested").mkdir(parents=True, exist_ok=True)
+    (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
+    (repository / "link").symlink_to(repository / "src" / "nested")
+    (repository / "pyproject.toml").write_text(
+        '[tool.house-lint]\nselect = ["HSL002"]\n'
+        '[tool.house-lint.per-file-ignores]\n"src/**" = ["HSL002"]\n'
+    )
+
+    completed = _run(
+        repository, "check", "--root", str(repository), "--format", "json", "link/../finding.py"
+    )
+
+    result = json.loads(completed.stdout)
+    assert completed.returncode == 0
+    assert result["findings"] == []
+
+
 def test_per_file_ignores_flags_a_pragma_naming_a_rule_disabled_for_that_file(
     repository: Path,
 ) -> None:
