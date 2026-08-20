@@ -272,18 +272,6 @@ def test_explicit_paths_match_git_check_ignore(scenario: Scenario, tmp_path: Pat
     assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known pathspec/git divergence: a negated directory-only pattern ('!sub/') re-includes "
-        "everything beneath it in pathspec, while git re-includes only the 'sub' entry itself "
-        "and re-evaluates each descendant. Closing this would mean matching path components "
-        "against git's precedence by hand instead of delegating whole-path matching to "
-        "pathspec. It errs toward linting a file git would ignore, never toward skipping one, "
-        "so it cannot hide a finding. Strict xfail: if this starts passing, the limitation is "
-        "gone and the note in docs/configuration.md should go with it."
-    ),
-)
 def test_negated_directory_pattern_does_not_re_include_nested_directories(tmp_path: Path) -> None:
     scenario = Scenario(
         "negated directory pattern re-includes only the directory itself",

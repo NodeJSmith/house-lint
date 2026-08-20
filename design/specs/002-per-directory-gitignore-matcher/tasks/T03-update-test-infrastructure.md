@@ -1,7 +1,7 @@
 ---
 task_id: "T03"
 title: "Update test infrastructure — xfails, fuzz ceiling, full verification"
-status: "planned"
+status: "done"
 depends_on: ["T02"]
 implements: ["AC#2", "AC#4", "AC#5", "AC#7", "AC#9"]
 ---
