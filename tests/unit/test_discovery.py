@@ -614,6 +614,34 @@ def test_nested_gitignore_applies_when_explicit_path_starts_below_it(tmp_path: P
     assert result.files_skipped == 1
 
 
+def test_explicit_directory_spelled_through_dotdot_ignores_the_traversed_sibling(
+    tmp_path: Path,
+) -> None:
+    """A `..` in an explicit directory must not make the directory it steps out of an ancestor.
+
+    `src/../tests` names `tests`, whose only ignore-file ancestor is the root — `src` is not
+    above the resolved target and its `.gitignore` has no say. Matching the unresolved spelling
+    walked `src` as an ancestor and applied its patterns, so `check src/../tests` silently
+    skipped files that `check tests` selects. Mirrors the rule `per-file-ignores` already
+    follows (`docs/configuration.md`): match the resolved location, not the spelling used to
+    reach it.
+    """
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / ".gitignore").write_text("*.py\n")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    kept = tests / "a.py"
+    kept.write_text("x = 1\n")
+
+    direct = discover_files(tmp_path, explicit=(tests,))
+    through_dotdot = discover_files(tmp_path, explicit=(source / ".." / "tests",))
+
+    assert direct.files == (kept,)
+    assert through_dotdot.files == (kept,)
+    assert through_dotdot.files_skipped == 0
+
+
 def test_invalid_nested_gitignore_pattern_reports_a_structured_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
