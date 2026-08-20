@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -6,9 +7,12 @@ import pytest
 from house_lint import __version__
 from house_lint.cache import (
     CachedFileResult,
+    code_identity,
     default_cache_base,
     hash_effective_config,
     hash_file_content,
+    prepare_cache_dir,
+    prune_stale_cache_dirs,
     read_cached_result,
     versioned_cache_dir,
     write_cached_result,
@@ -115,13 +119,14 @@ def test_hash_effective_config_includes_filename_only_when_hsl101_scopes_to_file
 def test_default_cache_base_and_versioned_cache_dir(tmp_path: Path) -> None:
     base = default_cache_base(tmp_path)
     assert base == tmp_path / ".house-lint-cache"
-    assert versioned_cache_dir(base) == base / __version__
+    assert versioned_cache_dir(base) == base / f"{__version__}-{code_identity()}"
 
 
 def test_write_then_read_round_trips_and_reattaches_the_caller_supplied_path(
     tmp_path: Path,
 ) -> None:
     cache_dir = tmp_path / "cache"
+    prepare_cache_dir(cache_dir, self_ignore=False)
     result = CachedFileResult(
         findings=(Finding("HSL002", "wrong/path.py", 1, 5, 1, 20, "import inside function"),),
         errors=(
@@ -253,6 +258,7 @@ def test_write_cached_result_is_best_effort_and_does_not_raise_on_a_bad_director
 
 def test_write_cached_result_writes_atomically_and_leaves_no_temp_file(tmp_path: Path) -> None:
     cache_dir = tmp_path / "cache"
+    prepare_cache_dir(cache_dir, self_ignore=False)
     result = CachedFileResult()
 
     write_cached_result(cache_dir, "content-hash", "config-hash", result)
@@ -262,51 +268,89 @@ def test_write_cached_result_writes_atomically_and_leaves_no_temp_file(tmp_path:
     assert not any(name.endswith(".tmp") for name in entries)
 
 
-def test_write_cached_result_creates_self_ignoring_gitignore_in_the_base_directory(
+def test_write_cached_result_removes_its_temp_file_when_the_atomic_replace_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stranded `.<pid>.tmp` file is unrecognisable to every later run, so nothing would ever
+    clean it up — repeated interrupted or failing writes would accumulate forever."""
+    cache_dir = tmp_path / "cache"
+    prepare_cache_dir(cache_dir, self_ignore=False)
+
+    def failing_replace(source: object, target: object) -> None:
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+    write_cached_result(cache_dir, "content-hash", "config-hash", CachedFileResult())
+
+    assert [entry.name for entry in cache_dir.iterdir()] == [".house-lint-version"]
+
+
+def test_prepare_cache_dir_creates_self_ignoring_gitignore_for_the_default_base(
     tmp_path: Path,
 ) -> None:
     base = tmp_path / ".house-lint-cache"
-    cache_dir = base / "1.2.3"
-    result = CachedFileResult()
 
-    write_cached_result(cache_dir, "content-hash", "config-hash", result)
+    prepare_cache_dir(base / "1.2.3", self_ignore=True)
 
-    marker = base / ".gitignore"
-    assert marker.read_text(encoding="utf-8") == "*\n"
+    assert (base / ".gitignore").read_text(encoding="utf-8") == "*\n"
 
 
-def test_write_cached_result_does_not_overwrite_an_existing_gitignore_marker(
+def test_prepare_cache_dir_never_writes_a_gitignore_into_a_user_supplied_cache_dir(
+    tmp_path: Path,
+) -> None:
+    """`--cache-dir` names a directory the user already owns. Writing `*` into it would change
+    Git's behaviour for every unrelated sibling — and pointing it at a project root would hide
+    the whole project from `git status`."""
+    base = tmp_path / "shared-cache"
+    (base / "someone-elses-data").mkdir(parents=True)
+
+    prepare_cache_dir(base / "1.2.3", self_ignore=False)
+
+    assert not (base / ".gitignore").exists()
+    assert (base / "someone-elses-data").exists()
+
+
+def test_prepare_cache_dir_does_not_overwrite_an_existing_gitignore_marker(
     tmp_path: Path,
 ) -> None:
     base = tmp_path / ".house-lint-cache"
     base.mkdir(parents=True)
     (base / ".gitignore").write_text("custom content\n", encoding="utf-8")
-    cache_dir = base / "1.2.3"
-    result = CachedFileResult()
 
-    write_cached_result(cache_dir, "content-hash", "config-hash", result)
+    prepare_cache_dir(base / "1.2.3", self_ignore=True)
 
     assert (base / ".gitignore").read_text(encoding="utf-8") == "custom content\n"
 
 
-def test_write_cached_result_prunes_sibling_version_directories(tmp_path: Path) -> None:
+def test_prune_stale_cache_dirs_removes_superseded_sibling_namespaces(tmp_path: Path) -> None:
     base = tmp_path / ".house-lint-cache"
-    old_version_dir = base / "0.9.0"
+    old_version_dir = base / "0.9.0-aaaaaaaaaaaaaaaa"
     old_version_dir.mkdir(parents=True)
     (old_version_dir / "stale-entry.json").write_text("{}")
     (old_version_dir / ".house-lint-version").write_text("")
+    current_version_dir = base / "1.0.0-bbbbbbbbbbbbbbbb"
 
-    current_version_dir = base / "1.0.0"
-    result = CachedFileResult()
-
-    write_cached_result(current_version_dir, "content-hash", "config-hash", result)
+    prepare_cache_dir(current_version_dir, self_ignore=True)
+    prune_stale_cache_dirs(current_version_dir)
 
     assert not old_version_dir.exists()
     assert current_version_dir.exists()
-    assert (current_version_dir / "content-hash-config-hash.json").exists()
 
 
-def test_write_cached_result_does_not_prune_directories_without_the_version_marker(
+def test_prepare_cache_dir_does_not_prune_on_its_own(tmp_path: Path) -> None:
+    """Pruning is not race-free, so it stays tied to an actual write rather than running for
+    every scan. `prepare_cache_dir` must leave a sibling namespace alone."""
+    base = tmp_path / ".house-lint-cache"
+    old_version_dir = base / "0.9.0-aaaaaaaaaaaaaaaa"
+    old_version_dir.mkdir(parents=True)
+    (old_version_dir / ".house-lint-version").write_text("")
+
+    prepare_cache_dir(base / "1.0.0-bbbbbbbbbbbbbbbb", self_ignore=True)
+
+    assert old_version_dir.exists()
+
+
+def test_prune_stale_cache_dirs_does_not_prune_directories_without_the_version_marker(
     tmp_path: Path,
 ) -> None:
     """A `--cache-dir` pointed at a pre-existing shared directory (e.g. `~/.cache`) must never
@@ -317,25 +361,38 @@ def test_write_cached_result_does_not_prune_directories_without_the_version_mark
     unrelated_dir.mkdir(parents=True)
     (unrelated_dir / "important-data.txt").write_text("do not delete")
 
-    current_version_dir = base / "1.0.0"
-    result = CachedFileResult()
-
-    write_cached_result(current_version_dir, "content-hash", "config-hash", result)
+    prepare_cache_dir(base / "1.0.0", self_ignore=False)
+    prune_stale_cache_dirs(base / "1.0.0")
 
     assert unrelated_dir.exists()
     assert (unrelated_dir / "important-data.txt").exists()
 
 
-def test_write_cached_result_leaves_the_current_version_directory_untouched(
-    tmp_path: Path,
-) -> None:
+def test_prepare_cache_dir_leaves_the_current_namespace_untouched(tmp_path: Path) -> None:
     base = tmp_path / ".house-lint-cache"
     current_version_dir = base / "1.0.0"
     current_version_dir.mkdir(parents=True)
     (current_version_dir / "existing-entry.json").write_text("{}")
-    result = CachedFileResult()
 
-    write_cached_result(current_version_dir, "content-hash", "config-hash", result)
+    prepare_cache_dir(current_version_dir, self_ignore=True)
+    write_cached_result(current_version_dir, "content-hash", "config-hash", CachedFileResult())
 
     assert (current_version_dir / "existing-entry.json").exists()
     assert (current_version_dir / "content-hash-config-hash.json").exists()
+
+
+def test_prepare_cache_dir_is_best_effort_on_an_unusable_directory(tmp_path: Path) -> None:
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory")
+
+    prepare_cache_dir(blocked / "cache", self_ignore=True)  # must not raise
+
+
+def test_code_identity_is_stable_within_a_process_and_shapes_the_cache_namespace(
+    tmp_path: Path,
+) -> None:
+    identity = code_identity()
+
+    assert identity == code_identity()
+    assert identity and identity != "unknown"
+    assert versioned_cache_dir(tmp_path).name == f"{__version__}-{identity}"

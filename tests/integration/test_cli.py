@@ -12,8 +12,13 @@ from house_lint.analysis import MAX_CANDIDATES_PER_FILE
 
 
 def _run(
-    root: Path, *args: str, module: bool = False, prelude: str | None = None
+    root: Path,
+    *args: str,
+    module: bool = False,
+    prelude: str | None = None,
+    pythonpath: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    """Run house-lint in a subprocess against this checkout, or against `pythonpath` instead."""
     command = (
         [sys.executable, "-c", prelude]
         if prelude is not None
@@ -21,7 +26,8 @@ def _run(
         if module
         else [str(shutil.which("house-lint"))]
     )
-    environment = os.environ | {"PYTHONPATH": str(Path(__file__).parents[2] / "src")}
+    source = pythonpath if pythonpath is not None else Path(__file__).parents[2] / "src"
+    environment = os.environ | {"PYTHONPATH": str(source)}
     return subprocess.run(
         command + list(args), cwd=root, env=environment, text=True, capture_output=True, check=False
     )
@@ -279,6 +285,97 @@ def test_cache_dir_flag_overrides_the_default_location(repository: Path) -> None
     assert completed.returncode == 1
     assert not (repository / ".house-lint-cache").exists()
     assert list(custom_cache.rglob("*.json"))
+
+
+def test_cache_dir_never_writes_a_gitignore_into_the_directory_it_is_given(
+    repository: Path,
+) -> None:
+    """`--cache-dir` names a directory the user already owns, so house-lint must not drop a
+    wildcard `.gitignore` into it. Pointed at the project root, that one file would hide the
+    entire project from `git status`."""
+    (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
+
+    completed = _run(
+        repository,
+        "check",
+        "--root",
+        str(repository),
+        "--select",
+        "HSL002",
+        "--cache-dir",
+        str(repository),
+        "--format",
+        "json",
+    )
+
+    assert completed.returncode == 1
+    assert not (repository / ".gitignore").exists()
+    assert (repository / "src" / "finding.py").exists()
+
+
+def test_cache_is_invalidated_when_rule_code_changes_without_a_version_bump(
+    repository: Path, tmp_path: Path
+) -> None:
+    """`__version__` only moves at release time, so it cannot be the sole invalidation signal:
+    editing a detector in a working checkout and re-running would otherwise replay the previous
+    detector's findings for every file whose content and config are unchanged."""
+    (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
+    package_source = Path(__file__).parents[2] / "src"
+    patched_source = tmp_path / "patched-src"
+    shutil.copytree(package_source, patched_source)
+
+    def namespaces() -> set[str]:
+        return {
+            entry.name for entry in (repository / ".house-lint-cache").iterdir() if entry.is_dir()
+        }
+
+    arguments = ("check", "--root", str(repository), "--select", "HSL002", "--format", "json")
+    first = _run(repository, *arguments)
+    assert first.returncode == 1
+    assert json.loads(first.stdout)["findings"]
+    first_namespaces = namespaces()
+    assert len(first_namespaces) == 1
+
+    detector = patched_source / "house_lint" / "rules" / "lazy_imports.py"
+    original = detector.read_text()
+    assert "def detect(" in original
+    detector.write_text(original.replace("def detect(", "def detect(  # patched\n", 1))
+
+    second = _run(repository, *arguments, pythonpath=patched_source)
+
+    # The edit is behaviour-preserving, so the findings must match — what must differ is the
+    # cache namespace, proving the second run could not have replayed the first's entry. The
+    # superseded namespace is pruned rather than left to accumulate, so exactly one remains.
+    assert second.returncode == 1
+    assert json.loads(second.stdout)["findings"] == json.loads(first.stdout)["findings"]
+    second_namespaces = namespaces()
+    assert len(second_namespaces) == 1
+    assert second_namespaces != first_namespaces
+
+
+def test_a_run_of_pure_cache_hits_does_not_prune_another_namespace(repository: Path) -> None:
+    """Pruning is not race-free: a concurrent house-lint on a different version or build sharing
+    a `--cache-dir` can have its in-progress namespace deleted. Tying the sweep to "this run
+    actually wrote an entry" keeps that window narrow — a scan that writes nothing must not
+    delete anything."""
+    arguments = ("check", "--root", str(repository), "--select", "HSL002", "--format", "json")
+    assert _run(repository, *arguments).returncode == 0
+
+    foreign = repository / ".house-lint-cache" / "9.9.9-ffffffffffffffff"
+    foreign.mkdir(parents=True)
+    (foreign / ".house-lint-version").write_text("")
+    (foreign / "in-progress.json").write_text("{}")
+
+    second = _run(repository, *arguments)
+
+    assert second.returncode == 0
+    assert json.loads(second.stdout)["files_scanned"] == 1
+    assert foreign.exists(), "a zero-write run must not prune another namespace"
+
+    # A run that does write an entry still sweeps it, so namespaces cannot accumulate.
+    (repository / "src" / "new.py").write_text("value = 2\n")
+    assert _run(repository, *arguments).returncode == 0
+    assert not foreign.exists()
 
 
 def test_cache_hit_never_calls_scan_file(

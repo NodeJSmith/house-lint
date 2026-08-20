@@ -294,6 +294,88 @@ def test_closer_nested_gitignore_negation_overrides_a_farther_one(tmp_path: Path
     assert other not in result.files
 
 
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        # `**` (either form) must not expand to `<prefix>/**/**`, which GitIgnoreSpec matches
+        # against the prefix directory itself and, in the `**/` form, against an immediate
+        # regular file that git leaves alone.
+        ("**/", "src/**/*/"),
+        ("**", "src/**/*"),
+        # Everything else keeps the documented per-directory semantics.
+        ("a.py", "src/**/a.py"),
+        ("!a.py", "!src/**/a.py"),
+        ("/a.py", "src/a.py"),
+        ("!/a.py", "!src/a.py"),
+        ("sub/", "src/**/sub/"),
+        ("sub/x.py", "src/sub/x.py"),
+    ],
+)
+def test_prefix_pattern_rewrites_nested_patterns_to_root_anchored_equivalents(
+    line: str, expected: str
+) -> None:
+    assert discovery._prefix_pattern("src", line) == expected
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        # A trailing `/**` names a directory's contents, never the directory itself.
+        ("build/**", "build/**/*"),
+        ("build/**/", "build/**/*/"),
+        ("!build/**", "!build/**/*"),
+        # A preceding segment ending in a single `*` is an ordinary pattern and must still be
+        # rewritten — only a literal `**` before the trailing `/**` is left alone.
+        ("a/*/**", "a/*/**/*"),
+        ("packages/*/dist/**", "packages/*/dist/**/*"),
+        # Already-explicit and unrelated patterns are left exactly as written.
+        ("build/**/*", "build/**/*"),
+        ("a/**/b.py", "a/**/b.py"),
+        ("**", "**"),
+        ("a/**/**", "a/**/**"),
+        ("# build/**", "# build/**"),
+        ("", ""),
+    ],
+)
+def test_normalize_contents_glob_only_rewrites_a_trailing_contents_glob(
+    pattern: str, expected: str
+) -> None:
+    assert discovery._normalize_contents_glob(pattern) == expected
+
+
+def test_ignored_directory_include_root_is_skipped_without_being_walked(tmp_path: Path) -> None:
+    # `_walk` starts *inside* an include root, so the root itself is the one directory
+    # `_traversable_dirs` never evaluates. A negation must not resurrect its files.
+    (tmp_path / ".gitignore").write_text("src/\n!*.py\n")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x = 1\n")
+    (tmp_path / "tools").mkdir()
+    kept = tmp_path / "tools" / "t.py"
+    kept.write_text("x = 1\n")
+
+    result = discover_files(tmp_path, include=("src", "tools"))
+
+    assert result.files == (kept,)
+    assert result.errors == ()
+
+
+def test_pruned_directory_counts_as_one_skip_not_one_per_contained_file(tmp_path: Path) -> None:
+    # Ignored directories are pruned rather than enumerated, which is what makes skipping a
+    # large `.venv`/`node_modules` cheap. The reported count follows that: one pruned
+    # directory contributes one skip regardless of how many files it holds. Pinned here so
+    # the number cannot drift silently the way it did when pruning was introduced.
+    (tmp_path / ".gitignore").write_text("gen/\n")
+    (tmp_path / "src" / "gen" / "deep").mkdir(parents=True)
+    (tmp_path / "src" / "a.py").write_text("x = 1\n")
+    for relative in ("src/gen/g1.py", "src/gen/g2.py", "src/gen/deep/g3.py"):
+        (tmp_path / relative).write_text("x = 1\n")
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert result.files == (tmp_path / "src" / "a.py",)
+    assert result.files_skipped == 1
+
+
 def test_directory_names_with_gitignore_metacharacters_are_treated_as_literal(
     tmp_path: Path,
 ) -> None:

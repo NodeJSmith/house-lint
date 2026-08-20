@@ -11,6 +11,8 @@ from house_lint.cache import (
     default_cache_base,
     hash_effective_config,
     hash_file_content,
+    prepare_cache_dir,
+    prune_stale_cache_dirs,
     read_cached_result,
     versioned_cache_dir,
     write_cached_result,
@@ -130,13 +132,16 @@ def _write_cache_entry(
     file_result: FileScanResult,
     *,
     debug: bool,
-) -> None:
+) -> bool:
     """Persist `file_result` for future runs — unless it can't be hashed, or it's a `stop=True`
     internal-error abort. `stop` signals a non-deterministic process-boundary failure, not a
     reproducible scan outcome, so it must never be replayed from cache on a later hit.
+
+    Returns whether a write was attempted, which is what gates the once-per-scan prune: a run
+    that writes nothing must not delete another process's namespace.
     """
     if content_hash is None or config_hash is None or file_result.stop:
-        return
+        return False
     write_cached_result(
         cache_dir,
         content_hash,
@@ -149,6 +154,7 @@ def _write_cache_entry(
         ),
         debug=debug,
     )
+    return True
 
 
 def _scan(
@@ -160,6 +166,7 @@ def _scan(
     use_gitignore: bool,
     read_cache: bool,
     cache_dir: Path,
+    cache_self_ignore: bool,
     debug: bool,
 ) -> ScanResult:
     """Run the complete file pipeline, retaining all completed-file results."""
@@ -181,12 +188,18 @@ def _scan(
             errors=(exc.error,),
         )
 
+    if discovered.files:
+        # Once per scan, and only when there is something to scan — so a run that discovers
+        # nothing never creates a cache directory in the project.
+        prepare_cache_dir(cache_dir, self_ignore=cache_self_ignore, debug=debug)
+
     findings: list[Finding] = []
     errors = list(discovered.errors)
     detector_inputs = selected_detector_inputs(config)
     compiled_per_file_ignores = compile_per_file_ignores(config.per_file_ignores)
     suppressed_count = 0
     files_scanned = 0
+    wrote_cache_entry = False
     for path in discovered.files:
         relative = path.relative_to(root).as_posix()
         file_enabled_rules = config.enabled_rules
@@ -242,7 +255,9 @@ def _scan(
         # a practical concern here. The scan result itself is still correct and used for
         # findings/errors above — only the cache write is skipped.
         if content_hash is None or hash_file_content(path) == content_hash:
-            _write_cache_entry(cache_dir, content_hash, config_hash, file_result, debug=debug)
+            wrote_cache_entry |= _write_cache_entry(
+                cache_dir, content_hash, config_hash, file_result, debug=debug
+            )
         elif debug:
             print(
                 f"debug: skip cache write for {relative}: content changed during scan",
@@ -250,6 +265,8 @@ def _scan(
             )
         if file_result.stop:
             break
+    if wrote_cache_entry:
+        prune_stale_cache_dirs(cache_dir, debug=debug)
     return ScanResult(
         root,
         config_path,
@@ -328,6 +345,7 @@ def check(
             use_gitignore=not no_gitignore,
             read_cache=not no_cache,
             cache_dir=resolved_cache_dir,
+            cache_self_ignore=cache_dir is None,
             debug=debug,
         )
     except ConfigError as exc:

@@ -18,7 +18,9 @@ import json
 import os
 import shutil
 import sys
+from contextlib import suppress
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -36,13 +38,43 @@ def default_cache_base(root: Path) -> Path:
     return root / CACHE_DIRNAME
 
 
-def versioned_cache_dir(base: Path) -> Path:
-    """Version-namespace a cache base directory, so an upgrade invalidates stale entries.
+@lru_cache(maxsize=1)
+def code_identity() -> str:
+    """Fingerprint house-lint's own Python sources, for use in the cache namespace.
 
-    Applies uniformly to the default base and to a user-supplied `--cache-dir` override —
-    the override changes *where* the cache lives, not whether it's still safe across upgrades.
+    `__version__` alone is not enough to invalidate results across a code change: it only moves
+    when a release is cut, so editing a detector in a working checkout and re-running replays
+    the previous detector's findings for every file whose content and config are unchanged. For
+    a linter, silently serving a stale "clean" result after a rule fix defeats the point. It
+    also matters across checkouts: two working copies at the same version sharing one
+    `--cache-dir` would otherwise trade results.
+
+    Hashes file contents rather than mtimes so the value is stable across machines and fresh
+    clones — a released install therefore keeps exactly one cache directory. Read once per
+    process; on any read failure (a zipped or otherwise non-file distribution) this returns the
+    constant `"unknown"`, so the namespace falls back to `<version>-unknown` and invalidation
+    reverts to tracking the version alone rather than failing the scan.
     """
-    return base / __version__
+    package_root = Path(__file__).parent
+    digest = hashlib.sha256()
+    try:
+        for source in sorted(package_root.rglob("*.py")):
+            digest.update(source.relative_to(package_root).as_posix().encode("utf-8"))
+            digest.update(source.read_bytes())
+    except OSError:
+        return "unknown"
+    return digest.hexdigest()[:16]
+
+
+def versioned_cache_dir(base: Path) -> Path:
+    """Namespace a cache base directory by house-lint's version and source fingerprint.
+
+    Applies uniformly to the default base and to a user-supplied `--cache-dir` override — the
+    override changes *where* the cache lives, not whether it's still safe across upgrades. Stale
+    namespaces do not accumulate: `_prune_stale_version_dirs` removes the siblings house-lint
+    itself created the next time an entry is written.
+    """
+    return base / f"{__version__}-{code_identity()}"
 
 
 def hash_file_content(path: Path) -> str | None:
@@ -202,6 +234,11 @@ def _write_self_ignore_marker(base: Path, *, debug: bool = False) -> None:
     `.house-lint-cache/` directory), not the version-namespaced subdirectory, since that's the
     path a `git status` in the scanned repo would actually flag. Best-effort: a failed marker
     write must never fail the scan.
+
+    Only ever called for house-lint's own default base (see `prepare_cache_dir`). A
+    `--cache-dir` names a directory the user already owns — writing `*` into it would change
+    Git's behaviour for every unrelated sibling, and pointing it at a project root would hide
+    the entire project from `git status`.
     """
     marker = base / ".gitignore"
     try:
@@ -232,14 +269,13 @@ def _write_version_dir_marker(cache_dir: Path, *, debug: bool = False) -> None:
 def _prune_stale_version_dirs(cache_dir: Path, *, debug: bool = False) -> None:
     """Remove sibling version directories under `cache_dir`'s base, best-effort.
 
-    `versioned_cache_dir` namespaces the cache by `__version__` so an upgrade invalidates stale
-    entries, but nothing else ever deletes the old version's directory — left alone, upgrades
-    accumulate `<base>/<old-version>/`, `<base>/<older-version>/`, etc. forever. Run only here,
-    at the point a cache entry is actually about to be written (not on every read), so a plain
-    read-only invocation of this house-lint version never triggers deletion of another version's
-    directory. This narrows, but does not eliminate, the risk window: a *concurrent* process
-    actively writing under a different version during an overlapping run can still have its
-    directory removed by this call — best-effort here means "safe to fail," not "race-free."
+    `versioned_cache_dir` namespaces the cache so an upgrade (or a source change) invalidates
+    stale entries, but nothing else ever deletes the superseded directory — left alone, those
+    namespaces accumulate under `<base>/` forever. Reached only via `prune_stale_cache_dirs`,
+    which a scan calls once and only after it has actually written an entry, so a run of pure
+    cache hits never deletes anything. A *concurrent* process actively writing under a different
+    namespace during an overlapping run can still have its directory removed by this call —
+    best-effort here means "safe to fail," not "race-free."
 
     Only siblings carrying `_VERSION_DIR_MARKER` are eligible — a directory without it was never
     created by house-lint's own versioned-cache writes, so it's left untouched regardless of how
@@ -260,6 +296,44 @@ def _prune_stale_version_dirs(cache_dir: Path, *, debug: bool = False) -> None:
                 print(f"debug: cache prune of stale version dir failed: {exc}", file=sys.stderr)
 
 
+def prepare_cache_dir(cache_dir: Path, *, self_ignore: bool, debug: bool = False) -> None:
+    """Create and mark the cache directory, once per scan.
+
+    This is per-run bookkeeping, not per-entry: creating the directory, marking it as
+    house-lint-owned, and (for house-lint's own default base only) dropping the self-ignore
+    marker. Doing it inside `write_cached_result` meant three extra filesystem calls for every
+    single file scanned, which is real overhead in the one code path whose entire purpose is to
+    be faster.
+
+    Deliberately does *not* prune — see `prune_stale_cache_dirs`, which must stay tied to an
+    actual write. `self_ignore` must be true only when `cache_dir` sits beneath house-lint's own
+    default `.house-lint-cache/` base, never for a user-supplied `--cache-dir`. Best-effort
+    throughout: a failure here costs caching, never the scan.
+    """
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        if debug:
+            print(f"debug: cache directory could not be created: {exc}", file=sys.stderr)
+        return
+    _write_version_dir_marker(cache_dir, debug=debug)
+    if self_ignore:
+        _write_self_ignore_marker(cache_dir.parent, debug=debug)
+
+
+def prune_stale_cache_dirs(cache_dir: Path, *, debug: bool = False) -> None:
+    """Sweep superseded namespaces, once per scan and only after a real write has happened.
+
+    Kept separate from `prepare_cache_dir` so that a run which writes nothing — every file a
+    cache hit — never deletes anything. That matters because the deletion is not race-free: a
+    concurrent house-lint process on a different version or build, sharing a `--cache-dir`, can
+    have its in-progress namespace removed. Tying the sweep to "this run actually wrote an
+    entry" keeps that window as narrow as it was before the per-run bookkeeping was hoisted out
+    of `write_cached_result`.
+    """
+    _prune_stale_version_dirs(cache_dir, debug=debug)
+
+
 def write_cached_result(
     cache_dir: Path,
     content_hash: str,
@@ -272,9 +346,14 @@ def write_cached_result(
     but is reported under `--debug`, so `house-lint check --debug` can diagnose "why isn't
     caching working" for a broken cache directory or permissions issue.
 
+    Assumes `prepare_cache_dir` has already run for this `cache_dir`; if it has not (or failed),
+    the write simply fails and is reported under `--debug` like any other write failure.
+
     Writes atomically (temp file + `os.replace`) so an interrupted process or two concurrent
     house-lint runs writing the same entry can never leave a partially-written, corrupted file
-    in place of a real one.
+    in place of a real one. The temp file is named per-PID, so a failure part-way through would
+    otherwise strand a file no later run could ever recognise or clean up — hence the unlink on
+    the error path.
     """
     path = _entry_path(cache_dir, content_hash, config_hash)
     payload = {
@@ -283,25 +362,26 @@ def write_cached_result(
         "suppressed_count": result.suppressed_count,
         "files_scanned": result.files_scanned,
     }
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        _write_version_dir_marker(cache_dir, debug=debug)
-        _prune_stale_version_dirs(cache_dir, debug=debug)
-        _write_self_ignore_marker(cache_dir.parent, debug=debug)
-        temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
         temporary.write_text(json.dumps(payload), encoding="utf-8")
         os.replace(temporary, path)
     except OSError as exc:
         if debug:
             print(f"debug: cache write failed: {exc}", file=sys.stderr)
+        with suppress(OSError):
+            temporary.unlink(missing_ok=True)
 
 
 __all__ = [
     "CACHE_DIRNAME",
     "CachedFileResult",
+    "code_identity",
     "default_cache_base",
     "hash_effective_config",
     "hash_file_content",
+    "prepare_cache_dir",
+    "prune_stale_cache_dirs",
     "read_cached_result",
     "versioned_cache_dir",
     "write_cached_result",

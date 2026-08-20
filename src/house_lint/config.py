@@ -430,4 +430,7 @@ def load_config(
     options = _rule_options(house)
     if "HSL101" in enabled and not options[0].tokens:
         raise ConfigError("HSL101 requires tokens when selected")
-    return LintConfig(include, exclude, tuple(sorted(enabled)), *options, per_file_ignores)
+    # `enabled` is already sorted with the always-on rule appended (see
+    # `_effective_rule_selection`); re-sorting here would only differ from `default_config`'s
+    # handling of the same value if an always-on rule ID ever stopped sorting last.
+    return LintConfig(include, exclude, enabled, *options, per_file_ignores)

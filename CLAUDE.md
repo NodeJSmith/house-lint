@@ -49,10 +49,20 @@ signature: `(source, options, *, limit=None) -> list[CandidateFinding]`.
 
 - `HSL900` (suppression-pragma validation) can never be disabled or suppressed — it governs how
   every other rule's findings can be silenced (`ignore`, `ignore-next`, `ignore-file` pragmas).
-- File discovery does **not** shell out to git or read nested `.gitignore` files — only the root
-  `.gitignore` plus configured excludes. `--no-gitignore` disables just that root file.
+- File discovery does **not** shell out to git. It reads the root `.gitignore` plus every nested
+  `.gitignore` between the root and each file, reimplementing git's precedence on `pathspec`.
+  `--no-gitignore` disables that at every level. Because it is a reimplementation, changes to
+  `discovery.py`'s pattern handling belong in `tests/integration/test_gitignore_parity.py`, which
+  differentially checks discovery against real `git check-ignore` — adding a case there costs one
+  `Scenario` entry and needs no expected-value literal. One divergence is known and deliberate
+  (negated directory-only patterns); see `docs/configuration.md`.
+- An ignored directory is pruned rather than enumerated, so `files_skipped` counts one skip per
+  pruned directory, not one per file inside it.
 - Default scan roots are `src`, `tests`, `scripts`, `tools`, `examples`, configurable via
   `[tool.house-lint] include`.
+- The result cache is namespaced by `<version>-<hash of house-lint's own sources>`, so editing
+  rule code invalidates it without a version bump. house-lint writes a self-ignoring `.gitignore`
+  into its own default cache base only — never into a user-supplied `--cache-dir`.
 
 ## Conventions
 

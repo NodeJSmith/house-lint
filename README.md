@@ -112,9 +112,11 @@ The linter loads the selected root's `.gitignore` plus every nested `.gitignore`
 
 ## Caching
 
-`check` caches each file's result under `<root>/.house-lint-cache/<house-lint version>/` (gitignored by default), keyed by the file's content and its effective rule set for that file. A cache hit skips tokenization, parsing, and rule execution entirely for that file; an upgrade to a new house-lint version starts from an empty cache automatically, since the version is part of the cache path.
+`check` caches each file's result under `<root>/.house-lint-cache/<version>-<source fingerprint>/`, keyed by the file's content and its effective rule set for that file. A cache hit skips tokenization, parsing, and rule execution entirely for that file. Upgrading house-lint — or editing its rule code in a working checkout — starts from an empty cache automatically, because both the version and a fingerprint of house-lint's own sources are part of the cache path. Superseded directories are pruned rather than left to accumulate.
 
-`--no-cache` disables reading from the cache but still writes to it, keeping it warm for the next run. `--cache-dir` overrides where the cache lives (still version-namespaced underneath the path you give it).
+`--no-cache` disables reading from the cache but still writes to it, keeping it warm for the next run. `--cache-dir` overrides where the cache lives (still namespaced underneath the path you give it).
+
+house-lint adds a self-ignoring `.gitignore` to its own default `.house-lint-cache/` directory so it stays invisible to `git status`. It never writes one into a directory you name with `--cache-dir` — that directory is yours.
 
 ## Suppressions
 
