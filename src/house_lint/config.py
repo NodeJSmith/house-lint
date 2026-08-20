@@ -416,13 +416,19 @@ def load_config(
     )
     include = _validate_include(_strings(house.get("include", list(DEFAULT_INCLUDE)), "include"))
     exclude = _validate_exclude(_strings(house.get("exclude", []), "exclude"))
+    # Every raw TOML value goes through `_strings` here rather than reaching
+    # `_effective_rule_selection` as-is: that function converts with `list(...)` before validating,
+    # which turns `select = 5` into a `TypeError` (an internal-error exit, not the documented
+    # config-error exit) and silently splits `select = "HSL001"` into single characters, reported
+    # as an unknown rule ID instead of "must be an array". Its other callers pass tuples built in
+    # this module, so the conversion stays where it is and the untrusted edge is checked here.
     enabled = _effective_rule_selection(
-        house.get("select", list(DEFAULT_SELECT)),
-        house.get("ignore", []),
+        _strings(house.get("select", list(DEFAULT_SELECT)), "select"),
+        _strings(house.get("ignore", []), "ignore"),
         cli_select,
         cli_ignore,
-        configured_extend_select=house.get("extend-select", []),
-        configured_extend_ignore=house.get("extend-ignore", []),
+        configured_extend_select=_strings(house.get("extend-select", []), "extend-select"),
+        configured_extend_ignore=_strings(house.get("extend-ignore", []), "extend-ignore"),
         cli_extend_select=cli_extend_select,
         cli_extend_ignore=cli_extend_ignore,
     )

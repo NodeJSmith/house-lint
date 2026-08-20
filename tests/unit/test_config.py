@@ -105,6 +105,22 @@ def test_extend_select_and_extend_ignore_reject_duplicate_and_always_on_ids(
         load_config(config_path)
 
 
+@pytest.mark.parametrize("key", ["select", "ignore", "extend-select", "extend-ignore"])
+@pytest.mark.parametrize("value", ["5", '"HSL001"'])
+def test_selection_keys_reject_a_non_array_value_as_a_config_error(
+    key: str, value: str, tmp_path: Path
+) -> None:
+    """`_effective_rule_selection` converts with `list(...)` before validating, so a raw TOML
+    value reaching it unchecked turns `select = 5` into a `TypeError` — an internal-error exit
+    rather than the documented config-error one — and splits `select = "HSL001"` into single
+    characters, reported as an unknown rule ID instead of a type problem."""
+    config_path = tmp_path / "pyproject.toml"
+    config_path.write_text(f"[tool.house-lint]\n{key} = {value}\n")
+
+    with pytest.raises(ConfigError, match=f"{key} must be an array"):
+        load_config(config_path)
+
+
 def test_per_file_ignores_removes_rules_only_for_matching_files(tmp_path: Path) -> None:
     config_path = tmp_path / "pyproject.toml"
     config_path.write_text(
