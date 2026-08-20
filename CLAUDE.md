@@ -54,8 +54,11 @@ signature: `(source, options, *, limit=None) -> list[CandidateFinding]`.
   `--no-gitignore` disables that at every level. Because it is a reimplementation, changes to
   `discovery.py`'s pattern handling belong in `tests/integration/test_gitignore_parity.py`, which
   differentially checks discovery against real `git check-ignore` — adding a case there costs one
-  `Scenario` entry and needs no expected-value literal. One divergence is known and deliberate
-  (negated directory-only patterns); see `docs/configuration.md`.
+  `Scenario` entry and needs no expected-value literal. Two divergences are known, both from
+  `pathspec` deciding directory-only patterns from pattern text rather than from a real `is_dir`:
+  one over-lints, one **under**-lints (hides findings). Do not assume the old "always errs toward
+  over-linting" guarantee — it was false and has been removed. See `docs/configuration.md` and
+  `design/research/2026-08-20-gitignore-style-exclusion-inclusion/`.
 - An ignored directory is pruned rather than enumerated, so `files_skipped` counts one skip per
   pruned directory, not one per file inside it.
 - Default scan roots are `src`, `tests`, `scripts`, `tools`, `examples`, configurable via

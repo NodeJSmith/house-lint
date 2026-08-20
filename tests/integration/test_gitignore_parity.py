@@ -300,6 +300,40 @@ def test_negated_directory_pattern_does_not_re_include_nested_directories(tmp_pa
     assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Known pathspec/git divergence, same directory-negation family as the test above but "
+        "pointing the other way — and this one *under*-lints. pathspec will not let a "
+        "directory-only negation win for a directory path: "
+        "GitIgnoreSpec.from_lines(('**', '!**/')).match_file('src') returns True, while git "
+        "reports '.gitignore:2:!**/ src' re-including the directory and descends into it. "
+        "house-lint asks pathspec exactly that when deciding whether to prune, so it prunes a "
+        "subtree git walks and every file underneath vanishes from the scan. Passing 'src/' "
+        "does not change pathspec's answer, so no shape of question fixes it here; deciding it "
+        "means owning the matcher (see design/research/"
+        "2026-08-20-gitignore-style-exclusion-inclusion/). Strict xfail: if this starts "
+        "passing, the limitation is gone and docs/configuration.md should say so."
+    ),
+)
+def test_negated_directory_pattern_re_includes_a_directory_git_descends_into(
+    tmp_path: Path,
+) -> None:
+    scenario = Scenario(
+        "directory-only negation re-includes the directory git walks",
+        {"": ["**", "!**/"], "src": ["!**"]},
+        ("src/a.py", "src/sub/b.py"),
+    )
+    _build(tmp_path, scenario)
+    init_repository(tmp_path)
+
+    result = discover_files(tmp_path, include=scenario.include)
+    selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
+    house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
+
+    assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
+
+
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda item: item.name)
 def test_explicit_directory_arguments_match_git_check_ignore(
     scenario: Scenario, tmp_path: Path
