@@ -426,7 +426,13 @@ def _prune_stale_version_dirs(cache_dir: Path, *, reporter: CacheReporter) -> No
         reporter.failure(f"cache prune could not list {base}: {exc}")
         return
     for sibling in siblings:
-        if not (sibling / _VERSION_DIR_MARKER).is_file():
+        marker = sibling / _VERSION_DIR_MARKER
+        # `is_file()` follows symlinks, so a marker that is merely a link to some regular file
+        # would satisfy it — turning "house-lint created this" into a claim any directory can
+        # make, with `shutil.rmtree` on the other side of it. `_write_marker_if_absent` creates
+        # the marker with `O_EXCL`, which can never produce a symlink, so demanding a real file
+        # here rejects nothing house-lint itself wrote.
+        if marker.is_symlink() or not marker.is_file():
             continue
         try:
             shutil.rmtree(sibling)

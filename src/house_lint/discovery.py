@@ -419,14 +419,19 @@ class _FileSelector:
                 )
             self.files_skipped += 1
             return
-        if self._has_excluded_ancestor(path.parent) or _ignored(
+        # Resolved, for the same reason the directory branch above is: `relative_to(root)` keeps
+        # a `..` as a literal part, so `src/../tests/a.py` would walk `src` as an ancestor and
+        # apply its `.gitignore` to a file under `tests`. The two branches have to agree —
+        # fixing only one left `check src/../tests` and `check src/../tests/a.py` disagreeing
+        # with each other as well as with git. `path` stays the reported spelling.
+        if self._has_excluded_ancestor(resolved.parent) or _ignored(
             self.root,
-            path,
+            resolved,
             self.builtin_spec,
             self.exclude_spec,
             combined_gitignore_spec
             if combined_gitignore_spec is not None
-            else self._combined_gitignore_spec(path.parent),
+            else self._combined_gitignore_spec(resolved.parent),
             is_dir=False,
         ):
             self.files_skipped += 1
