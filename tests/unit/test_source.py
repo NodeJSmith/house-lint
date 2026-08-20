@@ -166,6 +166,31 @@ def test_source_reads_the_resolved_target_it_was_given_not_a_fresh_one(tmp_path)
     assert SourceFile(link, root).text == "swapped = 1\n"
 
 
+def test_a_resolved_path_replaced_by_a_symlink_is_refused_rather_than_followed(tmp_path):
+    """Discovery now resolves the whole selection before the scan begins, so the gap between a
+    path being approved and being opened spans the run rather than a single file. A resolved
+    path's final component is by construction not a symlink; if it is one by the time the scan
+    opens it, it was swapped afterwards and must not be read. `O_NOFOLLOW` turns that into an
+    ordinary read error instead of a read outside the root."""
+    root = tmp_path / "root"
+    root.mkdir()
+    approved = root / "approved.py"
+    approved.write_text("approved = 1\n")
+    outside = tmp_path / "outside.py"
+    outside.write_text("outside = 1\n")
+
+    resolved = approved.resolve()  # what discovery validated
+    approved.unlink()
+    approved.symlink_to(outside)  # swapped after approval, before the read
+
+    source = SourceFile(approved, root, resolved_path=resolved)
+
+    assert source.error is not None
+    assert source.error.code == "read-error"
+    with pytest.raises(RuntimeError, match="source is unavailable"):
+        _ = source.text
+
+
 def test_escaped_symlink_source_cannot_be_read(tmp_path):
     root = tmp_path / "root"
     root.mkdir()

@@ -22,8 +22,17 @@ def read_regular_file_bytes(path: Path, *, max_bytes: int) -> bytes | None:
     the path isn't a regular file; raises OSError for other failures (missing file, permission
     denied, etc.) so callers can decide how to report them — `SourceFile` turns both cases into
     a `LintError`, while cache-key hashing just treats either as an uncacheable file.
+
+    `O_NOFOLLOW` narrows the window between discovery resolving a path and the scan opening it.
+    Callers pass an already-fully-resolved path, so its final component is by construction not a
+    symlink — unless it was replaced with one after discovery approved it, which is exactly the
+    case that must not be read. Refusing to follow it turns that race into an ordinary read
+    error rather than an out-of-root read. This does not close the window on the *directory*
+    components of the path, which would need an `openat`-based descent from the root.
     """
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    descriptor = os.open(
+        path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    )
     with os.fdopen(descriptor, "rb") as handle:
         if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
             return None
