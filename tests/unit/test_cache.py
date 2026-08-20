@@ -691,8 +691,88 @@ def test_default_cache_base_is_unsafe_when_it_is_a_symlink(tmp_path: Path) -> No
     base = default_cache_base(root)
     base.symlink_to(outside, target_is_directory=True)
 
-    assert not default_cache_base_is_safe(base)
-    assert default_cache_base_is_safe(default_cache_base(outside))
+    assert not default_cache_base_is_safe(versioned_cache_dir(base))
+    assert default_cache_base_is_safe(versioned_cache_dir(default_cache_base(outside)))
+
+
+def test_default_cache_dir_is_unsafe_when_the_version_namespace_is_a_symlink(
+    tmp_path: Path,
+) -> None:
+    """Checking only the base leaves the predictable `<version>-<fingerprint>` child open.
+
+    A repository can ship a perfectly real `.house-lint-cache/` directory whose *child* is the
+    symlink — the namespace name is derived from house-lint's own version and source hash, so it
+    is predictable to anyone who knows which release will run. `mkdir(parents=True,
+    exist_ok=True)` then succeeds against the link's target and entries land outside the
+    checkout, which is the exact outcome the base check exists to prevent.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root = tmp_path / "repository"
+    root.mkdir()
+    base = default_cache_base(root)
+    base.mkdir()
+    cache_dir = versioned_cache_dir(base)
+    cache_dir.symlink_to(outside, target_is_directory=True)
+
+    assert not default_cache_base_is_safe(cache_dir)
+
+
+def test_cache_entry_write_does_not_follow_a_symlink_at_the_temporary_path(
+    tmp_path: Path,
+) -> None:
+    """The temp path is `<entry>.<pid>.tmp` — derived from two hashes and a PID, all knowable.
+
+    `Path.write_text()` follows a symlink sitting there and overwrites whatever it names before
+    `os.replace()` ever runs, so a repository that pre-creates one gets an arbitrary file
+    clobbered with cache JSON. `_write_marker_if_absent` already established `O_EXCL` as the
+    answer for this in the same module; the entry write has to use it too.
+    """
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("ORIGINAL CONTENT\n", encoding="utf-8")
+    content_hash, config_hash = "a" * 16, "b" * 16
+    entry = cache_dir / f"{content_hash}-{config_hash}.json"
+    entry.with_name(f"{entry.name}.{os.getpid()}.tmp").symlink_to(victim)
+
+    write_cached_result(
+        cache_dir,
+        content_hash,
+        config_hash,
+        CachedFileResult(findings=(), errors=(), suppressed_count=0, files_scanned=1),
+        self_ignore=False,
+        reporter=CacheReporter(),
+    )
+
+    assert victim.read_text(encoding="utf-8") == "ORIGINAL CONTENT\n"
+
+
+def test_cache_entry_write_recovers_from_a_stale_temporary_file(tmp_path: Path) -> None:
+    """A crashed run can leave a real `<entry>.<pid>.tmp` behind, and PIDs are reused.
+
+    `O_EXCL` refuses to open it, so without an unlink-and-retry that entry would be permanently
+    unwritable — a leftover from an unrelated crash would silently disable caching for one file
+    forever. Unlinking is safe precisely because the retry is still `O_EXCL`: it can only ever
+    create, never write through something another process put there.
+    """
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    content_hash, config_hash = "c" * 16, "d" * 16
+    entry = cache_dir / f"{content_hash}-{config_hash}.json"
+    entry.with_name(f"{entry.name}.{os.getpid()}.tmp").write_text("stale\n", encoding="utf-8")
+
+    written = write_cached_result(
+        cache_dir,
+        content_hash,
+        config_hash,
+        CachedFileResult(findings=(), errors=(), suppressed_count=0, files_scanned=1),
+        self_ignore=False,
+        reporter=CacheReporter(),
+    )
+
+    assert written
+    assert json.loads(entry.read_text(encoding="utf-8"))["files_scanned"] == 1
 
 
 def test_code_identity_is_stable_within_a_process_and_shapes_the_cache_namespace(
