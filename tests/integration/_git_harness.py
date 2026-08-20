@@ -34,14 +34,20 @@ def git_env() -> dict[str, str]:
 def init_repository(root: Path) -> None:
     """Create a repository at `root` with every out-of-tree ignore source disabled."""
     for command in (["git", "init", "-q", "."], ["git", "config", "core.excludesFile", ""]):
-        subprocess.run(
+        # Not `check=True`: `CalledProcessError`'s message carries only the command and exit
+        # status, and pytest never prints the captured stderr hanging off the exception. A CI
+        # failure here would read "returned non-zero exit status 128" and say nothing about why.
+        completed = subprocess.run(
             command,
             cwd=root,
-            check=True,
+            check=False,
             capture_output=True,
+            text=True,
             env=git_env(),
             timeout=GIT_TIMEOUT_SECONDS,
         )
+        if completed.returncode != 0:
+            pytest.fail(f"{' '.join(command)} failed: {completed.stderr}")
 
 
 def git_ignored(root: Path, relatives: tuple[str, ...]) -> set[str]:
