@@ -67,6 +67,31 @@ SCENARIOS = (
         {"src": ["**"]},
         ("src/a.py", "src/sub/b.py"),
     ),
+    # git collapses a run of consecutive `**` segments into one, so each of these means exactly
+    # what its single-`**` counterpart above means. house-lint rewrites nested patterns rather
+    # than handing them to git, and only the one-segment spelling used to be recognised — the
+    # repeated form fell through to the generic slash-containing branch and produced a pattern
+    # that swallowed the immediate file this family exists to spare.
+    Scenario(
+        "nested '**/**/' collapses to '**/' and spares an immediate regular file",
+        {"src": ["**/**/"]},
+        ("src/a.py", "src/sub/b.py"),
+    ),
+    Scenario(
+        "nested '**/**' collapses to '**' and covers files too",
+        {"src": ["**/**"]},
+        ("src/a.py", "src/sub/b.py"),
+    ),
+    Scenario(
+        "a longer '**' run collapses the same way",
+        {"src": ["**/**/**/"]},
+        ("src/a.py", "src/sub/b.py"),
+    ),
+    Scenario(
+        "'**/**/<name>' collapses to '**/<name>'",
+        {"src": ["**/**/b.py"]},
+        ("src/a.py", "src/sub/b.py"),
+    ),
     # --- Directory-only patterns must not match a same-named regular file, and a directory-form
     # negation must be able to cancel an earlier file-form match (last matching line wins).
     Scenario(
