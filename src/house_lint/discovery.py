@@ -18,6 +18,8 @@ IGNORE_EVERYTHING = ("**",)
 MAX_DISCOVERED_FILES = 100_000
 _GITIGNORE_METACHARS = re.compile(r"([!#*?\[\]\\])")
 _CONTENTS_GLOB = re.compile(r"(?<!\*\*)/\*\*(/?)\Z")
+# Two or more whole `**` segments in a row, which git reads as a single `**`.
+_DOUBLE_STAR_RUN = re.compile(r"\*\*(?:/\*\*)+")
 
 
 class DiscoveryError(ValueError):
@@ -148,6 +150,24 @@ def _strip_unescaped_trailing_whitespace(text: str) -> str:
     return text[:end]
 
 
+def _collapse_double_star_run(core: str) -> str:
+    """Reduce every run of consecutive `**` segments in `core` to a single `**`.
+
+    git reads a run of `**` segments as one: `**/**/` ignores exactly what `**/` ignores, and
+    `**/**/b.py` matches exactly what `**/b.py` matches (checked against real `git check-ignore`;
+    see the collapse family in the parity suite). Collapsing here means the branches below only
+    ever see the canonical one-segment spelling, so the `core == "**"` case covers the whole
+    family rather than the single spelling someone happened to write down.
+
+    Without this, a repeated form reached the generic slash-containing branch instead — `**/**/`
+    became `<prefix>/**/**/`, which `GitIgnoreSpec` matches against an immediate regular file
+    (`<prefix>/a.py`) that git leaves alone, silently hiding it from the linter.
+    `_normalize_contents_glob` cannot repair that downstream: it deliberately skips a `/**`
+    preceded by another `*`.
+    """
+    return _DOUBLE_STAR_RUN.sub("**", core)
+
+
 def _normalize_contents_glob(pattern: str) -> str:
     """Rewrite a trailing `/**` so it cannot match the directory whose contents it names.
 
@@ -202,7 +222,7 @@ def _prefix_pattern(prefix: str, line: str) -> str:
         # treat it as inert rather than accidentally suppressing the whole owning directory.
         return line
     has_trailing_slash = body.endswith("/") and body != "/"
-    core = body[:-1] if has_trailing_slash else body
+    core = _collapse_double_star_run(body[:-1] if has_trailing_slash else body)
     if core.startswith("/"):
         anchored_core = f"{prefix}/{core[1:]}"
     elif "/" in core:
