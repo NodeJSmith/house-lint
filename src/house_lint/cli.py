@@ -292,7 +292,12 @@ def _scan(
             )
             else None
         )
-        if cached is not None:
+        # A cached *error* is not replayable under `--debug`: the traceback is printed by
+        # `scan_source`, which a hit skips, so the first debug run showed the exception and every
+        # identical one after it showed only the structured line. Re-scanning those files keeps
+        # `--debug` output independent of cache state, at the cost of re-analyzing the few files
+        # that failed — clean files still hit the cache, so the diagnostic mode stays fast.
+        if cached is not None and not (debug and cached.errors):
             findings.extend(cached.findings)
             errors.extend(cached.errors)
             suppressed_count += cached.suppressed_count

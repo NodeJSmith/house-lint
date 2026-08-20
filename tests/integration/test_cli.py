@@ -695,6 +695,26 @@ def test_debug_operational_details_stay_on_stderr_for_json_output(repository: Pa
     assert "def broken()" in completed.stderr
 
 
+def test_debug_tracebacks_survive_a_warm_cache(repository: Path) -> None:
+    """`--debug` output must not depend on whether a previous run cached the error.
+
+    The traceback is printed by `scan_source`, which a cache hit skips entirely — so the first
+    `--debug` run showed the exception type and the offending source, and every identical run
+    after it showed only the one-line structured error. Someone reaching for `--debug` to
+    diagnose a parse failure would get less information the second time they asked, with nothing
+    on screen to explain why.
+    """
+    (repository / "src" / "broken.py").write_text("def broken()\n    pass\n")
+
+    cold = _run(repository, "check", "--root", str(repository), "--debug")
+    warm = _run(repository, "check", "--root", str(repository), "--debug")
+
+    for completed in (cold, warm):
+        assert completed.returncode == 3
+        assert "SyntaxError:" in completed.stderr
+        assert "def broken()" in completed.stderr
+
+
 def test_invalid_check_format_writes_only_a_usage_diagnostic_to_stderr(repository: Path) -> None:
     completed = _run(repository, "check", "--root", str(repository), "--format", "xml")
 
