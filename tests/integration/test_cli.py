@@ -377,10 +377,50 @@ def test_a_corrupted_cache_field_degrades_to_a_miss_instead_of_crashing(reposito
 
     second = _run(repository, *arguments)
 
+    payload = json.loads(second.stdout)
     assert second.returncode == 1
     assert "Traceback" not in second.stderr
+    assert payload["errors"] == [], "a corrupted cache entry must never become a scan error"
     # Re-scanned from source, so the real finding comes back and the poison is discarded.
-    assert json.loads(second.stdout)["findings"] == expected
+    assert payload["findings"] == expected
+
+
+def test_a_symlinked_default_cache_directory_disables_caching(
+    repository: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """A cloned repository controls the path `<root>/.house-lint-cache` resolves to. Pointed at a
+    directory outside the checkout, `mkdir(parents=True, exist_ok=True)` follows the link and
+    house-lint's version marker, entries, and wildcard `.gitignore` all land there. The scan must
+    still succeed, and must leave the linked directory exactly as it found it."""
+    outside = tmp_path_factory.mktemp("outside")
+    (repository / ".house-lint-cache").symlink_to(outside, target_is_directory=True)
+
+    result = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    assert result.returncode == 0
+    assert "Traceback" not in result.stderr
+    assert "caching disabled" in result.stderr
+    assert json.loads(result.stdout)["errors"] == []
+    assert list(outside.iterdir()) == []
+
+
+def test_a_symlinked_cache_dir_override_is_still_honoured(
+    repository: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """The symlink refusal above is scoped to the default base. `--cache-dir` names a directory
+    the user chose, so house-lint neither self-ignores it nor second-guesses how they linked it."""
+    target = tmp_path_factory.mktemp("target")
+    link = tmp_path_factory.mktemp("links") / "cache"
+    link.symlink_to(target, target_is_directory=True)
+
+    result = _run(
+        repository, "check", "--root", str(repository), "--cache-dir", str(link), "--format", "json"
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert list(target.iterdir()) != []
+    assert not (target / ".gitignore").exists()
 
 
 def test_a_run_of_pure_cache_hits_does_not_prune_another_namespace(repository: Path) -> None:

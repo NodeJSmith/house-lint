@@ -72,6 +72,23 @@ def default_cache_base(root: Path) -> Path:
     return root / CACHE_DIRNAME
 
 
+def default_cache_base_is_safe(base: Path) -> bool:
+    """Whether house-lint may create and write its own default cache base at `base`.
+
+    The default base lives inside the scanned project, so its path is controlled by whoever
+    wrote that project: a repository can ship `.house-lint-cache` as a symlink pointing anywhere,
+    and `prepare_cache_dir`'s `mkdir(parents=True, exist_ok=True)` follows it. house-lint would
+    then write its version marker, its cache entries, and a wildcard `.gitignore` into the
+    directory the link names — outside the checkout, at a location the repository chose. A plain
+    `house-lint check` on a freshly cloned repository must never do that, so a symlinked default
+    base disables caching for the run instead.
+
+    Only the default base is checked. A `--cache-dir` names a directory the user picked
+    deliberately, and house-lint neither self-ignores nor second-guesses it.
+    """
+    return not base.is_symlink()
+
+
 @lru_cache(maxsize=1)
 def code_identity() -> str:
     """Fingerprint house-lint's own Python sources, for use in the cache namespace.
@@ -261,6 +278,14 @@ def read_cached_result(
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return None
+    except UnicodeDecodeError as exc:
+        # Corruption (or a foreign write) can leave bytes that are not valid UTF-8. That raises
+        # here, at decode time, rather than in the parse block below — and `UnicodeDecodeError`
+        # is a `ValueError`, so the `OSError` handler does not catch it either. Without this
+        # branch the exception escapes `_scan` entirely, aborting the run with an internal error
+        # instead of the cache miss this function promises.
+        reporter.failure(f"cache entry for {relative_path} is corrupted: {exc}")
+        return None
     except OSError as exc:
         reporter.failure(f"cache read failed for {relative_path}: {exc}")
         return None
@@ -272,10 +297,21 @@ def read_cached_result(
         # (e.g. `"suppressed_count": "1"`) would otherwise construct successfully here and only
         # fail later when the caller accumulates it (`suppressed_count += cached.suppressed_count`
         # in `cli.py`), turning what should be a graceful cache miss into an internal-error exit.
-        if not isinstance(suppressed_count, int) or isinstance(suppressed_count, bool):
-            raise TypeError("suppressed_count must be an int")
-        if not isinstance(files_scanned, int) or isinstance(files_scanned, bool):
-            raise TypeError("files_scanned must be an int")
+        # Negative values are the same class of corruption reaching the same accumulation: no
+        # real scan produces one, and `"files_scanned": -5` would silently lower the run's
+        # reported totals rather than degrading to a miss.
+        if (
+            not isinstance(suppressed_count, int)
+            or isinstance(suppressed_count, bool)
+            or suppressed_count < 0
+        ):
+            raise TypeError("suppressed_count must be a non-negative int")
+        if (
+            not isinstance(files_scanned, int)
+            or isinstance(files_scanned, bool)
+            or files_scanned < 0
+        ):
+            raise TypeError("files_scanned must be a non-negative int")
         return CachedFileResult(
             findings=tuple(
                 _finding_from_payload(item, path=relative_path) for item in payload["findings"]
@@ -490,6 +526,7 @@ __all__ = [
     "CachedFileResult",
     "code_identity",
     "default_cache_base",
+    "default_cache_base_is_safe",
     "hash_effective_config",
     "hash_source_content",
     "prepare_cache_dir",

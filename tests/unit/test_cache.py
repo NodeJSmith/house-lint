@@ -12,6 +12,7 @@ from house_lint.cache import (
     CacheReporter,
     code_identity,
     default_cache_base,
+    default_cache_base_is_safe,
     hash_effective_config,
     hash_source_content,
     prepare_cache_dir,
@@ -69,18 +70,23 @@ def test_hash_source_content_is_none_when_oversized(monkeypatch: pytest.MonkeyPa
 def test_hash_effective_config_is_order_independent_and_content_sensitive() -> None:
     hsl101, hsl102, hsl103 = HSL101Options(), HSL102Options(), HSL103Options()
 
-    def h(enabled_rules: tuple[str, ...], **kwargs: object) -> str:
+    # Explicit parameters rather than `**kwargs`: a typo'd keyword would be silently ignored by
+    # `kwargs.get`, leaving the final assertion comparing two identical hashes and passing while
+    # testing nothing.
+    def h(
+        enabled_rules: tuple[str, ...],
+        *,
+        options101: HSL101Options = hsl101,
+        options102: HSL102Options = hsl102,
+        options103: HSL103Options = hsl103,
+    ) -> str:
         return hash_effective_config(
-            enabled_rules,
-            kwargs.get("hsl101", hsl101),
-            kwargs.get("hsl102", hsl102),
-            kwargs.get("hsl103", hsl103),
-            filename="a.py",
+            enabled_rules, options101, options102, options103, filename="a.py"
         )
 
     assert h(("HSL001", "HSL002")) == h(("HSL002", "HSL001"))
     assert h(("HSL001",)) != h(("HSL001", "HSL002"))
-    assert h(("HSL102",), hsl102=HSL102Options(max_lines=100)) != h(("HSL102",))
+    assert h(("HSL102",), options102=HSL102Options(max_lines=100)) != h(("HSL102",))
 
 
 def test_hash_effective_config_changes_with_python_version() -> None:
@@ -258,6 +264,48 @@ def test_read_cached_result_is_a_miss_when_a_scalar_field_has_the_wrong_type(
 
 
 @pytest.mark.parametrize(
+    ("label", "payload"),
+    [
+        ("negative suppressed_count", '{"suppressed_count": -7, "files_scanned": 1}'),
+        ("negative files_scanned", '{"suppressed_count": 0, "files_scanned": -1}'),
+    ],
+)
+def test_read_cached_result_is_a_miss_when_a_count_is_negative(
+    label: str, payload: str, tmp_path: Path
+) -> None:
+    """Negative counts reach the same accumulation the type checks above exist to protect. No
+    real scan produces one — suppression counts are nonnegative and `files_scanned` is 0 or 1 —
+    so a negative value is corruption, and accepting it would silently lower the run's totals."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True)
+    entry = json.loads(payload) | {"findings": [], "errors": []}
+    (cache_dir / "content-hash-config-hash.json").write_text(json.dumps(entry))
+
+    assert (
+        read_cached_result(
+            cache_dir, "content-hash", "config-hash", relative_path="a.py", reporter=CacheReporter()
+        )
+        is None
+    )
+
+
+def test_read_cached_result_is_a_miss_when_the_entry_is_not_utf8(tmp_path: Path) -> None:
+    """Invalid UTF-8 raises `UnicodeDecodeError` at `read_text`, before the parse block. It is a
+    `ValueError`, so the `OSError` handler does not catch it either — left unhandled it escapes
+    `_scan` and aborts the run with an internal error instead of degrading to a miss."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "content-hash-config-hash.json").write_bytes(b"\xff\xfe not utf-8")
+
+    assert (
+        read_cached_result(
+            cache_dir, "content-hash", "config-hash", relative_path="a.py", reporter=CacheReporter()
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
     ("label", "findings", "errors"),
     [
         ("finding message is not a string", [{**_FINDING, "message": 12345}], []),
@@ -267,6 +315,12 @@ def test_read_cached_result_is_a_miss_when_a_scalar_field_has_the_wrong_type(
         ("error kind is not a string", [], [{**_ERROR, "kind": 7}]),
         ("error rule_id is neither string nor null", [], [{**_ERROR, "rule_id": 3}]),
         ("error is not an object", [], [42]),
+        # `_finding_from_payload`/`_error_from_payload` splat the whole payload into the
+        # dataclass constructor, so an extra key raises `TypeError: unexpected keyword argument`.
+        # Pinned here so a later change to those constructor calls cannot quietly turn a
+        # corrupted entry into an uncaught crash.
+        ("finding carries an unexpected key", [{**_FINDING, "stop": True}], []),
+        ("error carries an unexpected key", [], [{**_ERROR, "path": "leaked.py"}]),
     ],
 )
 def test_read_cached_result_is_a_miss_when_a_text_field_has_the_wrong_type(
@@ -572,7 +626,9 @@ def test_prepare_cache_dir_leaves_the_current_namespace_untouched(tmp_path: Path
         "content-hash",
         "config-hash",
         CachedFileResult(),
-        self_ignore=False,
+        # Matches the `prepare_cache_dir` call above, as `write_cached_result` documents: it
+        # re-invokes `prepare_cache_dir` with this value on the vanished-directory retry path.
+        self_ignore=True,
         reporter=CacheReporter(),
     )
 
@@ -587,6 +643,21 @@ def test_prepare_cache_dir_is_best_effort_on_an_unusable_directory(tmp_path: Pat
     prepare_cache_dir(
         blocked / "cache", self_ignore=True, reporter=CacheReporter()
     )  # must not raise
+
+
+def test_default_cache_base_is_unsafe_when_it_is_a_symlink(tmp_path: Path) -> None:
+    """A repository can ship `.house-lint-cache` as a symlink. `mkdir(exist_ok=True)` follows it,
+    so without this check a plain `house-lint check` on a fresh clone would write its entries and
+    a wildcard `.gitignore` into whatever directory outside the checkout the link names."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root = tmp_path / "repository"
+    root.mkdir()
+    base = default_cache_base(root)
+    base.symlink_to(outside, target_is_directory=True)
+
+    assert not default_cache_base_is_safe(base)
+    assert default_cache_base_is_safe(default_cache_base(outside))
 
 
 def test_code_identity_is_stable_within_a_process_and_shapes_the_cache_namespace(

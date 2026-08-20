@@ -10,6 +10,7 @@ from house_lint.cache import (
     CachedFileResult,
     CacheReporter,
     default_cache_base,
+    default_cache_base_is_safe,
     hash_effective_config,
     hash_source_content,
     prepare_cache_dir,
@@ -195,10 +196,21 @@ def _scan(
         )
 
     cache_reporter = CacheReporter(debug=debug)
+    # Named for what it checks, not for whether caching happens: `read_cache` (--no-cache) and a
+    # mid-run write failure below also govern that. `cache_self_ignore` is true exactly when
+    # `cache_dir` sits under house-lint's own default base (see `check`), which is the only base
+    # whose path the scanned project itself controls and so the only one worth vetting.
+    cache_base_is_safe = not cache_self_ignore or default_cache_base_is_safe(cache_dir.parent)
     if discovered.files:
-        # Once per scan, and only when there is something to scan — so a run that discovers
-        # nothing never creates a cache directory in the project.
-        prepare_cache_dir(cache_dir, self_ignore=cache_self_ignore, reporter=cache_reporter)
+        # Both branches run once per scan, and only when there is something to scan — so a run
+        # that discovers nothing neither creates a cache directory in the project nor reports on
+        # one it was never going to use.
+        if cache_base_is_safe:
+            prepare_cache_dir(cache_dir, self_ignore=cache_self_ignore, reporter=cache_reporter)
+        else:
+            cache_reporter.failure(
+                f"caching disabled: the default cache directory {cache_dir.parent} is a symlink"
+            )
 
     findings: list[Finding] = []
     errors = list(discovered.errors)
@@ -257,7 +269,12 @@ def _scan(
                 relative_path=relative,
                 reporter=cache_reporter,
             )
-            if read_cache and content_hash is not None and config_hash is not None
+            if (
+                cache_base_is_safe
+                and read_cache
+                and content_hash is not None
+                and config_hash is not None
+            )
             else None
         )
         if cached is not None:
@@ -283,6 +300,9 @@ def _scan(
         if content_hash is None or config_hash is None:
             # Unhashable file (non-regular, unreadable, or oversized). Never cached, and not a
             # cache failure — it must not trip the circuit breaker below.
+            continue
+        if not cache_base_is_safe:
+            # Decided once, before the loop, and already reported there.
             continue
         if cache_writes_failed:
             # A cache directory that rejected one write rejects every later one for the rest of
