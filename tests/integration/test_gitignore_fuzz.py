@@ -82,11 +82,20 @@ ORDINARY_BODIES = (
 )
 # The curated table's shapes recombined freely: anchored and unanchored, directory-only and not,
 # with and without `**`. Deliberately unrepresentative — this is the corner-hunting pool.
+#
+# `**/**` and `**/**/` earn their place separately from the single-`**` entries above them. Every
+# other body here contains at most one `**`, so no combination this file generated ever reached
+# `_prefix_pattern`'s two-`**` path — a gap that hid a real under-linting bug through several
+# rounds of review until someone read the rewrite by hand. Composing a token with itself is the
+# cheap generalisation of "one of these", and the class it covers is exactly the one the
+# generator was blind to.
 CORNER_BODIES = (
     *ORDINARY_BODIES,
     "**",
     "**/",
     "**/a.py",
+    "**/**",
+    "**/**/",
     "sub/**",
     "deep/**/",
     "/sub",
