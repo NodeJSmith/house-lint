@@ -343,6 +343,58 @@ def test_normalize_contents_glob_only_rewrites_a_trailing_contents_glob(
     assert discovery._normalize_contents_glob(pattern) == expected
 
 
+def test_match_patterns_directory_only_pattern_matches_when_is_dir_true() -> None:
+    patterns = discovery._build_patterns(("build/",))
+
+    assert discovery._match_patterns(patterns, "build", is_dir=True) is True
+
+
+def test_match_patterns_directory_only_pattern_is_skipped_when_is_dir_false() -> None:
+    patterns = discovery._build_patterns(("build/",))
+
+    assert discovery._match_patterns(patterns, "build", is_dir=False) is None
+
+
+def test_match_patterns_last_match_wins_negation_overrides_a_wildcard_ignore() -> None:
+    patterns = discovery._build_patterns(("*.py", "!a.py"))
+
+    assert discovery._match_patterns(patterns, "a.py", is_dir=False) is False
+
+
+def test_match_patterns_negation_wins_over_an_earlier_exact_ignore() -> None:
+    patterns = discovery._build_patterns(("a.py", "!a.py"))
+
+    assert discovery._match_patterns(patterns, "a.py", is_dir=False) is False
+
+
+def test_match_patterns_empty_tuple_has_no_opinion() -> None:
+    assert discovery._match_patterns((), "a.py", is_dir=False) is None
+
+
+def test_match_patterns_file_probe_matches_a_non_directory_only_pattern() -> None:
+    patterns = discovery._build_patterns(("*.py",))
+
+    assert discovery._match_patterns(patterns, "a.py", is_dir=False) is True
+
+
+def test_build_patterns_produces_correct_length_and_is_dir_only_flags() -> None:
+    patterns = discovery._build_patterns(("*.py", "build/", "!a.py"))
+
+    assert len(patterns) == 3
+    assert [is_dir_only for _pattern, is_dir_only in patterns] == [False, True, False]
+
+
+def test_build_patterns_returns_an_empty_tuple_on_parse_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_gitignore(lines: Iterable[str]) -> discovery.GitIgnoreSpec:
+        raise ValueError("invalid pattern")
+
+    monkeypatch.setattr(discovery.GitIgnoreSpec, "from_lines", fail_gitignore)
+
+    assert discovery._build_patterns(("*.py",)) == ()
+
+
 def test_ignored_directory_include_root_is_skipped_without_being_walked(tmp_path: Path) -> None:
     # `_walk` starts *inside* an include root, so the root itself is the one directory
     # `_traversable_dirs` never evaluates. A negation must not resurrect its files.

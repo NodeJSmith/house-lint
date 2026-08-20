@@ -1,7 +1,7 @@
 ---
 task_id: "T01"
 title: "Add _match_patterns free function and pattern-tuple builder"
-status: "planned"
+status: "done"
 depends_on: []
 implements: ["FR#2", "FR#3"]
 ---

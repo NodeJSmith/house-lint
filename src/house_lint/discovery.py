@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from pathspec import GitIgnoreSpec
+from pathspec.patterns.gitignore.spec import GitIgnoreSpecPattern
 
 from house_lint.config import DEFAULT_INCLUDE, ConfigError, get_house_lint_table, load_toml
 from house_lint.results import LintError
@@ -279,6 +280,87 @@ def _ignored(root: Path, path: Path, *specs: GitIgnoreSpec, is_dir: bool) -> boo
     relative = path.relative_to(root).as_posix()
     probe = f"{relative}/" if is_dir else relative
     return any(spec.match_file(probe) for spec in specs)
+
+
+IgnorePatterns = tuple[tuple[GitIgnoreSpecPattern, bool], ...]
+"""One directory's own compiled `.gitignore` patterns, each paired with whether it is
+directory-only.
+
+`is_dir_only` is `True` when the raw pattern text (after stripping a leading `!`) ends with `/`
+-- gitwildmatch's own directory-only marker. A type alias rather than a dataclass: `_match_patterns`
+follows the free-function convention `_ignored` already establishes, and a single-field wrapper
+around `GitIgnoreSpecPattern` would add indirection without buying anything.
+"""
+
+
+def _match_patterns(  # pyright: ignore[reportUnusedFunction]
+    patterns: IgnorePatterns, relative_path: str, is_dir: bool
+) -> bool | None:
+    """Tri-state match of `relative_path` against one directory's own `.gitignore` patterns.
+
+    `relative_path` is relative to the directory that owns `patterns` (the directory containing
+    the `.gitignore` these were parsed from), not necessarily the discovery root -- the caller is
+    responsible for that relative-path threading when probing a stack of per-directory matchers.
+
+    Iterates in reverse so the last matching pattern wins, per git's own precedence rule. A
+    directory-only pattern (`is_dir_only=True`) is only eligible when `is_dir=True`; it is skipped
+    entirely otherwise, even if its regex would technically match the file-form probe. The probe
+    itself carries a trailing slash for directories -- `pattern.match_file("src/")` matches
+    directory-only patterns like `**/` where `pattern.match_file("src")` does not.
+
+    Returns `True` when the winning pattern is an ignore, `False` when it is a `!`-prefixed
+    negation, and `None` when nothing in `patterns` has an opinion -- the caller then falls back to
+    the next-outer directory's patterns, matching git's closest-`.gitignore`-wins precedence.
+
+    `include=True` on a `GitIgnoreSpecPattern` means "this is an ignore pattern," not "this
+    pattern includes/keeps the file" -- the name is the opposite of what it suggests, verified
+    empirically against `pathspec`. `include=False` means the pattern is a negation.
+    """
+    for pattern, is_dir_only in reversed(patterns):
+        if is_dir_only and not is_dir:
+            continue
+        probe = f"{relative_path}/" if is_dir else relative_path
+        if pattern.match_file(probe) is not None:
+            return pattern.include
+    return None
+
+
+def _build_patterns(lines: tuple[str, ...]) -> IgnorePatterns:  # pyright: ignore[reportUnusedFunction]
+    """Parse one directory's raw `.gitignore` lines into a compiled `IgnorePatterns` tuple.
+
+    Applies the same trailing-`/**`-to-`/**/*` rewrite `_normalize_contents_glob` used to apply at
+    spec-build time (see that function's docstring for why: git reads `build/**` as "everything
+    inside build" and never matches `build` itself, while `GitIgnoreSpec` matches the directory
+    too). Inlined here rather than calling a standalone helper because the standalone function is
+    deleted once every caller moves to this per-directory builder.
+
+    `GitIgnoreSpec.from_lines()` is used to parse rather than constructing `GitIgnoreSpecPattern`
+    objects directly -- it is the only reliable entry point for gitignore-syntax parsing (comment
+    lines, blank lines, escaping, etc.).
+
+    On parse failure, returns an empty tuple. Error reporting is the caller's responsibility, same
+    as `_load_gitignore_lines` -- each source's own raw lines are already validated there, so a
+    failure here is only possible if this rewrite step itself produces something unparsable.
+    """
+    normalized = tuple(
+        line if not line or line.startswith("#") else _CONTENTS_GLOB.sub(r"/**/*\1", line)
+        for line in lines
+    )
+    try:
+        spec = GitIgnoreSpec.from_lines(normalized)
+    except (TypeError, ValueError, re.error):
+        return ()
+    built: list[tuple[GitIgnoreSpecPattern, bool]] = []
+    for pattern in spec.patterns:
+        # `.pattern` is typed `str | bytes | re.Pattern | None` upstream (a `RegexPattern` may in
+        # principle hold a compiled regex instead of source text), but every pattern here was
+        # built from `GitIgnoreSpec.from_lines()`'s own line-parsing path, which always stores the
+        # original `str` line -- never `bytes`, a compiled `re.Pattern`, or `None`.
+        raw: object = pattern.pattern  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        text = raw if isinstance(raw, str) else ""
+        stripped = text.removeprefix("!")
+        built.append((pattern, stripped.endswith("/")))
+    return tuple(built)
 
 
 @dataclass
