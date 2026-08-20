@@ -380,6 +380,14 @@ class _FileSelector:
             self.files_skipped += 1
             return
         if is_dir:
+            # Walked in resolved form. Both ancestor walks key off `relative_to(root)`, which
+            # keeps a `..` as a literal part, so `src/../tests` would enumerate `src` as an
+            # ancestor of `tests` and apply its `.gitignore` — skipping files that `check tests`
+            # selects. The resolved directory is the one whose ignore-file ancestors actually
+            # govern it, and it is already the containment-checked path. This is the rule
+            # `per-file-ignores` documents (`docs/configuration.md`): match the resolved
+            # location, not the spelling used to reach it.
+            #
             # A discovery root reached from `include` or an explicit argument is the one
             # directory `_traversable_dirs` never sees, because `_walk` starts *inside* it. Left
             # unchecked, an ignored root's files were only excluded when the patterns happened
@@ -388,19 +396,19 @@ class _FileSelector:
             # parent, deliberately excluding this directory's own `.gitignore`, for the same
             # reason `_traversable_dirs` does.
             if resolved != self.root and (
-                self._has_excluded_ancestor(path.parent)
+                self._has_excluded_ancestor(resolved.parent)
                 or _ignored(
                     self.root,
-                    path,
+                    resolved,
                     self.builtin_spec,
                     self.exclude_spec,
-                    self._combined_gitignore_spec(path.parent),
+                    self._combined_gitignore_spec(resolved.parent),
                     is_dir=True,
                 )
             ):
                 self.files_skipped += 1
                 return
-            self._walk(path)
+            self._walk(resolved)
             return
         if not is_file or path.suffix != ".py":
             if explicit_paths:
