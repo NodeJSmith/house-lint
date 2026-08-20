@@ -335,10 +335,29 @@ def _write_marker_if_absent(
     Both of house-lint's cache markers are write-once and must never fail a scan, so they share
     this shape. `description` names the marker in the failure line, which is the only part a
     reader of stderr needs to tell the two apart.
+
+    Created with `O_CREAT | O_EXCL`, not an `exists()` test followed by `write_text`. The two are
+    not equivalent for a path the scanned project controls: `exists()` follows symlinks, so a
+    *dangling* symlink at the marker path reports false and the subsequent write follows the link
+    and creates the file it names. `default_cache_base_is_safe` does not close this — it only
+    rejects a symlinked base, and a real `.house-lint-cache/` directory holding a dangling
+    `.gitignore` symlink passes it. A plain `house-lint check` on a freshly cloned repository
+    would then write `*` to a path that repository chose, anywhere on the filesystem. `O_EXCL`
+    fails with `EEXIST` on a symlink whether or not its target exists, which is exactly the
+    "create only if nothing is here" test this needs, in one unraceable syscall.
     """
     try:
-        if not marker.exists():
-            marker.write_text(content, encoding="utf-8")
+        descriptor = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        # Already present — including as a symlink, which is the case `exists()` missed. Either
+        # way this marker is not ours to write, and "unless it already exists" is satisfied.
+        return
+    except OSError as exc:
+        reporter.failure(f"cache {description} marker write failed: {exc}")
+        return
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
     except OSError as exc:
         reporter.failure(f"cache {description} marker write failed: {exc}")
 

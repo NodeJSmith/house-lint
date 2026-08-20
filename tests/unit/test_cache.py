@@ -568,6 +568,41 @@ def test_prepare_cache_dir_does_not_overwrite_an_existing_gitignore_marker(
     assert (base / ".gitignore").read_text(encoding="utf-8") == "custom content\n"
 
 
+def test_prepare_cache_dir_does_not_follow_a_dangling_self_ignore_marker_symlink(
+    tmp_path: Path,
+) -> None:
+    """`default_cache_base_is_safe` rejects a symlinked *base*, but a real cache directory can
+    still hold a dangling `.gitignore` symlink. `exists()` reports false for one, so an
+    `exists()`-then-write would follow the link and create `*` at the target the scanned
+    repository named — outside the project."""
+    outside = tmp_path / "outside" / "attacker-chosen"
+    outside.parent.mkdir(parents=True)
+    base = tmp_path / ".house-lint-cache"
+    base.mkdir(parents=True)
+    (base / ".gitignore").symlink_to(outside)
+
+    prepare_cache_dir(base / "1.2.3", self_ignore=True, reporter=CacheReporter())
+
+    assert not outside.exists()
+
+
+def test_prepare_cache_dir_does_not_follow_a_dangling_version_marker_symlink(
+    tmp_path: Path,
+) -> None:
+    """The version-dir marker shares `_write_marker_if_absent` with the self-ignore marker, so
+    it shares the symlink exposure — and its directory is created before the marker is written,
+    leaving the same window."""
+    outside = tmp_path / "outside" / "attacker-chosen"
+    outside.parent.mkdir(parents=True)
+    cache_dir = tmp_path / ".house-lint-cache" / "1.2.3"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / ".house-lint-version").symlink_to(outside)
+
+    prepare_cache_dir(cache_dir, self_ignore=False, reporter=CacheReporter())
+
+    assert not outside.exists()
+
+
 def test_prune_stale_cache_dirs_removes_superseded_sibling_namespaces(tmp_path: Path) -> None:
     base = tmp_path / ".house-lint-cache"
     old_version_dir = base / "0.9.0-aaaaaaaaaaaaaaaa"
