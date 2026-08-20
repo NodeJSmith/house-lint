@@ -51,11 +51,18 @@ def init_repository(root: Path) -> None:
 
 
 def git_ignored(root: Path, relatives: tuple[str, ...]) -> set[str]:
-    """Return which of `relatives` git itself would ignore."""
+    """Return which of `relatives` git itself would ignore.
+
+    NUL-separated (`-z`) in both directions. Without it git applies its C-style quoting to any
+    path it considers unusual — a filename containing a backslash comes back as
+    `"src/dir\\\\/b.py"`, quotes and doubled escapes included — and the comparison then fails on
+    the encoding rather than on the ignore decision. `-z` turns quoting off entirely, so
+    newline-free paths (which every scenario uses) round-trip byte for byte.
+    """
     completed = subprocess.run(
-        ["git", "check-ignore", "--stdin"],
+        ["git", "check-ignore", "-z", "--stdin"],
         cwd=root,
-        input="\n".join(relatives),
+        input="\0".join(relatives),
         capture_output=True,
         text=True,
         env=git_env(),
@@ -65,4 +72,4 @@ def git_ignored(root: Path, relatives: tuple[str, ...]) -> set[str]:
     # `check-ignore` exits 1 when nothing matches, which is not a failure for us.
     if completed.returncode not in (0, 1):
         pytest.fail(f"git check-ignore failed: {completed.stderr}")
-    return {line.strip() for line in completed.stdout.splitlines() if line.strip()}
+    return {entry for entry in completed.stdout.split("\0") if entry}

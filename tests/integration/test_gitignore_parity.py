@@ -150,6 +150,19 @@ SCENARIOS = (
         {"src": ["a.py "]},
         ("src/a.py", "src/b.py"),
     ),
+    # Backslashes quote each other pairwise, so it is the parity of the run before the space
+    # that decides whether the space survives — not merely whether a backslash precedes it.
+    # An even run leaves the space unquoted and git strips it; an odd run escapes it.
+    Scenario(
+        "an even backslash run leaves trailing whitespace unquoted",
+        {"src": ["dir\\\\ "]},
+        ("src/a.py", "src/dir\\/b.py"),
+    ),
+    Scenario(
+        "an odd backslash run quotes trailing whitespace",
+        {"src": ["dir\\ "]},
+        ("src/a.py", "src/dir /b.py"),
+    ),
     Scenario(
         "directory names containing glob metacharacters stay literal",
         {"src": ["other/"]},

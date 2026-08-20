@@ -122,15 +122,27 @@ def _escape_gitignore_literal(segment: str) -> str:
 
 
 def _strip_unescaped_trailing_whitespace(text: str) -> str:
-    """Trim trailing spaces/tabs, except one immediately preceded by a backslash escape.
+    """Trim trailing spaces/tabs, except one quoted by a backslash escape.
 
     Mirrors gitwildmatch's own trailing-whitespace rule ("trailing spaces are ignored unless
     they are quoted with backslash") so a nested pattern's rewrite doesn't discard whitespace
     that `GitIgnoreSpec` would otherwise treat as significant.
+
+    What decides the question is the *parity* of the backslash run before the whitespace, not
+    whether a single backslash sits there: backslashes quote each other pairwise, so an even
+    run leaves the space unquoted and git strips it. `a\\\\ ` (two backslashes, one space) is
+    the case that separates the two readings — git reduces it to `a\\\\`, which names `a\\`,
+    while treating the lone preceding backslash as an escape keeps the space and names `a\\ `
+    instead. Checked against real `git check-ignore`; see the parity suite.
     """
     end = len(text)
     while end > 0 and text[end - 1] in " \t":
-        if end >= 2 and text[end - 2] == "\\":
+        backslashes = 0
+        index = end - 2
+        while index >= 0 and text[index] == "\\":
+            backslashes += 1
+            index -= 1
+        if backslashes % 2 == 1:
             break
         end -= 1
     return text[:end]
