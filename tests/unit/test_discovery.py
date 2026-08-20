@@ -482,6 +482,39 @@ def test_explicit_path_inside_ignored_directory_cannot_be_resurrected_by_nested_
     assert nested_ignore not in read_calls
 
 
+def test_a_failing_combined_spec_is_reported_once_per_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_combined_gitignore_spec` re-walks every ancestor for each directory below it, so a line
+    tuple that fails to parse is re-submitted with the same attribution once per descendant.
+    Left undeduplicated, one bad pattern produces an entry per directory in the subtree — all
+    naming the same offending directory — instead of the one per directory the docstring
+    promises."""
+    (tmp_path / ".gitignore").write_text("boom.py\n")
+    for name in ("sub1", "sub2", "sub3"):
+        (tmp_path / "src" / name).mkdir(parents=True)
+        (tmp_path / "src" / name / "a.py").write_text("x = 1\n")
+    # Patched here rather than at `GitIgnoreSpec.from_lines`: `_load_gitignore_lines` validates a
+    # source's own raw lines, while only `_spec_for_lines` normalizes them. Failing inside the
+    # normalize step is therefore the one seam that reproduces "valid on its own, invalid once
+    # combined" — the case the combine-time handler exists for.
+    normalize = discovery._normalize_contents_glob  # pyright: ignore[reportPrivateUsage]
+
+    def exploding(line: str) -> str:
+        if line == "boom.py":
+            raise ValueError("bad pattern")
+        return normalize(line)
+
+    monkeypatch.setattr(discovery, "_normalize_contents_glob", exploding)
+
+    result = discover_files(tmp_path, include=("src",))
+
+    combine_errors = [error for error in result.errors if error.operation == "combine"]
+    assert combine_errors, "the combine-time parse failure must still be reported"
+    attributions = [error.path for error in combine_errors]
+    assert len(attributions) == len(set(attributions)), attributions
+
+
 def test_directories_with_identical_accumulated_gitignore_lines_reuse_the_same_spec(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

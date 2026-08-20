@@ -85,6 +85,12 @@ def _load_gitignore_lines(path: Path, on_error: Callable[[str, str], None]) -> t
     only be blamed on the directory being combined, not on the specific `.gitignore` at fault.
     """
     try:
+        # Checked before `is_file()`, which follows symlinks: git does not read a symlinked
+        # `.gitignore` at all, so following one would apply patterns git never applies. With
+        # `src/.gitignore -> patterns` containing `*.py`, discovery would skip `src/a.py` while
+        # `git check-ignore` still reports it as included.
+        if path.is_symlink():
+            return ()
         is_file = path.is_file()
     except OSError as exc:
         on_error("stat", str(exc))
@@ -262,6 +268,9 @@ class _FileSelector:
     )
     spec_by_lines_cache: dict[tuple[str, ...], GitIgnoreSpec] = field(
         default_factory=lambda: dict[tuple[str, ...], GitIgnoreSpec]()
+    )
+    reported_spec_failures: set[tuple[tuple[str, ...], Path]] = field(
+        default_factory=lambda: set[tuple[tuple[str, ...], Path]]()
     )
 
     def select(self, requested: tuple[Path, ...], *, explicit_paths: bool) -> None:
@@ -503,10 +512,17 @@ class _FileSelector:
         except (TypeError, ValueError, re.error) as exc:
             # Each source's own lines are already validated in `_load_gitignore_lines`, but
             # `_prefix_pattern`'s rewrite of them is not independently re-validated — a valid
-            # original line could in principle become invalid once prefixed, so this stays
-            # live. The error is intentionally *not* cached by line content below: it must
-            # still be reported once per offending directory, not just once per line tuple.
-            self.errors.append(self._error(directory, "traversal", "combine", str(exc)))
+            # original line could in principle become invalid once prefixed, so this stays live.
+            #
+            # Reported once per (lines, directory) pair rather than once per call. A failing
+            # ancestor's lines are re-walked by `_combined_gitignore_spec` for every directory
+            # beneath it, so without this the same failure is appended once per descendant —
+            # hundreds of identical entries in a large tree, all attributed to the one ancestor.
+            # Keyed on the pair, not the lines alone, so a second directory whose accumulated
+            # lines fail the same way is still reported against its own path.
+            if (lines, directory) not in self.reported_spec_failures:
+                self.reported_spec_failures.add((lines, directory))
+                self.errors.append(self._error(directory, "traversal", "combine", str(exc)))
             return GitIgnoreSpec.from_lines(())
         self.spec_by_lines_cache[lines] = spec
         return spec

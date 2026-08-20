@@ -16,7 +16,7 @@ change the outcome.
 """
 
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
@@ -36,12 +36,17 @@ class Scenario:
     `ignores` maps an owning directory (root-relative posix, `""` for the repository root) to
     that directory's `.gitignore` lines. `files` are the Python files to create. `include` is
     the discovery root set, mirroring `[tool.house-lint] include`.
+
+    `symlinked_ignores` has the same shape as `ignores`, but writes the lines to a sibling file
+    and leaves `.gitignore` as a symlink to it. Git does not follow a symlinked ignore file, so
+    these scenarios pin that discovery does not either.
     """
 
     name: str
     ignores: dict[str, list[str]]
     files: tuple[str, ...]
     include: tuple[str, ...] = ("src",)
+    symlinked_ignores: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
 
 
 SCENARIOS = (
@@ -155,6 +160,26 @@ SCENARIOS = (
         {"": ["*.py"], "src": ["!*.py"], "src/sub": ["b.py"]},
         ("src/a.py", "src/sub/a.py", "src/sub/b.py"),
     ),
+    # --- Symlinked ignore files. Git reads `.gitignore` with `lstat` and skips it when it is a
+    # symlink; `Path.is_file()` follows one, so discovery would apply patterns git never applies.
+    Scenario(
+        "a symlinked nested .gitignore is not read",
+        {},
+        ("src/a.py", "src/sub/b.py"),
+        symlinked_ignores={"src": ["*.py"]},
+    ),
+    Scenario(
+        "a symlinked root .gitignore is not read",
+        {},
+        ("src/a.py",),
+        symlinked_ignores={"": ["*.py"]},
+    ),
+    Scenario(
+        "a symlinked nested .gitignore cannot negate a real ancestor ignore",
+        {"": ["*.py"]},
+        ("src/a.py",),
+        symlinked_ignores={"src": ["!*.py"]},
+    ),
 )
 
 
@@ -167,6 +192,12 @@ def _build(root: Path, scenario: Scenario) -> None:
         path = (root / owner / ".gitignore") if owner else (root / ".gitignore")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(lines) + "\n")
+    for owner, lines in scenario.symlinked_ignores.items():
+        directory = (root / owner) if owner else root
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / "ignore-patterns"
+        target.write_text("\n".join(lines) + "\n")
+        (directory / ".gitignore").symlink_to(target.name)
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda item: item.name)
