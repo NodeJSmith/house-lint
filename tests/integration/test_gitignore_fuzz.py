@@ -17,6 +17,8 @@ update both together. The no-negation case is the load-bearing one: the known di
 occur without a negation, and that is what pins it.
 
 Marked `slow` and deselected by default (see `[tool.pytest.ini_options]`); run with `-m slow`.
+CI runs it on every Python version in the matrix, so a ceiling here fails a pull request rather
+than waiting for someone to think to run it.
 One repository is initialised per distribution and its `.gitignore` files are rewritten per trial
 — `git check-ignore` needs a repository, not a commit, so per-trial `git init` would be overhead.
 """
