@@ -200,7 +200,7 @@ def _scan(
     # mid-run write failure below also govern that. `cache_self_ignore` is true exactly when
     # `cache_dir` sits under house-lint's own default base (see `check`), which is the only base
     # whose path the scanned project itself controls and so the only one worth vetting.
-    cache_base_is_safe = not cache_self_ignore or default_cache_base_is_safe(cache_dir.parent)
+    cache_base_is_safe = not cache_self_ignore or default_cache_base_is_safe(cache_dir)
     if discovered.files:
         # Both branches run once per scan, and only when there is something to scan — so a run
         # that discovers nothing neither creates a cache directory in the project nor reports on
@@ -209,7 +209,8 @@ def _scan(
             prepare_cache_dir(cache_dir, self_ignore=cache_self_ignore, reporter=cache_reporter)
         else:
             cache_reporter.failure(
-                f"caching disabled: the default cache directory {cache_dir.parent} is a symlink"
+                f"caching disabled: the default cache directory {cache_dir} or its parent "
+                f"is a symlink"
             )
 
     findings: list[Finding] = []

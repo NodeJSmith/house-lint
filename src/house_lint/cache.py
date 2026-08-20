@@ -72,21 +72,27 @@ def default_cache_base(root: Path) -> Path:
     return root / CACHE_DIRNAME
 
 
-def default_cache_base_is_safe(base: Path) -> bool:
-    """Whether house-lint may create and write its own default cache base at `base`.
+def default_cache_base_is_safe(cache_dir: Path) -> bool:
+    """Whether house-lint may create and write its own default cache at `cache_dir`.
 
-    The default base lives inside the scanned project, so its path is controlled by whoever
+    The default cache lives inside the scanned project, so its path is controlled by whoever
     wrote that project: a repository can ship `.house-lint-cache` as a symlink pointing anywhere,
     and `prepare_cache_dir`'s `mkdir(parents=True, exist_ok=True)` follows it. house-lint would
     then write its version marker, its cache entries, and a wildcard `.gitignore` into the
     directory the link names — outside the checkout, at a location the repository chose. A plain
     `house-lint check` on a freshly cloned repository must never do that, so a symlinked default
-    base disables caching for the run instead.
+    cache path disables caching for the run instead.
 
-    Only the default base is checked. A `--cache-dir` names a directory the user picked
+    Both levels are checked, because both are predictable to whoever writes the repository. The
+    version namespace is derived from house-lint's version and source fingerprint
+    (`versioned_cache_dir`), so a project can ship a perfectly real `.house-lint-cache/` whose
+    `<version>-<fingerprint>` *child* is the symlink and reach the same outcome. Checking only
+    the base leaves that second door open.
+
+    Only the default cache is checked. A `--cache-dir` names a directory the user picked
     deliberately, and house-lint neither self-ignores nor second-guesses it.
     """
-    return not base.is_symlink()
+    return not cache_dir.is_symlink() and not cache_dir.parent.is_symlink()
 
 
 @lru_cache(maxsize=1)
@@ -473,6 +479,31 @@ class _WriteOutcome(Enum):
     FAILED = auto()
 
 
+def _create_temp_exclusively(temporary: Path) -> int:
+    """Open `temporary` for writing, creating it and never following a symlink.
+
+    `Path.write_text()` follows a symlink sitting at this path and truncates whatever it names.
+    The path is `<content>-<config>.json.<pid>.tmp` — two hashes a scanned repository can compute
+    and a PID it can guess — so a repository that pre-creates the link gets an arbitrary file
+    overwritten with cache JSON, before `os.replace()` ever runs. `O_EXCL` is the same answer
+    `_write_marker_if_absent` already uses one function up: it fails with `EEXIST` on a symlink
+    whether or not the target exists, and on a hard link too, in one unraceable syscall.
+
+    The one cost of `O_EXCL` is that a *real* leftover temp file blocks the write, and PIDs are
+    reused — a run killed mid-write would otherwise make that entry permanently unwritable and
+    silently disable caching for one file forever. Unlinking and retrying once fixes that without
+    reopening the hole: the retry is still `O_EXCL`, so it can only create, never write through
+    something another process put there in between. If the retry also loses, the caller reports a
+    failed write and the scan carries on uncached.
+    """
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    try:
+        return os.open(temporary, flags, 0o644)
+    except FileExistsError:
+        temporary.unlink(missing_ok=True)
+        return os.open(temporary, flags, 0o644)
+
+
 def _write_entry(path: Path, payload: dict[str, Any], *, reporter: CacheReporter) -> _WriteOutcome:
     """Write one entry atomically (temp file + `os.replace`).
 
@@ -483,7 +514,8 @@ def _write_entry(path: Path, payload: dict[str, Any], *, reporter: CacheReporter
     """
     temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
-        temporary.write_text(json.dumps(payload), encoding="utf-8")
+        with os.fdopen(_create_temp_exclusively(temporary), "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload))
         os.replace(temporary, path)
     except FileNotFoundError as exc:
         reporter.failure(f"cache write failed, directory is gone: {exc}")
