@@ -12,17 +12,22 @@ only job. The divergence *rate* is the softer one — a tripwire under a documen
 rather than as drift nobody measured.
 
 The rate is meaningless without the distribution that produced it, which is why three are
-declared rather than one. `docs/configuration.md` quotes these; regenerate with `-m slow` and
-update both together. The no-negation case is the load-bearing one: the known divergence cannot
-occur without a negation, and that is what pins it.
+declared rather than one. `docs/configuration.md` quotes these; regenerate with
+`CI=1 uv run pytest -s tests/integration/test_gitignore_fuzz.py` and update both together. The
+no-negation case is the load-bearing one: the known divergence cannot occur without a negation,
+and that is what pins it.
 
-Marked `slow` and deselected by default (see `[tool.pytest.ini_options]`); run with `-m slow`.
-CI runs it on every Python version in the matrix, so a ceiling here fails a pull request rather
-than waiting for someone to think to run it.
+Thousands of real `git check-ignore` calls is worth the wait in CI but not on every local
+`pytest`, so this runs when `CI` is set and skips otherwise — no marker to select and no flag to
+remember, in either direction. Every CI provider sets `CI`, GitHub Actions included, so the
+workflow needs no configuration for this and cannot silently stop running it by drifting out of
+sync with a flag. Locally, prefix any invocation with `CI=1`.
+
 One repository is initialised per distribution and its `.gitignore` files are rewritten per trial
 — `git check-ignore` needs a repository, not a commit, so per-trial `git init` would be overhead.
 """
 
+import os
 import random
 import shutil
 from dataclasses import dataclass
@@ -34,7 +39,9 @@ from _git_harness import git_ignored, init_repository
 from house_lint.discovery import discover_files
 
 pytestmark = [
-    pytest.mark.slow,
+    pytest.mark.skipif(
+        not os.environ.get("CI"), reason="randomized suite; set CI=1 to run it locally"
+    ),
     pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed"),
 ]
 
@@ -188,7 +195,7 @@ def trial_run(
                 )
             )
     # Producing this number is the harness's job, so it is reported rather than only asserted on:
-    # `pytest -m slow -s` is how the figures in docs/configuration.md get regenerated.
+    # `CI=1 uv run pytest -s <this file>` is how docs/configuration.md's figures get regenerated.
     print(
         f"\n[gitignore-fuzz] {distribution.name}: {len(found)}/{TRIALS} diverge "
         f"({len(found) / TRIALS:.2%}), ceiling {distribution.max_divergence_rate:.0%}"

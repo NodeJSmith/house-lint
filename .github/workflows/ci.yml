@@ -33,12 +33,11 @@ jobs:
             - name: Install dependencies
               run: uv sync --locked
 
-            # `-m ""` clears the `-m 'not slow'` in [tool.pytest.ini_options], so the randomized
-            # gitignore-parity suite runs here as well. It is deselected locally to keep a bare
-            # `pytest` fast, but the divergence ceilings it pins are only a tripwire if something
-            # trips them without being asked — and CI is the only run guaranteed to happen.
+            # Runs everything, including the randomized gitignore-parity suite: Actions sets
+            # `CI`, which is what that suite gates itself on. Deliberately no marker flag here —
+            # a flag is a second place to keep in sync, and forgetting it fails silently green.
             - name: Run tests
-              run: uv run pytest -m ""
+              run: uv run pytest
 
     quality:
         name: Quality

@@ -38,12 +38,8 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# `slow` is deselected by default: the randomized gitignore-parity generator runs thousands of
-# real `git check-ignore` comparisons, which is worth the wait on demand but not on every local
-# run. Opt in with `-m slow` (or `-m ""` for everything). CI always runs everything — see the
-# test job in .github/workflows/ci.yml — so nothing here is only ever checked by hand.
-addopts = "-m 'not slow'"
-markers = ["slow: randomized/differential tests, deselected locally but always run in CI"]
+# No marker filtering: `pytest` runs the same set everywhere. The one suite too slow for a local
+# run gates itself on the `CI` environment variable instead — see test_gitignore_fuzz.py.
 
 [tool.ruff]
 line-length = 100
