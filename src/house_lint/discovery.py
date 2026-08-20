@@ -269,6 +269,7 @@ class _FileSelector:
     spec_by_lines_cache: dict[tuple[str, ...], GitIgnoreSpec] = field(
         default_factory=lambda: dict[tuple[str, ...], GitIgnoreSpec]()
     )
+    excluded_ancestor_cache: dict[Path, bool] = field(default_factory=lambda: dict[Path, bool]())
     reported_spec_failures: set[tuple[tuple[str, ...], Path]] = field(
         default_factory=lambda: set[tuple[tuple[str, ...], Path]]()
     )
@@ -354,13 +355,16 @@ class _FileSelector:
             # under an ignored `src/`, which git never does. Matched against the spec for the
             # parent, deliberately excluding this directory's own `.gitignore`, for the same
             # reason `_traversable_dirs` does.
-            if resolved != self.root and _ignored(
-                self.root,
-                path,
-                self.builtin_spec,
-                self.exclude_spec,
-                self._combined_gitignore_spec(path.parent),
-                is_dir=True,
+            if resolved != self.root and (
+                self._has_excluded_ancestor(path.parent)
+                or _ignored(
+                    self.root,
+                    path,
+                    self.builtin_spec,
+                    self.exclude_spec,
+                    self._combined_gitignore_spec(path.parent),
+                    is_dir=True,
+                )
             ):
                 self.files_skipped += 1
                 return
@@ -375,7 +379,7 @@ class _FileSelector:
                 )
             self.files_skipped += 1
             return
-        if _ignored(
+        if self._has_excluded_ancestor(path.parent) or _ignored(
             self.root,
             path,
             self.builtin_spec,
@@ -424,6 +428,44 @@ class _FileSelector:
                 )
                 if self.limit_reached:
                     break
+
+    def _has_excluded_ancestor(self, directory: Path) -> bool:
+        """Whether any directory between root and `directory` (inclusive) is itself excluded by
+        `builtin_spec` or `exclude_spec`.
+
+        The gitignore side of this already exists, inside `_combined_gitignore_spec`, for exactly
+        the reason spelled out there: git attributes the exclusion to the directory, so a
+        negation can never re-include a file whose parent directory is excluded. Configured
+        `exclude` accepts the same Git-ignore syntax, negations included, and `docs/configuration.md`
+        documents it as following git's semantics — but it is a static root-anchored spec matched
+        only against the path in hand, so it had no equivalent.
+
+        The gap showed up only on explicit paths. With `exclude = ["src/generated/",
+        "!src/generated/foo.py"]` a normal walk prunes `generated` at `_traversable_dirs` and
+        never reaches the negation, but `house-lint check src/generated/foo.py` goes straight to
+        the file-level match, where the negation is the last matching line and wins — so the same
+        file was skipped by a full scan and linted when named. Built-in excludes are folded in
+        here too: they are directory patterns of the same shape (`.git/`, `.venv/`), and a
+        configured negation must not resurrect a file out of one either.
+
+        Cached per directory, like the combined gitignore spec, so the walk pays O(depth) once
+        per directory rather than once per file.
+        """
+        if directory in self.excluded_ancestor_cache:
+            return self.excluded_ancestor_cache[directory]
+        try:
+            relative_parts = directory.relative_to(self.root).parts
+        except ValueError:
+            relative_parts = ()
+        excluded = False
+        current = self.root
+        for part in relative_parts:
+            current = current / part
+            if _ignored(self.root, current, self.builtin_spec, self.exclude_spec, is_dir=True):
+                excluded = True
+                break
+        self.excluded_ancestor_cache[directory] = excluded
+        return excluded
 
     def _combined_gitignore_spec(self, directory: Path) -> GitIgnoreSpec:
         """Root-anchored spec combining the root `.gitignore` with every nested `.gitignore`

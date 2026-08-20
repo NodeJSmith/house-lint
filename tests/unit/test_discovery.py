@@ -482,6 +482,46 @@ def test_explicit_path_inside_ignored_directory_cannot_be_resurrected_by_nested_
     assert nested_ignore not in read_calls
 
 
+def test_explicit_path_inside_excluded_directory_cannot_be_resurrected_by_a_negated_exclude(
+    tmp_path: Path,
+) -> None:
+    # The `exclude`-config counterpart of the .gitignore case above. A walk prunes `generated`
+    # and never reaches the negation, so the two entry points disagreed: a full scan skipped the
+    # file and naming it explicitly linted it.
+    generated = tmp_path / "src" / "generated"
+    generated.mkdir(parents=True)
+    foo = generated / "foo.py"
+    foo.write_text("x = 1\n")
+    excludes = ("src/generated/", "!src/generated/foo.py")
+
+    explicit = discover_files(tmp_path, explicit=(foo,), excludes=excludes, use_gitignore=False)
+    walked = discover_files(tmp_path, include=("src",), excludes=excludes, use_gitignore=False)
+
+    assert explicit.files == ()
+    assert explicit.files_skipped == 1
+    assert walked.files == ()
+
+
+def test_explicit_directory_below_an_excluded_directory_cannot_be_resurrected(
+    tmp_path: Path,
+) -> None:
+    # The directory-branch counterpart. A bare `src/generated/` already matches everything
+    # beneath it, so the ancestor check only earns its keep once a negation re-includes the
+    # subdirectory: last-matching-line-wins then hands back a directory git considers excluded.
+    nested = tmp_path / "src" / "generated" / "nested"
+    nested.mkdir(parents=True)
+    (nested / "a.py").write_text("x = 1\n")
+
+    result = discover_files(
+        tmp_path,
+        explicit=(nested,),
+        excludes=("src/generated/", "!src/generated/nested/"),
+        use_gitignore=False,
+    )
+
+    assert result.files == ()
+
+
 def test_a_failing_combined_spec_is_reported_once_per_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
