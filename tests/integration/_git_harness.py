@@ -22,9 +22,24 @@ import pytest
 GIT_TIMEOUT_SECONDS = 30
 
 
+# Variables that override `cwd` when locating the repository. An inherited value would point
+# `git init` and `git check-ignore` at a different repository than the one built for the
+# scenario, so the comparison would measure the wrong tree and still exit 0.
+_REPOSITORY_POINTING_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
+
+
 def git_env() -> dict[str, str]:
-    """Neutralise every ignore source outside the repository under test."""
-    return os.environ | {
+    """Neutralise every ignore source outside the repository under test.
+
+    Dropping the repository-pointing variables matters as much as the config ones: passing
+    `cwd=root` is not enough on its own, since any of the three override it. These suites exist
+    to catch house-lint drifting from git, so a harness that can silently compare against
+    somebody else's repository defeats the only thing they are for.
+    """
+    inherited = {
+        key: value for key, value in os.environ.items() if key not in _REPOSITORY_POINTING_VARIABLES
+    }
+    return inherited | {
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_SYSTEM": os.devnull,
         "HOME": os.devnull,

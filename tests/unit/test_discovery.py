@@ -794,6 +794,15 @@ def test_result_maps_each_file_to_the_resolved_target_it_validated(tmp_path: Pat
     for reported, resolved in result.resolved_paths.items():
         assert resolved == reported.resolve()
 
+    # `selected` is keyed by resolved path, so passing both keeps `plain` and drops `link` as a
+    # duplicate — leaving every surviving entry with `resolved == reported` and the mapping's
+    # whole reason to exist unexercised. Reaching the symlink alone is the only case where the
+    # reported path and the validated target actually differ.
+    link_only = discover_files(tmp_path, explicit=(link,))
+
+    assert link_only.files == (link,)
+    assert link_only.resolved_paths == {link: plain}
+
 
 def test_walked_file_symlinks_are_not_selected(tmp_path: Path) -> None:
     source = tmp_path / "src"
