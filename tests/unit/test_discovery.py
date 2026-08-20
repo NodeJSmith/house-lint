@@ -295,29 +295,6 @@ def test_closer_nested_gitignore_negation_overrides_a_farther_one(tmp_path: Path
 
 
 @pytest.mark.parametrize(
-    ("line", "expected"),
-    [
-        # `**` (either form) must not expand to `<prefix>/**/**`, which GitIgnoreSpec matches
-        # against the prefix directory itself and, in the `**/` form, against an immediate
-        # regular file that git leaves alone.
-        ("**/", "src/**/*/"),
-        ("**", "src/**/*"),
-        # Everything else keeps the documented per-directory semantics.
-        ("a.py", "src/**/a.py"),
-        ("!a.py", "!src/**/a.py"),
-        ("/a.py", "src/a.py"),
-        ("!/a.py", "!src/a.py"),
-        ("sub/", "src/**/sub/"),
-        ("sub/x.py", "src/sub/x.py"),
-    ],
-)
-def test_prefix_pattern_rewrites_nested_patterns_to_root_anchored_equivalents(
-    line: str, expected: str
-) -> None:
-    assert discovery._prefix_pattern("src", line) == expected
-
-
-@pytest.mark.parametrize(
     ("pattern", "expected"),
     [
         # A trailing `/**` names a directory's contents, never the directory itself.
@@ -337,32 +314,32 @@ def test_prefix_pattern_rewrites_nested_patterns_to_root_anchored_equivalents(
         ("", ""),
     ],
 )
-def test_normalize_contents_glob_only_rewrites_a_trailing_contents_glob(
+def test_normalized_gitignore_line_only_rewrites_a_trailing_contents_glob(
     pattern: str, expected: str
 ) -> None:
-    assert discovery._normalize_contents_glob(pattern) == expected
+    assert discovery._normalized_gitignore_line(pattern) == expected
 
 
 def test_match_patterns_directory_only_pattern_matches_when_is_dir_true() -> None:
-    patterns = discovery._build_patterns(("build/",))
+    patterns, _error = discovery._build_patterns(("build/",))
 
     assert discovery._match_patterns(patterns, "build", is_dir=True) is True
 
 
 def test_match_patterns_directory_only_pattern_is_skipped_when_is_dir_false() -> None:
-    patterns = discovery._build_patterns(("build/",))
+    patterns, _error = discovery._build_patterns(("build/",))
 
     assert discovery._match_patterns(patterns, "build", is_dir=False) is None
 
 
 def test_match_patterns_last_match_wins_negation_overrides_a_wildcard_ignore() -> None:
-    patterns = discovery._build_patterns(("*.py", "!a.py"))
+    patterns, _error = discovery._build_patterns(("*.py", "!a.py"))
 
     assert discovery._match_patterns(patterns, "a.py", is_dir=False) is False
 
 
 def test_match_patterns_negation_wins_over_an_earlier_exact_ignore() -> None:
-    patterns = discovery._build_patterns(("a.py", "!a.py"))
+    patterns, _error = discovery._build_patterns(("a.py", "!a.py"))
 
     assert discovery._match_patterns(patterns, "a.py", is_dir=False) is False
 
@@ -372,19 +349,48 @@ def test_match_patterns_empty_tuple_has_no_opinion() -> None:
 
 
 def test_match_patterns_file_probe_matches_a_non_directory_only_pattern() -> None:
-    patterns = discovery._build_patterns(("*.py",))
+    patterns, _error = discovery._build_patterns(("*.py",))
 
     assert discovery._match_patterns(patterns, "a.py", is_dir=False) is True
 
 
 def test_build_patterns_produces_correct_length_and_is_dir_only_flags() -> None:
-    patterns = discovery._build_patterns(("*.py", "build/", "!a.py"))
+    patterns, _error = discovery._build_patterns(("*.py", "build/", "!a.py"))
 
     assert len(patterns) == 3
-    assert [is_dir_only for _pattern, is_dir_only in patterns] == [False, True, False]
+    assert [is_dir_only for _pattern, is_dir_only, _is_anchored in patterns] == [
+        False,
+        True,
+        False,
+    ]
 
 
-def test_build_patterns_returns_an_empty_tuple_on_parse_failure(
+def test_build_patterns_marks_unanchored_patterns_as_not_anchored() -> None:
+    # "*.py" and "build/" have no embedded slash -- gitignore matches them at any depth below
+    # their owning directory, so they must not be threaded a full multi-segment relative path.
+    patterns, _error = discovery._build_patterns(("*.py", "build/"))
+
+    assert [is_anchored for _pattern, _is_dir_only, is_anchored in patterns] == [False, False]
+
+
+def test_build_patterns_marks_slash_containing_patterns_as_anchored() -> None:
+    # An embedded or leading slash pins the pattern to its owning directory's own depth.
+    patterns, _error = discovery._build_patterns(("sub/x.py", "/a.py"))
+
+    assert [is_anchored for _pattern, _is_dir_only, is_anchored in patterns] == [True, True]
+
+
+def test_build_patterns_marks_a_collapsed_double_star_run_as_not_anchored() -> None:
+    # "**/**/" collapses (per git's own rule) to exactly what "**/" means: an unanchored
+    # "matches every directory at any depth" pattern -- despite the raw text having a "middle"
+    # slash between the two "**" segments, which a naive text-based check would misread as
+    # anchoring it.
+    patterns, _error = discovery._build_patterns(("**/**/",))
+
+    assert [is_anchored for _pattern, _is_dir_only, is_anchored in patterns] == [False]
+
+
+def test_build_patterns_returns_an_empty_tuple_and_the_error_on_parse_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fail_gitignore(lines: Iterable[str]) -> discovery.GitIgnoreSpec:
@@ -392,7 +398,42 @@ def test_build_patterns_returns_an_empty_tuple_on_parse_failure(
 
     monkeypatch.setattr(discovery.GitIgnoreSpec, "from_lines", fail_gitignore)
 
-    assert discovery._build_patterns(("*.py",)) == ()
+    patterns, error = discovery._build_patterns(("*.py",))
+
+    assert patterns == ()
+    assert error == "invalid pattern"
+
+
+def test_nested_gitignore_normalization_failure_is_reported_as_a_combine_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A line valid in `_load_gitignore_lines`'s raw-parse check can still fail once
+    `_build_patterns` rewrites it (`_normalized_gitignore_line`'s trailing-`/**` rewrite). That
+    failure must be surfaced via `self.errors` by `_own_matcher`, not silently dropped -- an empty
+    matcher for this directory would otherwise let the stack evaluator fall through to an outer
+    directory's matcher, which can silently re-exclude a file git would include."""
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / ".gitignore").write_text("build/**\n")
+    kept = source / "kept.py"
+    kept.write_text("x = 1\n")
+    from_lines = discovery.GitIgnoreSpec.from_lines
+
+    def fail_on_normalized(lines: Iterable[str]) -> discovery.GitIgnoreSpec:
+        values = list(lines)
+        if values == ["build/**/*"]:
+            raise ValueError("invalid pattern")
+        return from_lines(values)
+
+    monkeypatch.setattr(discovery.GitIgnoreSpec, "from_lines", fail_on_normalized)
+
+    result = discover_files(tmp_path, include=("src",))
+
+    assert result.files == (kept,)
+    combine_errors = [error for error in result.errors if error.operation == "combine"]
+    assert len(combine_errors) == 1
+    assert combine_errors[0].kind == "traversal"
+    assert combine_errors[0].path == "src"
 
 
 def test_ignored_directory_include_root_is_skipped_without_being_walked(tmp_path: Path) -> None:
@@ -507,7 +548,7 @@ def test_explicit_path_inside_ignored_directory_cannot_be_resurrected_by_nested_
 ) -> None:
     # Same scenario as the walked-directory version above, but reached via an explicit path
     # rather than a directory scan. Explicit paths skip `_traversable_dirs`'s walk-time pruning
-    # and go straight to `_combined_gitignore_spec`, which must independently refuse to read a
+    # and go straight to `_gitignore_excluded`, which must independently refuse to read a
     # nested .gitignore that lives inside an already-ignored ancestor.
     source = tmp_path / "src"
     source.mkdir()
@@ -574,71 +615,84 @@ def test_explicit_directory_below_an_excluded_directory_cannot_be_resurrected(
     assert result.files == ()
 
 
-def test_a_failing_combined_spec_is_reported_once_per_directory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """`_combined_gitignore_spec` re-walks every ancestor for each directory below it, so a line
-    tuple that fails to parse is re-submitted with the same attribution once per descendant.
-    Left undeduplicated, one bad pattern produces an entry per directory in the subtree — all
-    naming the same offending directory — instead of the one per directory the docstring
-    promises."""
-    (tmp_path / ".gitignore").write_text("boom.py\n")
-    for name in ("sub1", "sub2", "sub3"):
-        (tmp_path / "src" / name).mkdir(parents=True)
-        (tmp_path / "src" / name / "a.py").write_text("x = 1\n")
-    # Patched here rather than at `GitIgnoreSpec.from_lines`: `_load_gitignore_lines` validates a
-    # source's own raw lines, while only `_spec_for_lines` normalizes them. Failing inside the
-    # normalize step is therefore the one seam that reproduces "valid on its own, invalid once
-    # combined" — the case the combine-time handler exists for.
-    normalize = discovery._normalize_contents_glob  # pyright: ignore[reportPrivateUsage]
-
-    def exploding(line: str) -> str:
-        if line == "boom.py":
-            raise ValueError("bad pattern")
-        return normalize(line)
-
-    monkeypatch.setattr(discovery, "_normalize_contents_glob", exploding)
-
-    result = discover_files(tmp_path, include=("src",))
-
-    combine_errors = [error for error in result.errors if error.operation == "combine"]
-    assert combine_errors, "the combine-time parse failure must still be reported"
-    attributions = [error.path for error in combine_errors]
-    assert len(attributions) == len(set(attributions)), attributions
+def _make_selector(
+    root: Path, *, root_lines: tuple[str, ...] = (), use_gitignore: bool = True
+) -> discovery._FileSelector:
+    return discovery._FileSelector(
+        root=root,
+        builtin_spec=discovery.GitIgnoreSpec.from_lines(discovery.BUILTIN_EXCLUDES),
+        exclude_spec=discovery.GitIgnoreSpec.from_lines(()),
+        root_gitignore_lines=root_lines,
+        errors=[],
+        use_gitignore=use_gitignore,
+    )
 
 
-def test_directories_with_identical_accumulated_gitignore_lines_reuse_the_same_spec(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # sibling1/ and sibling2/ each have no .gitignore of their own, so both accumulate the same
-    # (root-only) line tuple. Parsing should happen once, not once per directory.
-    (tmp_path / ".gitignore").write_text("*.log\n")
+def test_gitignore_excluded_innermost_matcher_wins_over_outermost(tmp_path: Path) -> None:
+    # Root ignores every `.py` file; `src/.gitignore` negates one back in. The negation in the
+    # closer, more-specific `.gitignore` must win over the farther, less-specific one.
     source = tmp_path / "src"
-    sibling1 = source / "sibling1"
-    sibling2 = source / "sibling2"
-    sibling1.mkdir(parents=True)
-    sibling2.mkdir(parents=True)
-    (sibling1 / "a.py").write_text("x = 1\n")
-    (sibling2 / "b.py").write_text("x = 1\n")
-    from_lines = discovery.GitIgnoreSpec.from_lines
-    parse_call_count = 0
+    source.mkdir()
+    (source / ".gitignore").write_text("!kept.py\n")
+    selector = _make_selector(tmp_path, root_lines=("*.py",))
 
-    def counting_from_lines(lines: Iterable[str]) -> discovery.GitIgnoreSpec:
-        nonlocal parse_call_count
-        parse_call_count += 1
-        return from_lines(lines)
+    assert selector._gitignore_excluded(source, "kept.py", is_dir=False) is False
 
-    monkeypatch.setattr(discovery.GitIgnoreSpec, "from_lines", counting_from_lines)
 
-    result = discover_files(tmp_path, include=("src",))
+def test_gitignore_excluded_outermost_fallback_when_inner_has_no_opinion(tmp_path: Path) -> None:
+    # `src/.gitignore` has patterns, but none of them mention `kept.py` -- the stack must fall
+    # back to the root matcher instead of treating the inner directory's silence as "not
+    # excluded".
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / ".gitignore").write_text("other.py\n")
+    selector = _make_selector(tmp_path, root_lines=("kept.py",))
 
-    assert result.files == (sibling1 / "a.py", sibling2 / "b.py")
-    # One parse for BUILTIN_EXCLUDES, one for excludes=(), one to validate the root .gitignore's
-    # own lines in `_load_gitignore_lines`, and one to build the combined spec for the
-    # (root-only) accumulated lines shared by src/, sibling1/, and sibling2/ — the sibling
-    # directories reuse that fourth parse's result via `spec_by_lines_cache` instead of
-    # triggering a fifth and sixth call.
-    assert parse_call_count == 4
+    assert selector._gitignore_excluded(source, "kept.py", is_dir=False) is True
+
+
+def test_gitignore_excluded_ancestor_exclusion_short_circuits_before_reading_descendant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `src/generated/` is excluded by the root .gitignore. Real git never reads a `.gitignore`
+    # inside a directory it never descends into, so the nested file's negation must not even be
+    # read, let alone win.
+    generated = tmp_path / "src" / "generated"
+    generated.mkdir(parents=True)
+    nested_ignore = generated / ".gitignore"
+    nested_ignore.write_text("!foo.py\n")
+    read_text = Path.read_text
+    read_calls: list[Path] = []
+
+    def spy_read_text(self: Path, *, encoding: str) -> str:
+        read_calls.append(self)
+        return read_text(self, encoding=encoding)
+
+    monkeypatch.setattr(Path, "read_text", spy_read_text)
+    selector = _make_selector(tmp_path, root_lines=("src/generated/",))
+
+    assert selector._gitignore_excluded(generated, "foo.py", is_dir=False) is True
+    assert nested_ignore not in read_calls
+
+
+def test_gitignore_excluded_returns_false_immediately_when_use_gitignore_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / ".gitignore").write_text("kept.py\n")
+    read_text = Path.read_text
+    read_calls: list[Path] = []
+
+    def spy_read_text(self: Path, *, encoding: str) -> str:
+        read_calls.append(self)
+        return read_text(self, encoding=encoding)
+
+    monkeypatch.setattr(Path, "read_text", spy_read_text)
+    selector = _make_selector(tmp_path, use_gitignore=False)
+
+    assert selector._gitignore_excluded(source, "kept.py", is_dir=False) is False
+    assert read_calls == []
 
 
 def test_no_gitignore_disables_nested_gitignore_too(tmp_path: Path) -> None:

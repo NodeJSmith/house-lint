@@ -257,7 +257,7 @@ def test_explicit_paths_match_git_check_ignore(scenario: Scenario, tmp_path: Pat
     """The same table, but reaching each file directly instead of walking to it.
 
     An explicit path skips `_traversable_dirs` entirely and leans on
-    `_combined_gitignore_spec` alone, so walk-time pruning cannot mask a wrong answer here.
+    `_gitignore_excluded` alone, so walk-time pruning cannot mask a wrong answer here.
     That makes this the stricter half of the pair: `house-lint check src/generated/foo.py` has
     to reach the same verdict git does with no directory traversal to help it.
     """
@@ -300,22 +300,6 @@ def test_negated_directory_pattern_does_not_re_include_nested_directories(tmp_pa
     assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known pathspec/git divergence, same directory-negation family as the test above but "
-        "pointing the other way — and this one *under*-lints. pathspec will not let a "
-        "directory-only negation win for a directory path: "
-        "GitIgnoreSpec.from_lines(('**', '!**/')).match_file('src') returns True, while git "
-        "reports '.gitignore:2:!**/ src' re-including the directory and descends into it. "
-        "house-lint asks pathspec exactly that when deciding whether to prune, so it prunes a "
-        "subtree git walks and every file underneath vanishes from the scan. Passing 'src/' "
-        "does not change pathspec's answer, so no shape of question fixes it here; deciding it "
-        "means owning the matcher (see design/research/"
-        "2026-08-20-gitignore-style-exclusion-inclusion/). Strict xfail: if this starts "
-        "passing, the limitation is gone and docs/configuration.md should say so."
-    ),
-)
 def test_negated_directory_pattern_re_includes_a_directory_git_descends_into(
     tmp_path: Path,
 ) -> None:

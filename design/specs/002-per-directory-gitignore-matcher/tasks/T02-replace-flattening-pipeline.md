@@ -1,7 +1,7 @@
 ---
 task_id: "T02"
 title: "Replace flattening pipeline with per-directory stack evaluation"
-status: "planned"
+status: "done"
 depends_on: ["T01"]
 implements: ["FR#1", "FR#4", "FR#5", "FR#6", "AC#1", "AC#3", "AC#6", "AC#8"]
 ---
