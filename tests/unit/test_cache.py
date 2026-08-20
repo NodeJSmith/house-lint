@@ -649,6 +649,32 @@ def test_prune_stale_cache_dirs_does_not_prune_directories_without_the_version_m
     assert (unrelated_dir / "important-data.txt").exists()
 
 
+def test_prune_stale_cache_dirs_does_not_accept_a_symlinked_version_marker(
+    tmp_path: Path,
+) -> None:
+    """`is_file()` follows symlinks, so a marker that is a link to *any* regular file passes it.
+
+    That turns the ownership check into something an unrelated directory can satisfy by
+    accident or on purpose, and the consequence is `shutil.rmtree` on data house-lint never
+    created. The marker is written with `O_EXCL` precisely so it cannot be a symlink when
+    house-lint made it; reading it back has to demand the same thing, or the guarantee only
+    holds on the write side.
+    """
+    base = tmp_path / ".cache"
+    unrelated_dir = base / "some-other-tool"
+    unrelated_dir.mkdir(parents=True)
+    (unrelated_dir / "important-data.txt").write_text("do not delete")
+    decoy_target = tmp_path / "any-regular-file"
+    decoy_target.write_text("\n")
+    (unrelated_dir / ".house-lint-version").symlink_to(decoy_target)
+
+    prepare_cache_dir(base / "1.0.0", self_ignore=False, reporter=CacheReporter())
+    prune_stale_cache_dirs(base / "1.0.0", reporter=CacheReporter())
+
+    assert unrelated_dir.exists()
+    assert (unrelated_dir / "important-data.txt").exists()
+
+
 def test_prepare_cache_dir_leaves_the_current_namespace_untouched(tmp_path: Path) -> None:
     base = tmp_path / ".house-lint-cache"
     current_version_dir = base / "1.0.0"

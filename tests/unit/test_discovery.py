@@ -642,6 +642,32 @@ def test_explicit_directory_spelled_through_dotdot_ignores_the_traversed_sibling
     assert through_dotdot.files_skipped == 0
 
 
+def test_explicit_file_spelled_through_dotdot_ignores_the_traversed_sibling(
+    tmp_path: Path,
+) -> None:
+    """The same rule as the directory case, on the branch an explicit *file* takes.
+
+    Fixing only the directory branch left this one walking the unresolved spelling, so
+    `check src/../tests/a.py` still applied `src/.gitignore` to a file under `tests`. The two
+    branches have to agree: whichever way a path is named, its ignore ancestry is decided by
+    where it resolves to.
+    """
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / ".gitignore").write_text("*.py\n")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    kept = tests / "a.py"
+    kept.write_text("x = 1\n")
+
+    direct = discover_files(tmp_path, explicit=(kept,))
+    through_dotdot = discover_files(tmp_path, explicit=(source / ".." / "tests" / "a.py",))
+
+    assert direct.files == (kept,)
+    assert through_dotdot.files_skipped == 0
+    assert [path.resolve() for path in through_dotdot.files] == [kept]
+
+
 def test_invalid_nested_gitignore_pattern_reports_a_structured_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
