@@ -93,6 +93,11 @@ SCENARIOS = (
         ("src/a.py", "src/gen/g.py"),
     ),
     Scenario(
+        "negation beside its own directory exclusion in one file cannot resurrect",
+        {"": ["src/generated/", "!src/generated/foo.py"]},
+        ("src/generated/foo.py", "src/other.py"),
+    ),
+    Scenario(
         "negation cannot resurrect a file from a '**/'-ignored discovery root",
         {"": ["**/", "!b.py"]},
         ("src/a.py", "src/b.py", "src/sub/b.py"),
@@ -213,6 +218,26 @@ def test_discovery_matches_git_check_ignore(scenario: Scenario, tmp_path: Path) 
 
     assert result.errors == ()
     assert house_lint_skipped == git_ignored
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda item: item.name)
+def test_explicit_paths_match_git_check_ignore(scenario: Scenario, tmp_path: Path) -> None:
+    """The same table, but reaching each file directly instead of walking to it.
+
+    An explicit path skips `_traversable_dirs` entirely and leans on
+    `_combined_gitignore_spec` alone, so walk-time pruning cannot mask a wrong answer here.
+    That makes this the stricter half of the pair: `house-lint check src/generated/foo.py` has
+    to reach the same verdict git does with no directory traversal to help it.
+    """
+    _build(tmp_path, scenario)
+    _init_repository(tmp_path)
+
+    result = discover_files(tmp_path, explicit=tuple(tmp_path / item for item in scenario.files))
+    selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
+    house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
+
+    assert result.errors == ()
+    assert house_lint_skipped == _git_ignored(tmp_path, scenario.files)
 
 
 @pytest.mark.xfail(

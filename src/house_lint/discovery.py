@@ -12,6 +12,9 @@ from house_lint.config import DEFAULT_INCLUDE, ConfigError, get_house_lint_table
 from house_lint.results import LintError
 
 BUILTIN_EXCLUDES = (".git/", ".venv/", ".nox/", "__pycache__/", "site-packages/", "node_modules/")
+# Stands in for "an ancestor of this directory is excluded", where nothing beneath it can be
+# re-included — see `_FileSelector._combined_gitignore_spec`.
+IGNORE_EVERYTHING = ("**",)
 MAX_DISCOVERED_FILES = 100_000
 _GITIGNORE_METACHARS = re.compile(r"([!#*?\[\]\\])")
 _CONTENTS_GLOB = re.compile(r"(?<!\*\*)/\*\*(/?)\Z")
@@ -425,6 +428,14 @@ class _FileSelector:
         never hit this — `_traversable_dirs` already prunes an ignored directory before this
         method is ever called for anything beneath it — but an *explicit* path (`house-lint check
         src/ignored/foo.py`) reaches straight in here without going through that walk-time pruning.
+
+        An excluded ancestor therefore returns a match-everything spec rather than the patterns
+        accumulated so far. Merely stopping the walk is not enough: the accumulated lines can
+        themselves contain the resurrecting negation, since git allows `src/generated/` and
+        `!src/generated/foo.py` to sit in the *same* file. Returning those lines would let the
+        negation win for an explicit `src/generated/foo.py`, which git reports as ignored — it
+        attributes the exclusion to the directory, and a negation can never re-include a file
+        whose parent directory is excluded.
         """
         if directory in self.combined_gitignore_spec_cache:
             return self.combined_gitignore_spec_cache[directory]
@@ -450,7 +461,9 @@ class _FileSelector:
                 self._spec_for_lines(tuple(lines), current),
                 is_dir=True,
             ):
-                break
+                excluded = self._spec_for_lines(IGNORE_EVERYTHING, directory)
+                self.combined_gitignore_spec_cache[directory] = excluded
+                return excluded
             prefix = "/".join(
                 _escape_gitignore_literal(segment)
                 for segment in current.relative_to(self.root).parts

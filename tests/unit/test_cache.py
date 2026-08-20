@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from pathlib import Path
@@ -19,6 +20,29 @@ from house_lint.cache import (
 )
 from house_lint.config import HSL101Options, HSL102Options, HSL103Options, TokenFamily
 from house_lint.results import Finding, LintError
+
+# Well-formed cache payloads, as `_finding_to_payload`/`_error_to_payload` write them (the
+# `path` field is stripped on write and re-attached by the reader).
+_FINDING = {
+    "rule_id": "HSL002",
+    "line": 1,
+    "column": 5,
+    "end_line": 1,
+    "end_column": 20,
+    "message": "import inside function",
+}
+_ERROR = {
+    "code": "read-error",
+    "kind": "read",
+    "line": None,
+    "column": None,
+    "end_line": None,
+    "end_column": None,
+    "phase": "read",
+    "operation": "bounded-read",
+    "rule_id": None,
+    "message": "could not read",
+}
 
 
 def test_hash_file_content_is_stable_and_changes_with_content(tmp_path: Path) -> None:
@@ -215,6 +239,62 @@ def test_read_cached_result_is_a_miss_when_a_scalar_field_has_the_wrong_type(
     assert (
         read_cached_result(cache_dir, "content-hash", "config-hash", relative_path="a.py") is None
     )
+
+
+@pytest.mark.parametrize(
+    ("label", "findings", "errors"),
+    [
+        ("finding message is not a string", [{**_FINDING, "message": 12345}], []),
+        ("finding rule_id is not a string", [{**_FINDING, "rule_id": 2}], []),
+        ("finding is not an object", ["not an object"], []),
+        ("error message is not a string", [], [{**_ERROR, "message": []}]),
+        ("error kind is not a string", [], [{**_ERROR, "kind": 7}]),
+        ("error rule_id is neither string nor null", [], [{**_ERROR, "rule_id": 3}]),
+        ("error is not an object", [], [42]),
+    ],
+)
+def test_read_cached_result_is_a_miss_when_a_text_field_has_the_wrong_type(
+    label: str, findings: list[object], errors: list[object], tmp_path: Path
+) -> None:
+    """`Finding`/`LintError` validate their location fields but accept any type elsewhere, so a
+    corrupted-but-valid-JSON entry would construct fine and only blow up later — `int < str`
+    while `ScanResult.to_dict()` sorts findings, during rendering, outside `check()`'s exception
+    boundary. That surfaces as a traceback rather than the documented cache miss."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True)
+    payload = {
+        "findings": findings,
+        "errors": errors,
+        "suppressed_count": 0,
+        "files_scanned": 1,
+    }
+    (cache_dir / "content-hash-config-hash.json").write_text(json.dumps(payload))
+
+    assert (
+        read_cached_result(cache_dir, "content-hash", "config-hash", relative_path="a.py") is None
+    ), label
+
+
+def test_read_cached_result_accepts_a_well_formed_entry_with_a_null_error_rule_id(
+    tmp_path: Path,
+) -> None:
+    """The nullable text fields must stay nullable — the validation above rejects wrong types,
+    not legitimately absent values."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True)
+    payload = {
+        "findings": [_FINDING],
+        "errors": [_ERROR],
+        "suppressed_count": 0,
+        "files_scanned": 1,
+    }
+    (cache_dir / "content-hash-config-hash.json").write_text(json.dumps(payload))
+
+    cached = read_cached_result(cache_dir, "content-hash", "config-hash", relative_path="a.py")
+
+    assert cached is not None
+    assert cached.findings[0].message == "import inside function"
+    assert cached.errors[0].rule_id is None
 
 
 def test_corrupted_entry_is_silent_by_default_but_reported_under_debug(

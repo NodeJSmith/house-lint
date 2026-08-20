@@ -353,6 +353,35 @@ def test_cache_is_invalidated_when_rule_code_changes_without_a_version_bump(
     assert second_namespaces != first_namespaces
 
 
+def test_a_corrupted_cache_field_degrades_to_a_miss_instead_of_crashing(repository: Path) -> None:
+    """Rendering happens outside `check()`'s exception boundary, so a cached value that only
+    breaks at sort time (`int < str` in `ScanResult.to_dict()`) surfaced as a traceback with no
+    output at all, rather than the documented cache miss."""
+    (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
+    arguments = ("check", "--root", str(repository), "--select", "HSL002", "--format", "json")
+    first = _run(repository, *arguments)
+    assert first.returncode == 1
+    expected = json.loads(first.stdout)["findings"]
+
+    entry = next(
+        candidate
+        for candidate in (repository / ".house-lint-cache").rglob("*.json")
+        if json.loads(candidate.read_text())["findings"]
+    )
+    payload = json.loads(entry.read_text())
+    poisoned = dict(payload["findings"][0])
+    poisoned["message"] = 12345
+    payload["findings"] = [payload["findings"][0], poisoned]
+    entry.write_text(json.dumps(payload))
+
+    second = _run(repository, *arguments)
+
+    assert second.returncode == 1
+    assert "Traceback" not in second.stderr
+    # Re-scanned from source, so the real finding comes back and the poison is discarded.
+    assert json.loads(second.stdout)["findings"] == expected
+
+
 def test_a_run_of_pure_cache_hits_does_not_prune_another_namespace(repository: Path) -> None:
     """Pruning is not race-free: a concurrent house-lint on a different version or build sharing
     a `--cache-dir` can have its in-progress namespace deleted. Tying the sweep to "this run

@@ -22,7 +22,7 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from house_lint import __version__
 from house_lint.config import HSL101Options, HSL102Options, HSL103Options
@@ -156,6 +156,33 @@ def _entry_path(cache_dir: Path, content_hash: str, config_hash: str) -> Path:
     return cache_dir / f"{content_hash}-{config_hash}.json"
 
 
+def _require_text(
+    data: Any, required: tuple[str, ...], optional: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    """Reject a payload whose text fields are not strings, before it reaches a dataclass.
+
+    `Finding`/`LintError` are plain dataclasses: they validate their location fields (via
+    `results._validate_location`) but accept any type for the rest. A corrupted-but-valid-JSON
+    entry carrying, say, an integer `message` therefore constructs fine and only fails later,
+    when `ScanResult.to_dict()` sorts findings and hits `int < str`. That happens while the
+    result is being rendered — outside `check()`'s exception boundary — so the command crashes
+    with a traceback instead of treating the entry as the documented cache miss.
+
+    Returns the payload so callers can validate and unpack in one expression.
+    """
+    if not isinstance(data, dict):
+        raise TypeError("cache entry item must be an object")
+    payload = cast(dict[str, Any], data)
+    for name in required:
+        if not isinstance(payload.get(name), str):
+            raise TypeError(f"{name} must be a string")
+    for name in optional:
+        value = payload.get(name)
+        if value is not None and not isinstance(value, str):
+            raise TypeError(f"{name} must be a string or null")
+    return payload
+
+
 def _finding_to_payload(finding: Finding) -> dict[str, Any]:
     data = finding.to_dict()
     del data["path"]
@@ -163,7 +190,7 @@ def _finding_to_payload(finding: Finding) -> dict[str, Any]:
 
 
 def _finding_from_payload(data: dict[str, Any], *, path: str) -> Finding:
-    return Finding(path=path, **data)
+    return Finding(path=path, **_require_text(data, ("rule_id", "message")))
 
 
 def _error_to_payload(err: LintError) -> dict[str, Any]:
@@ -173,7 +200,10 @@ def _error_to_payload(err: LintError) -> dict[str, Any]:
 
 
 def _error_from_payload(data: dict[str, Any], *, path: str) -> LintError:
-    return LintError(path=path, **data)
+    return LintError(
+        path=path,
+        **_require_text(data, ("code", "kind", "phase", "operation", "message"), ("rule_id",)),
+    )
 
 
 def read_cached_result(
