@@ -2,9 +2,10 @@
 
 import re
 import tomllib
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, cast
 
 from pathspec import GitIgnoreSpec
@@ -65,14 +66,23 @@ class LintConfig:
     hsl101: HSL101Options = HSL101Options()
     hsl102: HSL102Options = HSL102Options()
     hsl103: HSL103Options = HSL103Options()
+    per_file_ignores: Mapping[str, tuple[str, ...]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 DetectorOptions = HSL101Options | HSL102Options | HSL103Options | None
 DetectorInput = tuple[str, DetectorOptions]
 
 
-def selected_detector_inputs(config: LintConfig) -> tuple[DetectorInput, ...]:
-    """Return enabled ordinary rules with their already-validated options."""
+def selected_detector_inputs(
+    config: LintConfig, *, enabled_rules: tuple[str, ...] | None = None
+) -> tuple[DetectorInput, ...]:
+    """Return enabled ordinary rules with their already-validated options.
+
+    `enabled_rules` overrides `config.enabled_rules` when given, for callers that resolved a
+    per-file effective rule set (see `per_file_enabled_rules`) rather than the global one.
+    """
     options: dict[str, DetectorOptions] = {
         "HSL001": None,
         "HSL002": None,
@@ -82,16 +92,55 @@ def selected_detector_inputs(config: LintConfig) -> tuple[DetectorInput, ...]:
         "HSL102": config.hsl102,
         "HSL103": config.hsl103,
     }
+    rules = config.enabled_rules if enabled_rules is None else enabled_rules
+    return tuple((rule_id, options[rule_id]) for rule_id in rules if rule_id in options)
+
+
+CompiledPerFileIgnores = tuple[tuple[GitIgnoreSpec, frozenset[str]], ...]
+
+
+def compile_per_file_ignores(
+    per_file_ignores: Mapping[str, tuple[str, ...]],
+) -> CompiledPerFileIgnores:
+    """Precompile per-file-ignores glob patterns once, for repeated per-file matching."""
     return tuple(
-        (rule_id, options[rule_id]) for rule_id in config.enabled_rules if rule_id in options
+        (GitIgnoreSpec.from_lines((pattern,)), frozenset(rule_ids))
+        for pattern, rule_ids in per_file_ignores.items()
     )
 
 
+def per_file_enabled_rules(
+    base_enabled_rules: tuple[str, ...],
+    compiled_per_file_ignores: CompiledPerFileIgnores,
+    relative_path: str,
+) -> tuple[str, ...]:
+    """Return `base_enabled_rules` minus any rules whose Git-ignore-style glob pattern matches
+    this root-relative file path."""
+    ignored: set[str] = set()
+    for spec, rule_ids in compiled_per_file_ignores:
+        if spec.match_file(relative_path):
+            ignored |= rule_ids
+    if not ignored:
+        return base_enabled_rules
+    return tuple(rule_id for rule_id in base_enabled_rules if rule_id not in ignored)
+
+
 def default_config(
-    *, cli_select: Iterable[str] | None = None, cli_ignore: Iterable[str] | None = None
+    *,
+    cli_select: Iterable[str] | None = None,
+    cli_ignore: Iterable[str] | None = None,
+    cli_extend_select: Iterable[str] | None = None,
+    cli_extend_ignore: Iterable[str] | None = None,
 ) -> LintConfig:
     """Build built-in configuration with the same CLI selection semantics as TOML."""
-    enabled_rules = _effective_rule_selection(DEFAULT_SELECT, (), cli_select, cli_ignore)
+    enabled_rules = _effective_rule_selection(
+        DEFAULT_SELECT,
+        (),
+        cli_select,
+        cli_ignore,
+        cli_extend_select=cli_extend_select,
+        cli_extend_ignore=cli_extend_ignore,
+    )
     if "HSL101" in enabled_rules:
         raise ConfigError("HSL101 requires tokens when selected")
     return LintConfig(enabled_rules=enabled_rules)
@@ -130,8 +179,27 @@ def _effective_rule_selection(
     configured_ignore: Iterable[str],
     cli_select: Iterable[str] | None,
     cli_ignore: Iterable[str] | None,
+    *,
+    configured_extend_select: Iterable[str] = (),
+    configured_extend_ignore: Iterable[str] = (),
+    cli_extend_select: Iterable[str] | None = None,
+    cli_extend_ignore: Iterable[str] | None = None,
 ) -> tuple[str, ...]:
-    """Apply the one selection precedence algorithm shared by defaults and TOML."""
+    """Apply the one selection precedence algorithm shared by defaults and TOML.
+
+    Order:
+    1. `select`/`ignore` establish the base set — or a CLI `--select` gives a wholesale
+       override, replacing configured `select`/`ignore` entirely rather than adding to them.
+    2. `extend-select`/`extend-ignore` layer on top of that base *regardless of its source*.
+       Config and CLI variants of each are merged together (concatenated, not one overriding
+       the other) before being applied, since — unlike `select` vs. `--select` — neither is
+       meant to replace the other.
+    3. `extend-ignore` is subtractive against the *whole* pool from steps 1-2, not just
+       against `extend-select`'s own additions — `select = ["HSL001"]` combined with
+       `extend-ignore = ["HSL001"]` drops HSL001 entirely, the same as if it had never been
+       selected.
+    4. CLI `--ignore` is applied last and always wins over everything above.
+    """
     configured = _ids(list(configured_select), "select")
     configured_ignored = _ids(list(configured_ignore), "ignore")
     selected = (
@@ -139,8 +207,15 @@ def _effective_rule_selection(
         if cli_select is not None
         else tuple(rule_id for rule_id in configured if rule_id not in configured_ignored)
     )
+    extend_selected = _ids(list(configured_extend_select), "extend-select") + _ids(
+        list(cli_extend_select or ()), "--extend-select"
+    )
+    extend_ignored = _ids(list(configured_extend_ignore), "extend-ignore") + _ids(
+        list(cli_extend_ignore or ()), "--extend-ignore"
+    )
+    extended = (set(selected) | set(extend_selected)) - set(extend_ignored)
     cli_ignored = _ids(list(cli_ignore or ()), "--ignore")
-    return tuple(sorted(set(selected) - set(cli_ignored))) + ("HSL900",)
+    return tuple(sorted(extended - set(cli_ignored))) + ("HSL900",)
 
 
 def _validate_include(values: tuple[str, ...]) -> tuple[str, ...]:
@@ -153,14 +228,33 @@ def _validate_include(values: tuple[str, ...]) -> tuple[str, ...]:
     return values
 
 
-def _validate_exclude(values: tuple[str, ...]) -> tuple[str, ...]:
+def _validate_git_ignore_patterns(values: tuple[str, ...], name: str) -> tuple[str, ...]:
+    """Root-relative, syntactically valid Git-ignore-style patterns, shared by `exclude` and
+    `per-file-ignores` — the two config keys that accept this pattern style."""
     if any(Path(value).is_absolute() or ".." in Path(value).parts for value in values):
-        raise ConfigError("exclude patterns must be root-relative")
+        raise ConfigError(f"{name} patterns must be root-relative")
     try:
         GitIgnoreSpec.from_lines(values)
     except (TypeError, ValueError, re.error) as exc:
-        raise ConfigError(f"exclude contains invalid Git-ignore patterns: {exc}") from exc
+        raise ConfigError(f"{name} contains invalid Git-ignore patterns: {exc}") from exc
     return values
+
+
+def _validate_exclude(values: tuple[str, ...]) -> tuple[str, ...]:
+    return _validate_git_ignore_patterns(values, "exclude")
+
+
+def _per_file_ignores(raw: Any) -> Mapping[str, tuple[str, ...]]:
+    table = _table(raw, "per-file-ignores")
+    result: dict[str, tuple[str, ...]] = {}
+    for pattern, value in table.items():
+        if not pattern:
+            raise ConfigError("per-file-ignores keys must be non-empty Git-ignore-style patterns")
+        if pattern.startswith("!"):
+            raise ConfigError("per-file-ignores keys must not be negated patterns")
+        _validate_git_ignore_patterns((pattern,), "per-file-ignores")
+        result[pattern] = _ids(value, f"per-file-ignores.{pattern!r}")
+    return MappingProxyType(result)
 
 
 def _strict_keys(table: dict[str, Any], allowed: set[str], name: str) -> None:
@@ -294,23 +388,55 @@ def get_house_lint_table(document: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def load_config(
-    path: Path, *, cli_select: Iterable[str] | None = None, cli_ignore: Iterable[str] | None = None
+    path: Path,
+    *,
+    cli_select: Iterable[str] | None = None,
+    cli_ignore: Iterable[str] | None = None,
+    cli_extend_select: Iterable[str] | None = None,
+    cli_extend_ignore: Iterable[str] | None = None,
 ) -> LintConfig:
     """Load and validate one TOML configuration file."""
     document = load_toml(path)
     house = get_house_lint_table(document)
     if house is None:
         raise ConfigError("config lacks [tool.house-lint]")
-    _strict_keys(house, {"include", "exclude", "select", "ignore", "rules"}, "tool.house-lint")
+    _strict_keys(
+        house,
+        {
+            "include",
+            "exclude",
+            "select",
+            "ignore",
+            "extend-select",
+            "extend-ignore",
+            "per-file-ignores",
+            "rules",
+        },
+        "tool.house-lint",
+    )
     include = _validate_include(_strings(house.get("include", list(DEFAULT_INCLUDE)), "include"))
     exclude = _validate_exclude(_strings(house.get("exclude", []), "exclude"))
+    # Every raw TOML value goes through `_strings` here rather than reaching
+    # `_effective_rule_selection` as-is: that function converts with `list(...)` before validating,
+    # which turns `select = 5` into a `TypeError` (an internal-error exit, not the documented
+    # config-error exit) and silently splits `select = "HSL001"` into single characters, reported
+    # as an unknown rule ID instead of "must be an array". Its other callers pass tuples built in
+    # this module, so the conversion stays where it is and the untrusted edge is checked here.
     enabled = _effective_rule_selection(
-        house.get("select", list(DEFAULT_SELECT)),
-        house.get("ignore", []),
+        _strings(house.get("select", list(DEFAULT_SELECT)), "select"),
+        _strings(house.get("ignore", []), "ignore"),
         cli_select,
         cli_ignore,
+        configured_extend_select=_strings(house.get("extend-select", []), "extend-select"),
+        configured_extend_ignore=_strings(house.get("extend-ignore", []), "extend-ignore"),
+        cli_extend_select=cli_extend_select,
+        cli_extend_ignore=cli_extend_ignore,
     )
+    per_file_ignores = _per_file_ignores(house.get("per-file-ignores", {}))
     options = _rule_options(house)
     if "HSL101" in enabled and not options[0].tokens:
         raise ConfigError("HSL101 requires tokens when selected")
-    return LintConfig(include, exclude, tuple(sorted(enabled)), *options)
+    # `enabled` is already sorted with the always-on rule appended (see
+    # `_effective_rule_selection`); re-sorting here would only differ from `default_config`'s
+    # handling of the same value if an always-on rule ID ever stopped sorting last.
+    return LintConfig(include, exclude, enabled, *options, per_file_ignores)

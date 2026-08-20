@@ -81,6 +81,21 @@ house-lint check --select HSL002,HSL103 --ignore HSL103
 
 Each `--select` or `--ignore` occurrence accepts one comma-separated list. Selection is strict: unknown, duplicate, empty, and `HSL900` IDs are usage errors.
 
+To add or remove rules without replacing the rest of your configured selection, use `extend-select`/`extend-ignore` (in `[tool.house-lint]` or as `--extend-select`/`--extend-ignore`) instead of `select`/`ignore`:
+
+```bash
+house-lint check --extend-select HSL101
+```
+
+`extend-select`/`extend-ignore` layer additively on top of the base selection (configured `select`/`ignore`, or a CLI `--select` override) regardless of where that base came from. A final CLI `--ignore` still always wins.
+
+To silence a rule only for files matching a glob, without touching the selection everywhere else, use `[tool.house-lint.per-file-ignores]`:
+
+```toml
+[tool.house-lint.per-file-ignores]
+"tests/**" = ["HSL002"]
+```
+
 Read [configuration](docs/configuration.md) for discovery, precedence, validation, excludes, and token-family options.
 
 ## Paths, roots, and Git ignores
@@ -93,7 +108,17 @@ house-lint check src/service.py tests
 
 Explicit paths are strict. Missing, out-of-root, and non-Python file arguments are errors; ignored or excluded explicit Python files are counted as skipped. `--root` fixes the project boundary and only considers `<root>/pyproject.toml`. Without `--root`, discovery starts at the current directory. `--config` selects an exact configuration file; without `--root`, its parent becomes the root.
 
-The linter loads only the selected root's `.gitignore`, plus built-in and configured excludes. It does not search nested `.gitignore` files or shell out to Git. Use `--no-gitignore` to disable only the root `.gitignore`.
+The linter loads the selected root's `.gitignore` plus every nested `.gitignore` between the root and each discovered file, combined with git's own precedence (a closer `.gitignore` can override a farther one, including via negation), plus built-in and configured excludes. It does not shell out to Git. Use `--no-gitignore` to disable `.gitignore` handling at every level.
+
+## Caching
+
+`check` caches each file's result under `<root>/.house-lint-cache/<version>-<source fingerprint>/`, keyed by the file's content, its effective rule set for that file, and the running Python version — `ast.parse` accepts different grammar across the versions house-lint supports, so a cache shared between venvs must not replay one interpreter's parse result under another. A cache hit skips tokenization, parsing, and rule execution entirely for that file. Upgrading house-lint — or editing its rule code in a working checkout — starts from an empty cache automatically, because both the version and a fingerprint of house-lint's own sources are part of the cache path. Superseded directories are pruned rather than left to accumulate.
+
+`--no-cache` disables reading from the cache but still writes to it, keeping it warm for the next run. `--cache-dir` overrides where the cache lives (still namespaced underneath the path you give it).
+
+house-lint adds a self-ignoring `.gitignore` to its own default `.house-lint-cache/` directory so it stays invisible to `git status`. It never writes one into a directory you name with `--cache-dir` — that directory is yours.
+
+A cache failure never fails a scan, but it is never silent either: an unwritable directory, a full disk or a corrupted entry prints one `warning:` line to stderr the first time it happens in a run. Only that first failure is printed by default. A broken cache directory fails once per scanned file, so printing every one would bury the single fact worth reporting under thousands of near-identical lines; the remainder are shown under `--debug`. Findings and the exit code are unaffected.
 
 ## Suppressions
 

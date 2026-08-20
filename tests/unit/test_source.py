@@ -80,6 +80,7 @@ def test_non_regular_and_oversized_files_are_rejected_and_not_clean(tmp_path):
     non_regular = SourceFile(directory, tmp_path)
     assert non_regular.error is not None
     assert non_regular.error.kind == "path"
+    assert non_regular.content_bytes is None
     assert_not_clean(tmp_path, non_regular)
 
     oversized = tmp_path / "large.py"
@@ -88,6 +89,9 @@ def test_non_regular_and_oversized_files_are_rejected_and_not_clean(tmp_path):
     assert too_large.error is not None
     assert too_large.error.kind == "budget"
     assert too_large.error.code == "source-too-large"
+    # The bytes are still reported even though the file is too large to analyze; it is
+    # `hash_source_content` that declines to key a cache entry on them.
+    assert too_large.content_bytes is not None
     assert_not_clean(tmp_path, too_large)
 
 
@@ -135,6 +139,56 @@ def test_symlink_escaping_root_is_a_structured_path_error(tmp_path):
     assert source.error.path == "link.py"
     assert source.path == link.absolute()
     assert_not_clean(root, source)
+
+
+def test_source_reads_the_resolved_target_it_was_given_not_a_fresh_one(tmp_path):
+    """Discovery resolves a symlink to check containment, then the scan reads it. Resolving a
+    second time here would let a retarget landing in between send the read to a file discovery
+    never approved, so the resolved target is threaded through instead of recomputed."""
+    root = tmp_path / "root"
+    root.mkdir()
+    approved = root / "approved.py"
+    approved.write_text("approved = 1\n")
+    swapped = root / "swapped.py"
+    swapped.write_text("swapped = 1\n")
+    link = root / "link.py"
+    link.symlink_to(approved)
+
+    resolved = link.resolve()  # what discovery would have validated
+    link.unlink()
+    link.symlink_to(swapped)  # the retarget, landing before the read
+
+    source = SourceFile(link, root, resolved_path=resolved)
+
+    assert source.error is None
+    assert source.text == "approved = 1\n"
+    # Without the threaded path the same construction follows the retargeted link instead.
+    assert SourceFile(link, root).text == "swapped = 1\n"
+
+
+def test_a_resolved_path_replaced_by_a_symlink_is_refused_rather_than_followed(tmp_path):
+    """Discovery now resolves the whole selection before the scan begins, so the gap between a
+    path being approved and being opened spans the run rather than a single file. A resolved
+    path's final component is by construction not a symlink; if it is one by the time the scan
+    opens it, it was swapped afterwards and must not be read. `O_NOFOLLOW` turns that into an
+    ordinary read error instead of a read outside the root."""
+    root = tmp_path / "root"
+    root.mkdir()
+    approved = root / "approved.py"
+    approved.write_text("approved = 1\n")
+    outside = tmp_path / "outside.py"
+    outside.write_text("outside = 1\n")
+
+    resolved = approved.resolve()  # what discovery validated
+    approved.unlink()
+    approved.symlink_to(outside)  # swapped after approval, before the read
+
+    source = SourceFile(approved, root, resolved_path=resolved)
+
+    assert source.error is not None
+    assert source.error.code == "read-error"
+    with pytest.raises(RuntimeError, match="source is unavailable"):
+        _ = source.text
 
 
 def test_escaped_symlink_source_cannot_be_read(tmp_path):

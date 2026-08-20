@@ -32,42 +32,69 @@ class FileScanResult:
     stop: bool = False
 
 
-def scan_file(
-    path: Path,
-    *,
-    root: Path,
-    enabled_rules: tuple[str, ...],
-    detector_inputs: tuple[DetectorInput, ...],
-    debug: bool,
-) -> FileScanResult:
-    """Scan one selected file after resolving source-load failures."""
-    source = _load_source(path, root=root, debug=debug)
-    if isinstance(source, FileScanResult):
-        return source
-    return _scan_ready_source(
-        source, enabled_rules=enabled_rules, detector_inputs=detector_inputs, debug=debug
-    )
+def open_source(
+    path: Path, *, root: Path, resolved_path: Path | None = None, debug: bool
+) -> SourceFile | FileScanResult:
+    """Construct a `SourceFile` and perform its one read of the file's bytes.
 
+    Split out from `scan_source` so the caller can compute a cache key from the bytes this read
+    produced and skip scanning on a hit, without any second read of the path.
 
-def _load_source(path: Path, *, root: Path, debug: bool) -> SourceFile | FileScanResult:
-    """Load a source file or convert source-load failures into a scan result."""
+    `resolved_path` carries discovery's `resolve()` result forward so a symlink is resolved once
+    for the whole pipeline; see `SourceFile.__init__`.
+
+    A `FileScanResult` comes back only for a process-boundary failure (`stop=True`). Ordinary
+    source errors — path escape, non-regular file, oversize, undecodable — stay on the returned
+    `SourceFile`, which `scan_source` turns into findings-level errors.
+    """
     source: SourceFile | None = None
     try:
-        source = SourceFile(path, root)
-        if source.error is not None:
-            if debug and source.debug_exception is not None:
-                traceback.print_exception(source.debug_exception, file=sys.stderr)
-            return FileScanResult(errors=(source.error,))
+        source = SourceFile(path, root, resolved_path=resolved_path)
+        source.load()
         return source
     except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
-        error_path = (
-            source.relative_path if source is not None else path.relative_to(root).as_posix()
-        )
+        error_path = source.relative_path if source is not None else _fallback_path(path, root)
         if debug:
             traceback.print_exc(file=sys.stderr)
         return FileScanResult(
             errors=(internal_error("analysis", "source-load", path=error_path),), stop=True
         )
+
+
+def _fallback_path(path: Path, root: Path) -> str:
+    """Best-effort reporting path for a file whose `SourceFile` never finished constructing."""
+    try:
+        return path.absolute().relative_to(root.absolute()).as_posix()
+    except ValueError:
+        return path.name
+
+
+def scan_source(
+    source: SourceFile,
+    *,
+    enabled_rules: tuple[str, ...],
+    detector_inputs: tuple[DetectorInput, ...],
+    debug: bool,
+) -> FileScanResult:
+    """Scan an already-loaded source after resolving source-load failures."""
+    try:
+        if source.error is not None:
+            if debug and source.debug_exception is not None:
+                traceback.print_exception(source.debug_exception, file=sys.stderr)
+            return FileScanResult(errors=(source.error,))
+    except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
+        if debug:
+            traceback.print_exc(file=sys.stderr)
+        return FileScanResult(
+            # "source-analyze", not "source-load": `open_source` already completed the read and
+            # owns the "source-load" label. Reaching `source.error` runs `_analyze()`, so a
+            # failure here is tokenize/parse, not I/O.
+            errors=(internal_error("analysis", "source-analyze", path=source.relative_path),),
+            stop=True,
+        )
+    return _scan_ready_source(
+        source, enabled_rules=enabled_rules, detector_inputs=detector_inputs, debug=debug
+    )
 
 
 def _scan_ready_source(

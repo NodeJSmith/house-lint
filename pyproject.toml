@@ -38,6 +38,8 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# No marker filtering: `pytest` runs the same set everywhere. The one suite too slow for a local
+# run gates itself on the `CI` environment variable instead — see test_gitignore_fuzz.py.
 
 [tool.ruff]
 line-length = 100
