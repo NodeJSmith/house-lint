@@ -20,6 +20,7 @@ import shutil
 import sys
 from contextlib import suppress
 from dataclasses import asdict, dataclass
+from enum import Enum, auto
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
@@ -27,10 +28,43 @@ from typing import Any, cast
 from house_lint import __version__
 from house_lint.config import HSL101Options, HSL102Options, HSL103Options
 from house_lint.results import Finding, LintError
-from house_lint.source import MAX_SOURCE_BYTES, read_regular_file_bytes
+from house_lint.source import MAX_SOURCE_BYTES
 
 CACHE_DIRNAME = ".house-lint-cache"
 _VERSION_DIR_MARKER = ".house-lint-version"
+
+
+class CacheReporter:
+    """Where every best-effort cache failure in a single scan is reported.
+
+    A cache failure must never fail the scan — but "never fail" and "never signal" are different
+    guarantees, and this module used to conflate them: every failure branch printed only under
+    `--debug`. The runs this tool is built for (CI, pre-commit) never pass `--debug`, so an
+    unwritable cache directory made every scan silently pay the full re-analysis cost with
+    nothing to explain why.
+
+    The first failure of a run is therefore always visible. The rest are `--debug`-only: a broken
+    cache directory fails once per scanned file, and printing all of them by default would bury
+    the single fact worth reporting under thousands of near-identical lines.
+
+    Held per scan rather than in module state so concurrent scans, and tests, cannot see each
+    other's "have I warned yet" flag. Routing every failure site through one object is also what
+    keeps the guarantee enforceable: adding a silent `except: pass` to this module now means
+    visibly bypassing this class rather than merely forgetting a `debug` check.
+    """
+
+    def __init__(self, *, debug: bool = False) -> None:
+        self.debug = debug
+        self._reported = False
+
+    def failure(self, message: str) -> None:
+        """Report one failed cache operation. Loud the first time, `--debug`-only after that."""
+        if not self._reported:
+            self._reported = True
+            print(f"warning: {message}", file=sys.stderr)
+            return
+        if self.debug:
+            print(f"debug: {message}", file=sys.stderr)
 
 
 def default_cache_base(root: Path) -> Path:
@@ -77,18 +111,18 @@ def versioned_cache_dir(base: Path) -> Path:
     return base / f"{__version__}-{code_identity()}"
 
 
-def hash_file_content(path: Path) -> str | None:
-    """Hash a file's raw bytes for cache-key purposes, or None if it can't be safely cached.
+def hash_source_content(content: bytes | None) -> str | None:
+    """Hash already-read source bytes for cache-key purposes, or None if they can't be cached.
 
-    Reuses `SourceFile`'s nonblocking-read and regular-file guard (via
-    `read_regular_file_bytes`) so hashing can't stall on a raced FIFO. Any failure here just
-    means this file is treated as a cache miss for this run — `SourceFile`'s own loading still
-    runs the real scan and reports a proper `LintError` if warranted.
+    Takes the buffer rather than a path on purpose: the caller passes the very bytes the scan
+    analyzes (`SourceFile.content_bytes`), so an entry can only ever be keyed by the content its
+    findings were derived from. Re-reading the path here instead would reintroduce a window in
+    which the key and the findings describe different content.
+
+    None means "don't cache this file this run", not a failure: an unreadable or non-regular
+    file has no bytes, and an oversized one is not worth an entry — `SourceFile` still reports a
+    proper `LintError` for both.
     """
-    try:
-        content = read_regular_file_bytes(path, max_bytes=MAX_SOURCE_BYTES)
-    except OSError:
-        return None
     if content is None or len(content) > MAX_SOURCE_BYTES:
         return None
     return hashlib.sha256(content).hexdigest()
@@ -207,16 +241,20 @@ def _error_from_payload(data: dict[str, Any], *, path: str) -> LintError:
 
 
 def read_cached_result(
-    cache_dir: Path, content_hash: str, config_hash: str, *, relative_path: str, debug: bool = False
+    cache_dir: Path,
+    content_hash: str,
+    config_hash: str,
+    *,
+    relative_path: str,
+    reporter: CacheReporter,
 ) -> CachedFileResult | None:
     """Return the cached result for this (content, config) pair, or None on a miss.
 
     A missing entry (the common case — nothing has cached this file/config pair yet) is a
     silent miss. An entry that exists but can't be read or parsed is also treated as a miss —
     a stale or corrupted cache entry must never fail a scan, only fall back to re-analyzing —
-    but that case is unusual enough to report under `--debug`, matching how other best-effort
-    I/O in this codebase (e.g. `scan_file`'s internal-error path) stays silent by default but
-    diagnosable on request.
+    but that case is unusual enough to go through `reporter`, which makes the run's first such
+    failure visible without `--debug`.
     """
     path = _entry_path(cache_dir, content_hash, config_hash)
     try:
@@ -224,8 +262,7 @@ def read_cached_result(
     except FileNotFoundError:
         return None
     except OSError as exc:
-        if debug:
-            print(f"debug: cache read failed for {relative_path}: {exc}", file=sys.stderr)
+        reporter.failure(f"cache read failed for {relative_path}: {exc}")
         return None
     try:
         payload = json.loads(raw)
@@ -250,12 +287,27 @@ def read_cached_result(
             files_scanned=files_scanned,
         )
     except (ValueError, KeyError, TypeError) as exc:
-        if debug:
-            print(f"debug: cache entry for {relative_path} is corrupted: {exc}", file=sys.stderr)
+        reporter.failure(f"cache entry for {relative_path} is corrupted: {exc}")
         return None
 
 
-def _write_self_ignore_marker(base: Path, *, debug: bool = False) -> None:
+def _write_marker_if_absent(
+    marker: Path, content: str, *, reporter: CacheReporter, description: str
+) -> None:
+    """Create `marker` with `content` unless it already exists, best-effort.
+
+    Both of house-lint's cache markers are write-once and must never fail a scan, so they share
+    this shape. `description` names the marker in the failure line, which is the only part a
+    reader of stderr needs to tell the two apart.
+    """
+    try:
+        if not marker.exists():
+            marker.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        reporter.failure(f"cache {description} marker write failed: {exc}")
+
+
+def _write_self_ignore_marker(base: Path, *, reporter: CacheReporter) -> None:
     """Write a `.gitignore` containing `*` into the cache *base* directory, once.
 
     Mirrors how pytest/mypy self-ignore their own cache directories: a downstream project that
@@ -270,16 +322,12 @@ def _write_self_ignore_marker(base: Path, *, debug: bool = False) -> None:
     Git's behaviour for every unrelated sibling, and pointing it at a project root would hide
     the entire project from `git status`.
     """
-    marker = base / ".gitignore"
-    try:
-        if not marker.exists():
-            marker.write_text("*\n", encoding="utf-8")
-    except OSError as exc:
-        if debug:
-            print(f"debug: cache self-ignore marker write failed: {exc}", file=sys.stderr)
+    _write_marker_if_absent(
+        base / ".gitignore", "*\n", reporter=reporter, description="self-ignore"
+    )
 
 
-def _write_version_dir_marker(cache_dir: Path, *, debug: bool = False) -> None:
+def _write_version_dir_marker(cache_dir: Path, *, reporter: CacheReporter) -> None:
     """Mark `cache_dir` as a house-lint-owned version directory, best-effort.
 
     `_prune_stale_version_dirs` only deletes sibling directories carrying this marker — without
@@ -287,16 +335,12 @@ def _write_version_dir_marker(cache_dir: Path, *, debug: bool = False) -> None:
     every unrelated sibling directory recursively deleted on the first cache write, since nothing
     would distinguish "an old house-lint version directory" from "someone else's data."
     """
-    marker = cache_dir / _VERSION_DIR_MARKER
-    try:
-        if not marker.exists():
-            marker.write_text("", encoding="utf-8")
-    except OSError as exc:
-        if debug:
-            print(f"debug: cache version-dir marker write failed: {exc}", file=sys.stderr)
+    _write_marker_if_absent(
+        cache_dir / _VERSION_DIR_MARKER, "", reporter=reporter, description="version-dir"
+    )
 
 
-def _prune_stale_version_dirs(cache_dir: Path, *, debug: bool = False) -> None:
+def _prune_stale_version_dirs(cache_dir: Path, *, reporter: CacheReporter) -> None:
     """Remove sibling version directories under `cache_dir`'s base, best-effort.
 
     `versioned_cache_dir` namespaces the cache so an upgrade (or a source change) invalidates
@@ -314,7 +358,8 @@ def _prune_stale_version_dirs(cache_dir: Path, *, debug: bool = False) -> None:
     base = cache_dir.parent
     try:
         siblings = [child for child in base.iterdir() if child.is_dir() and child != cache_dir]
-    except OSError:
+    except OSError as exc:
+        reporter.failure(f"cache prune could not list {base}: {exc}")
         return
     for sibling in siblings:
         if not (sibling / _VERSION_DIR_MARKER).is_file():
@@ -322,11 +367,10 @@ def _prune_stale_version_dirs(cache_dir: Path, *, debug: bool = False) -> None:
         try:
             shutil.rmtree(sibling)
         except OSError as exc:
-            if debug:
-                print(f"debug: cache prune of stale version dir failed: {exc}", file=sys.stderr)
+            reporter.failure(f"cache prune of stale version dir failed: {exc}")
 
 
-def prepare_cache_dir(cache_dir: Path, *, self_ignore: bool, debug: bool = False) -> None:
+def prepare_cache_dir(cache_dir: Path, *, self_ignore: bool, reporter: CacheReporter) -> None:
     """Create and mark the cache directory, once per scan.
 
     This is per-run bookkeeping, not per-entry: creating the directory, marking it as
@@ -343,15 +387,14 @@ def prepare_cache_dir(cache_dir: Path, *, self_ignore: bool, debug: bool = False
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        if debug:
-            print(f"debug: cache directory could not be created: {exc}", file=sys.stderr)
+        reporter.failure(f"cache directory could not be created: {exc}")
         return
-    _write_version_dir_marker(cache_dir, debug=debug)
+    _write_version_dir_marker(cache_dir, reporter=reporter)
     if self_ignore:
-        _write_self_ignore_marker(cache_dir.parent, debug=debug)
+        _write_self_ignore_marker(cache_dir.parent, reporter=reporter)
 
 
-def prune_stale_cache_dirs(cache_dir: Path, *, debug: bool = False) -> None:
+def prune_stale_cache_dirs(cache_dir: Path, *, reporter: CacheReporter) -> None:
     """Sweep superseded namespaces, once per scan and only after a real write has happened.
 
     Kept separate from `prepare_cache_dir` so that a run which writes nothing — every file a
@@ -361,7 +404,40 @@ def prune_stale_cache_dirs(cache_dir: Path, *, debug: bool = False) -> None:
     entry" keeps that window as narrow as it was before the per-run bookkeeping was hoisted out
     of `write_cached_result`.
     """
-    _prune_stale_version_dirs(cache_dir, debug=debug)
+    _prune_stale_version_dirs(cache_dir, reporter=reporter)
+
+
+class _WriteOutcome(Enum):
+    """Why one atomic entry write ended the way it did — specifically, whether retrying helps."""
+
+    WRITTEN = auto()
+    DIRECTORY_MISSING = auto()
+    FAILED = auto()
+
+
+def _write_entry(path: Path, payload: dict[str, Any], *, reporter: CacheReporter) -> _WriteOutcome:
+    """Write one entry atomically (temp file + `os.replace`).
+
+    Atomicity means an interrupted process, or two concurrent house-lint runs writing the same
+    entry, can never leave a partially-written file in place of a real one. The temp file is
+    named per-PID, so a failure part-way through would otherwise strand a file no later run could
+    recognise or clean up — hence the unlink on the error path.
+    """
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(temporary, path)
+    except FileNotFoundError as exc:
+        reporter.failure(f"cache write failed, directory is gone: {exc}")
+        with suppress(OSError):
+            temporary.unlink(missing_ok=True)
+        return _WriteOutcome.DIRECTORY_MISSING
+    except OSError as exc:
+        reporter.failure(f"cache write failed: {exc}")
+        with suppress(OSError):
+            temporary.unlink(missing_ok=True)
+        return _WriteOutcome.FAILED
+    return _WriteOutcome.WRITTEN
 
 
 def write_cached_result(
@@ -370,20 +446,29 @@ def write_cached_result(
     config_hash: str,
     result: CachedFileResult,
     *,
-    debug: bool = False,
-) -> None:
-    """Write a cache entry, best-effort. A failed write must never fail the scan itself —
-    but is reported under `--debug`, so `house-lint check --debug` can diagnose "why isn't
-    caching working" for a broken cache directory or permissions issue.
+    self_ignore: bool,
+    reporter: CacheReporter,
+) -> bool:
+    """Write a cache entry, best-effort. A failed write must never fail the scan itself — but it
+    is reported through `reporter`, so "why isn't caching working" is answerable from a plain
+    `house-lint check` and diagnosable in full under `--debug`.
 
-    Assumes `prepare_cache_dir` has already run for this `cache_dir`; if it has not (or failed),
-    the write simply fails and is reported under `--debug` like any other write failure.
+    Returns whether the entry was durably persisted. Callers need that distinction rather than
+    "a write was attempted": `prune_stale_cache_dirs` is gated on this run having contributed a
+    real entry, and a run whose every write fails must not delete another process's namespace
+    while contributing nothing of its own.
 
-    Writes atomically (temp file + `os.replace`) so an interrupted process or two concurrent
-    house-lint runs writing the same entry can never leave a partially-written, corrupted file
-    in place of a real one. The temp file is named per-PID, so a failure part-way through would
-    otherwise strand a file no later run could ever recognise or clean up — hence the unlink on
-    the error path.
+    Assumes `prepare_cache_dir` has already run for this `cache_dir` — and restores that
+    precondition once if it has been undone mid-run. A concurrent house-lint process on a
+    different namespace, sharing the same `--cache-dir`, can `rmtree` this one out from under an
+    in-progress scan (see `_prune_stale_version_dirs`). Since `prepare_cache_dir` runs once per
+    scan and is never retried, one raced prune would otherwise cost every remaining write in the
+    run. Re-preparing and retrying bounds the damage to the single entry in flight. `self_ignore`
+    is what that re-preparation needs, and must carry the same value the scan's own
+    `prepare_cache_dir` call used.
+
+    Only a vanished directory is retried. A permissions or out-of-space failure will not fix
+    itself between two adjacent calls, so retrying it would just pay twice for the same failure.
     """
     path = _entry_path(cache_dir, content_hash, config_hash)
     payload = {
@@ -392,24 +477,21 @@ def write_cached_result(
         "suppressed_count": result.suppressed_count,
         "files_scanned": result.files_scanned,
     }
-    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    try:
-        temporary.write_text(json.dumps(payload), encoding="utf-8")
-        os.replace(temporary, path)
-    except OSError as exc:
-        if debug:
-            print(f"debug: cache write failed: {exc}", file=sys.stderr)
-        with suppress(OSError):
-            temporary.unlink(missing_ok=True)
+    outcome = _write_entry(path, payload, reporter=reporter)
+    if outcome is not _WriteOutcome.DIRECTORY_MISSING:
+        return outcome is _WriteOutcome.WRITTEN
+    prepare_cache_dir(cache_dir, self_ignore=self_ignore, reporter=reporter)
+    return _write_entry(path, payload, reporter=reporter) is _WriteOutcome.WRITTEN
 
 
 __all__ = [
     "CACHE_DIRNAME",
+    "CacheReporter",
     "CachedFileResult",
     "code_identity",
     "default_cache_base",
     "hash_effective_config",
-    "hash_file_content",
+    "hash_source_content",
     "prepare_cache_dir",
     "prune_stale_cache_dirs",
     "read_cached_result",

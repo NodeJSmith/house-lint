@@ -38,6 +38,11 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `slow` is deselected by default: the randomized gitignore-parity generator runs thousands of
+# real `git check-ignore` comparisons, which is worth minutes on demand but not on every run.
+# Opt in with `-m slow` (or `-m ""` for everything).
+addopts = "-m 'not slow'"
+markers = ["slow: randomized/differential tests, run on demand rather than every invocation"]
 
 [tool.ruff]
 line-length = 100

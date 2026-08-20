@@ -8,9 +8,10 @@ from cyclopts import App, CycloptsError
 
 from house_lint.cache import (
     CachedFileResult,
+    CacheReporter,
     default_cache_base,
     hash_effective_config,
-    hash_file_content,
+    hash_source_content,
     prepare_cache_dir,
     prune_stale_cache_dirs,
     read_cached_result,
@@ -43,7 +44,8 @@ from house_lint.results import (
     internal_error,
 )
 from house_lint.rule_catalog import rule_ids, rule_metadata
-from house_lint.scanner import FileScanResult, scan_file
+from house_lint.scanner import FileScanResult, open_source, scan_source
+from house_lint.source import SourceFile
 
 app = App(name="house-lint", help="Opinionated Python house-style linter.")
 
@@ -111,38 +113,42 @@ def _requested_format(arguments: list[str]) -> str:
 
 
 def _cache_keys(
-    path: Path, config: LintConfig, file_enabled_rules: tuple[str, ...]
+    source: SourceFile, config: LintConfig, file_enabled_rules: tuple[str, ...]
 ) -> tuple[str, str] | tuple[None, None]:
     """Compute this file's (content_hash, config_hash) cache key, or (None, None) if the file
     can't be safely hashed — that just means this file's result is never cached, not a failure.
+
+    The content hash comes from `source.content_bytes`: the single buffer the detectors will
+    analyze. Deriving the key from the same bytes as the findings is what makes a cache entry
+    honest — it cannot describe content that was never scanned under that key.
     """
-    content_hash = hash_file_content(path)
+    content_hash = hash_source_content(source.content_bytes)
     if content_hash is None:
         return None, None
     config_hash = hash_effective_config(
-        file_enabled_rules, config.hsl101, config.hsl102, config.hsl103, filename=path.name
+        file_enabled_rules, config.hsl101, config.hsl102, config.hsl103, filename=source.path.name
     )
     return content_hash, config_hash
 
 
-def _write_cache_entry(
+def _persist_cache_entry(
     cache_dir: Path,
-    content_hash: str | None,
-    config_hash: str | None,
+    content_hash: str,
+    config_hash: str,
     file_result: FileScanResult,
     *,
-    debug: bool,
+    self_ignore: bool,
+    reporter: CacheReporter,
 ) -> bool:
-    """Persist `file_result` for future runs — unless it can't be hashed, or it's a `stop=True`
-    internal-error abort. `stop` signals a non-deterministic process-boundary failure, not a
-    reproducible scan outcome, so it must never be replayed from cache on a later hit.
+    """Persist one scanned file's result. Returns whether it was durably written.
 
-    Returns whether a write was attempted, which is what gates the once-per-scan prune: a run
-    that writes nothing must not delete another process's namespace.
+    Called only for a file that already has a cache key, so the returned `False` carries one
+    meaning — the write failed — and is safe to latch a circuit breaker on. An earlier version
+    of this helper also returned `False` for "this file isn't cacheable", which would have let a
+    single unhashable file disable caching for the rest of the run; `_scan` screens that case out
+    before calling here, and the two must not be recombined.
     """
-    if content_hash is None or config_hash is None or file_result.stop:
-        return False
-    write_cached_result(
+    return write_cached_result(
         cache_dir,
         content_hash,
         config_hash,
@@ -152,9 +158,9 @@ def _write_cache_entry(
             file_result.suppressed_count,
             file_result.files_scanned,
         ),
-        debug=debug,
+        self_ignore=self_ignore,
+        reporter=reporter,
     )
-    return True
 
 
 def _scan(
@@ -188,10 +194,11 @@ def _scan(
             errors=(exc.error,),
         )
 
+    cache_reporter = CacheReporter(debug=debug)
     if discovered.files:
         # Once per scan, and only when there is something to scan — so a run that discovers
         # nothing never creates a cache directory in the project.
-        prepare_cache_dir(cache_dir, self_ignore=cache_self_ignore, debug=debug)
+        prepare_cache_dir(cache_dir, self_ignore=cache_self_ignore, reporter=cache_reporter)
 
     findings: list[Finding] = []
     errors = list(discovered.errors)
@@ -200,6 +207,7 @@ def _scan(
     suppressed_count = 0
     files_scanned = 0
     wrote_cache_entry = False
+    cache_writes_failed = False
     for path in discovered.files:
         relative = path.relative_to(root).as_posix()
         file_enabled_rules = config.enabled_rules
@@ -217,13 +225,37 @@ def _scan(
                 file_detector_inputs = selected_detector_inputs(
                     config, enabled_rules=file_enabled_rules
                 )
+        # The file is read exactly once per scan, here. Everything below — the cache key, the
+        # detectors, and the entry written back — derives from that one buffer, so a cache entry
+        # can never describe bytes that were not the ones scanned.
+        loaded = open_source(
+            # Indexed, not `.get()`: `DiscoveryResult.files` is built from `resolved_paths`'
+            # own keys, so a miss means that invariant broke. Falling back to `None` there would
+            # silently re-resolve the path and reopen the symlink-retarget window this threading
+            # exists to close, so a `KeyError` is the wanted outcome.
+            path,
+            root=root,
+            resolved_path=discovered.resolved_paths[path],
+            debug=debug,
+        )
+        if isinstance(loaded, FileScanResult):
+            # open_source only returns a result for a process-boundary abort, which is fatal to
+            # the run and never cached.
+            errors.extend(loaded.errors)
+            files_scanned += loaded.files_scanned
+            break
+        source = loaded
         # Computed unconditionally (even under --no-cache) because a write still happens on a
         # miss regardless of read_cache — --no-cache only disables the read below, not the
         # write further down, so the hashes are needed either way.
-        content_hash, config_hash = _cache_keys(path, config, file_enabled_rules)
+        content_hash, config_hash = _cache_keys(source, config, file_enabled_rules)
         cached = (
             read_cached_result(
-                cache_dir, content_hash, config_hash, relative_path=relative, debug=debug
+                cache_dir,
+                content_hash,
+                config_hash,
+                relative_path=relative,
+                reporter=cache_reporter,
             )
             if read_cache and content_hash is not None and config_hash is not None
             else None
@@ -234,9 +266,8 @@ def _scan(
             suppressed_count += cached.suppressed_count
             files_scanned += cached.files_scanned
             continue
-        file_result = scan_file(
-            path,
-            root=root,
+        file_result = scan_source(
+            source,
             enabled_rules=file_enabled_rules,
             detector_inputs=file_detector_inputs,
             debug=debug,
@@ -245,28 +276,41 @@ def _scan(
         errors.extend(file_result.errors)
         suppressed_count += file_result.suppressed_count
         files_scanned += file_result.files_scanned
-        # Re-hash post-scan to narrow a TOCTOU race: scan_file() reads the file's bytes
-        # independently of the read that produced content_hash above, so if the file changed
-        # in between (e.g. an editor autosaving mid-scan), file_result reflects content that
-        # content_hash no longer describes. Writing it under that stale key would let a later
-        # run replay these findings against content they were never derived from. This closes
-        # the common case, not every case — content that changes and then reverts to the exact
-        # original bytes within this window would still slip through undetected, but that's not
-        # a practical concern here. The scan result itself is still correct and used for
-        # findings/errors above — only the cache write is skipped.
-        if content_hash is None or hash_file_content(path) == content_hash:
-            wrote_cache_entry |= _write_cache_entry(
-                cache_dir, content_hash, config_hash, file_result, debug=debug
-            )
-        elif debug:
-            print(
-                f"debug: skip cache write for {relative}: content changed during scan",
-                file=sys.stderr,
-            )
         if file_result.stop:
+            # A stop result is a non-deterministic process-boundary failure, not a reproducible
+            # scan outcome, so it must never be replayed from cache on a later hit.
             break
+        if content_hash is None or config_hash is None:
+            # Unhashable file (non-regular, unreadable, or oversized). Never cached, and not a
+            # cache failure — it must not trip the circuit breaker below.
+            continue
+        if cache_writes_failed:
+            # A cache directory that rejected one write rejects every later one for the rest of
+            # this process (unwritable, full, or removed mid-run by a concurrent prune). Retrying
+            # per file would mean up to MAX_DISCOVERED_FILES pointless attempts and one
+            # near-duplicate --debug line each, burying the single fact worth reporting.
+            continue
+        if _persist_cache_entry(
+            cache_dir,
+            content_hash,
+            config_hash,
+            file_result,
+            self_ignore=cache_self_ignore,
+            reporter=cache_reporter,
+        ):
+            wrote_cache_entry = True
+        else:
+            cache_writes_failed = True
+            # Through the reporter rather than a bare print, so every cache diagnostic in the
+            # pipeline goes through one object. The failing write above has already reported,
+            # so this lands on the `--debug`-only branch — which is where a follow-on
+            # "and here is what that failure means for the rest of the run" line belongs.
+            cache_reporter.failure(
+                f"cache writes disabled for the rest of this run after the first failure "
+                f"(at {relative})"
+            )
     if wrote_cache_entry:
-        prune_stale_cache_dirs(cache_dir, debug=debug)
+        prune_stale_cache_dirs(cache_dir, reporter=cache_reporter)
     return ScanResult(
         root,
         config_path,

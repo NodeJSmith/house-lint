@@ -31,16 +31,27 @@ def read_regular_file_bytes(path: Path, *, max_bytes: int) -> bytes | None:
 
 
 class SourceFile:
-    """Load one Python file, failing closed before any rule can inspect it."""
+    """Load one Python file, failing closed before any rule can inspect it.
 
-    def __init__(self, path: Path, root: Path) -> None:
+    This is the only place a scanned file's bytes are read. `content_bytes` exposes that single
+    buffer so the cache key can be derived from exactly the content the detectors analyze — see
+    `cli._scan`.
+    """
+
+    def __init__(self, path: Path, root: Path, *, resolved_path: Path | None = None) -> None:
+        # `resolved_path` is discovery's own `resolve()` result, threaded through rather than
+        # recomputed. Resolving a second time here would reopen a window in which a symlink
+        # retargeted after the containment check sends the read somewhere discovery never
+        # approved. Containment is still re-checked below against whichever path is used, so
+        # passing one in cannot widen what this class will read.
         self.path = path.absolute()
-        self.resolved_path = path.resolve()
+        self.resolved_path = path.resolve() if resolved_path is None else resolved_path
         self.root = root.resolve()
         self._error: LintError | None = None
         self._debug_exception: BaseException | None = None
         self._loaded = False
         self._analyzed = False
+        self._source_bytes: bytes | None = None
         self._text: str | None = None
         self._lines: list[str] | None = None
         self._tokens: tuple[Token, ...] = ()
@@ -64,13 +75,15 @@ class SourceFile:
             )
             return
 
-    def _load(self) -> None:
+    def load(self) -> None:
+        """Read this file's bytes, once. Idempotent; failures become `error`, never exceptions."""
         if self._loaded or self._error is not None:
             self._loaded = True
             return
         self._loaded = True
         try:
             source_bytes = read_regular_file_bytes(self.resolved_path, max_bytes=MAX_SOURCE_BYTES)
+            self._source_bytes = source_bytes
             if source_bytes is None:
                 self._error = self._make_error(
                     "path-error", "path", "source-check", "regular-file", "not a regular file"
@@ -120,7 +133,7 @@ class SourceFile:
     def _analyze(self) -> None:
         if self._analyzed:
             return
-        self._load()
+        self.load()
         if self._error is not None:
             self._analyzed = True
             return
@@ -184,6 +197,17 @@ class SourceFile:
             None,
             message,
         )
+
+    @property
+    def content_bytes(self) -> bytes | None:
+        """The raw bytes this file was read as, or None if it could not be read at all.
+
+        None covers both "not a regular file" and a failed read; an oversized or undecodable
+        file still reports the bytes that were read. Callers that need a cache key apply their
+        own cacheability policy to this (`cache.hash_source_content`) rather than re-reading.
+        """
+        self.load()
+        return self._source_bytes
 
     @property
     def error(self) -> LintError | None:

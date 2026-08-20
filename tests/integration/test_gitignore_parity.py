@@ -15,15 +15,14 @@ Skipped wholesale when git is unavailable. Git config is neutralised (`GIT_CONFI
 change the outcome.
 """
 
-import os
 import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from _git_harness import git_ignored, init_repository
 
-from house_lint.discovery import discover_files
+from house_lint.discovery import DiscoveryResult, discover_files
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
 
@@ -102,9 +101,9 @@ SCENARIOS = (
         {"": ["**/", "!b.py"]},
         ("src/a.py", "src/b.py", "src/sub/b.py"),
     ),
-    # --- Ordinary per-directory semantics that must keep working.
     # --- A trailing `/**` names a directory's contents, so a negation can still re-include
-    # something underneath it. The star in `a/*/**`'s middle segment must not exempt it.
+    # something underneath it. The star in `a/*/**`'s middle segment must not exempt it, and
+    # `a/**/` composes the embedded-slash and directory-only forms in one pattern.
     Scenario(
         "contents glob after a single-star segment still allows a negation underneath",
         {"": ["src/a/*/**", "!src/a/sub/keep.py"]},
@@ -115,6 +114,12 @@ SCENARIOS = (
         {"": ["src/gen/**", "!src/gen/keep.py"]},
         ("src/gen/keep.py", "src/gen/drop.py"),
     ),
+    Scenario(
+        "embedded slash combined with the directory-only contents glob",
+        {"src": ["a/**/"]},
+        ("src/a/y.py", "src/a/sub/x.py", "src/b.py"),
+    ),
+    # --- Ordinary per-directory semantics that must keep working.
     Scenario(
         "nested pattern without a slash matches at any depth below its owner",
         {"src": ["a.py"]},
@@ -153,48 +158,6 @@ SCENARIOS = (
 )
 
 
-def _init_repository(root: Path) -> None:
-    subprocess.run(
-        ["git", "init", "-q", "."],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        env=_git_env(),
-    )
-    subprocess.run(
-        ["git", "config", "core.excludesFile", ""],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        env=_git_env(),
-    )
-
-
-def _git_env() -> dict[str, str]:
-    """Neutralise every ignore source outside the repository under test."""
-    return os.environ | {
-        "GIT_CONFIG_GLOBAL": os.devnull,
-        "GIT_CONFIG_SYSTEM": os.devnull,
-        "HOME": os.devnull,
-    }
-
-
-def _git_ignored(root: Path, relatives: tuple[str, ...]) -> set[str]:
-    completed = subprocess.run(
-        ["git", "check-ignore", "--stdin"],
-        cwd=root,
-        input="\n".join(relatives),
-        capture_output=True,
-        text=True,
-        env=_git_env(),
-        check=False,
-    )
-    # `check-ignore` exits 1 when nothing matches, which is not a failure for us.
-    if completed.returncode not in (0, 1):
-        pytest.fail(f"git check-ignore failed: {completed.stderr}")
-    return {line.strip() for line in completed.stdout.splitlines() if line.strip()}
-
-
 def _build(root: Path, scenario: Scenario) -> None:
     for relative in scenario.files:
         path = root / relative
@@ -209,15 +172,15 @@ def _build(root: Path, scenario: Scenario) -> None:
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda item: item.name)
 def test_discovery_matches_git_check_ignore(scenario: Scenario, tmp_path: Path) -> None:
     _build(tmp_path, scenario)
-    _init_repository(tmp_path)
+    init_repository(tmp_path)
 
     result = discover_files(tmp_path, include=scenario.include)
     selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
     house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
-    git_ignored = _git_ignored(tmp_path, scenario.files)
+    ignored_by_git = git_ignored(tmp_path, scenario.files)
 
     assert result.errors == ()
-    assert house_lint_skipped == git_ignored
+    assert house_lint_skipped == ignored_by_git
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda item: item.name)
@@ -230,14 +193,14 @@ def test_explicit_paths_match_git_check_ignore(scenario: Scenario, tmp_path: Pat
     to reach the same verdict git does with no directory traversal to help it.
     """
     _build(tmp_path, scenario)
-    _init_repository(tmp_path)
+    init_repository(tmp_path)
 
     result = discover_files(tmp_path, explicit=tuple(tmp_path / item for item in scenario.files))
     selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
     house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
 
     assert result.errors == ()
-    assert house_lint_skipped == _git_ignored(tmp_path, scenario.files)
+    assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
 
 
 @pytest.mark.xfail(
@@ -259,32 +222,69 @@ def test_negated_directory_pattern_does_not_re_include_nested_directories(tmp_pa
         ("src/a.py", "src/sub/a.py", "src/sub/deep/a.py"),
     )
     _build(tmp_path, scenario)
-    _init_repository(tmp_path)
+    init_repository(tmp_path)
 
     result = discover_files(tmp_path, include=scenario.include)
     selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
     house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
 
-    assert house_lint_skipped == _git_ignored(tmp_path, scenario.files)
+    assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
 
 
-def test_harness_detects_a_real_divergence(tmp_path: Path) -> None:
-    """Guard the guard: prove the comparison fails when discovery and git genuinely disagree.
+@pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda item: item.name)
+def test_explicit_directory_arguments_match_git_check_ignore(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    """The same table again, reached by naming a directory explicitly.
 
-    Without this, a bug that made `discover_files` return nothing (or the scenario table go
-    empty) would turn every parity case green for the wrong reason.
+    `house-lint check src/` takes a third route: `_consider`'s directory branch, which is the
+    one place neither the include-root walk nor an explicit *file* exercises. That branch is
+    exactly what the excluded-ancestor fix had to patch, so leaving it to hand-written unit
+    tests would reproduce the blind spot this harness exists to close.
     """
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "a.py").write_text(PY_CONTENT)
-    (tmp_path / ".gitignore").write_text("a.py\n")
-    _init_repository(tmp_path)
+    _build(tmp_path, scenario)
+    init_repository(tmp_path)
 
-    git_ignored = _git_ignored(tmp_path, ("src/a.py",))
-    assert git_ignored == {"src/a.py"}
+    result = discover_files(tmp_path, explicit=tuple(tmp_path / item for item in scenario.include))
+    selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
+    house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
 
-    # Discovery agrees here, so an inverted expectation must fail.
-    selected = {
-        path.relative_to(tmp_path.resolve()).as_posix()
-        for path in discover_files(tmp_path, include=("src",)).files
-    }
-    assert selected == set()
+    assert result.errors == ()
+    assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
+
+
+@pytest.mark.parametrize("broken", ["skips-everything", "skips-nothing"])
+def test_harness_detects_a_real_divergence(
+    broken: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guard the guard: prove the comparison actually fails when discovery disagrees with git.
+
+    A parity suite that could not fail would be worse than no suite, because it reads as
+    evidence. Confirming a case where the two agree does not establish that — it exercises the
+    same concordant path every scenario already does. So this substitutes a deliberately broken
+    `discover_files` in both directions (selecting nothing, and selecting everything) and
+    asserts the comparison raises. Both directions matter: a stub that skipped everything would
+    satisfy a suite whose scenarios all expect skips, and one that skipped nothing would satisfy
+    a suite whose scenarios all expect selections.
+    """
+    files = ("src/a.py", "src/b.py")
+    _build(
+        tmp_path,
+        Scenario("guard", {"": ["a.py"]}, files),
+    )
+    init_repository(tmp_path)
+
+    ignored_by_git = git_ignored(tmp_path, files)
+    assert ignored_by_git == {"src/a.py"}, "fixture must produce a genuine mix of ignored and not"
+
+    def broken_discovery(root: Path, **_: object) -> DiscoveryResult:
+        if broken == "skips-everything":
+            return DiscoveryResult(())
+        return DiscoveryResult(tuple(sorted(root.resolve() / item for item in files)))
+
+    # `tests` is not an importable package, so patch this module's own globals — which is what
+    # `test_discovery_matches_git_check_ignore` resolves `discover_files` through.
+    monkeypatch.setitem(globals(), "discover_files", broken_discovery)
+
+    with pytest.raises(AssertionError):
+        test_discovery_matches_git_check_ignore(Scenario("guard", {"": ["a.py"]}, files), tmp_path)

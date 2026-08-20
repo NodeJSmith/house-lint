@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -8,10 +9,11 @@ import pytest
 from house_lint import __version__
 from house_lint.cache import (
     CachedFileResult,
+    CacheReporter,
     code_identity,
     default_cache_base,
     hash_effective_config,
-    hash_file_content,
+    hash_source_content,
     prepare_cache_dir,
     prune_stale_cache_dirs,
     read_cached_result,
@@ -45,32 +47,23 @@ _ERROR = {
 }
 
 
-def test_hash_file_content_is_stable_and_changes_with_content(tmp_path: Path) -> None:
-    path = tmp_path / "a.py"
-    path.write_text("x = 1\n")
-
-    first = hash_file_content(path)
-    second = hash_file_content(path)
+def test_hash_source_content_is_stable_and_changes_with_content() -> None:
+    first = hash_source_content(b"x = 1\n")
     assert first is not None
-    assert first == second
-
-    path.write_text("x = 2\n")
-    assert hash_file_content(path) != first
+    assert hash_source_content(b"x = 1\n") == first
+    assert hash_source_content(b"x = 2\n") != first
 
 
-def test_hash_file_content_is_none_for_missing_or_non_regular_files(tmp_path: Path) -> None:
-    assert hash_file_content(tmp_path / "missing.py") is None
-    assert hash_file_content(tmp_path) is None
+def test_hash_source_content_is_none_without_bytes() -> None:
+    # None is what `SourceFile.content_bytes` reports for a file it could not read at all —
+    # missing, non-regular, or permission-denied. Such a file is simply never cached.
+    assert hash_source_content(None) is None
 
 
-def test_hash_file_content_is_none_when_oversized(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    path = tmp_path / "big.py"
-    path.write_text("x = 1\n")
+def test_hash_source_content_is_none_when_oversized(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("house_lint.cache.MAX_SOURCE_BYTES", 2)
 
-    assert hash_file_content(path) is None
+    assert hash_source_content(b"x = 1\n") is None
 
 
 def test_hash_effective_config_is_order_independent_and_content_sensitive() -> None:
@@ -150,7 +143,7 @@ def test_write_then_read_round_trips_and_reattaches_the_caller_supplied_path(
     tmp_path: Path,
 ) -> None:
     cache_dir = tmp_path / "cache"
-    prepare_cache_dir(cache_dir, self_ignore=False)
+    prepare_cache_dir(cache_dir, self_ignore=False, reporter=CacheReporter())
     result = CachedFileResult(
         findings=(Finding("HSL002", "wrong/path.py", 1, 5, 1, 20, "import inside function"),),
         errors=(
@@ -172,9 +165,20 @@ def test_write_then_read_round_trips_and_reattaches_the_caller_supplied_path(
         files_scanned=1,
     )
 
-    write_cached_result(cache_dir, "content-hash", "config-hash", result)
+    write_cached_result(
+        cache_dir,
+        "content-hash",
+        "config-hash",
+        result,
+        self_ignore=False,
+        reporter=CacheReporter(),
+    )
     cached = read_cached_result(
-        cache_dir, "content-hash", "config-hash", relative_path="actual/path.py"
+        cache_dir,
+        "content-hash",
+        "config-hash",
+        relative_path="actual/path.py",
+        reporter=CacheReporter(),
     )
 
     assert cached is not None
@@ -202,7 +206,10 @@ def test_write_then_read_round_trips_and_reattaches_the_caller_supplied_path(
 
 def test_read_cached_result_is_a_miss_when_no_entry_exists(tmp_path: Path) -> None:
     cache_dir = tmp_path / "cache"
-    assert read_cached_result(cache_dir, "x", "y", relative_path="a.py") is None
+    assert (
+        read_cached_result(cache_dir, "x", "y", relative_path="a.py", reporter=CacheReporter())
+        is None
+    )
 
 
 def test_read_cached_result_is_a_miss_on_corrupted_entries(tmp_path: Path) -> None:
@@ -211,7 +218,10 @@ def test_read_cached_result_is_a_miss_on_corrupted_entries(tmp_path: Path) -> No
     (cache_dir / "content-hash-config-hash.json").write_text("not valid json {{{")
 
     assert (
-        read_cached_result(cache_dir, "content-hash", "config-hash", relative_path="a.py") is None
+        read_cached_result(
+            cache_dir, "content-hash", "config-hash", relative_path="a.py", reporter=CacheReporter()
+        )
+        is None
     )
 
 
@@ -221,7 +231,10 @@ def test_read_cached_result_is_a_miss_when_a_required_field_is_missing(tmp_path:
     (cache_dir / "content-hash-config-hash.json").write_text('{"findings": []}')
 
     assert (
-        read_cached_result(cache_dir, "content-hash", "config-hash", relative_path="a.py") is None
+        read_cached_result(
+            cache_dir, "content-hash", "config-hash", relative_path="a.py", reporter=CacheReporter()
+        )
+        is None
     )
 
 
@@ -237,7 +250,10 @@ def test_read_cached_result_is_a_miss_when_a_scalar_field_has_the_wrong_type(
     (cache_dir / "content-hash-config-hash.json").write_text(payload)
 
     assert (
-        read_cached_result(cache_dir, "content-hash", "config-hash", relative_path="a.py") is None
+        read_cached_result(
+            cache_dir, "content-hash", "config-hash", relative_path="a.py", reporter=CacheReporter()
+        )
+        is None
     )
 
 
@@ -271,7 +287,10 @@ def test_read_cached_result_is_a_miss_when_a_text_field_has_the_wrong_type(
     (cache_dir / "content-hash-config-hash.json").write_text(json.dumps(payload))
 
     assert (
-        read_cached_result(cache_dir, "content-hash", "config-hash", relative_path="a.py") is None
+        read_cached_result(
+            cache_dir, "content-hash", "config-hash", relative_path="a.py", reporter=CacheReporter()
+        )
+        is None
     ), label
 
 
@@ -290,39 +309,66 @@ def test_read_cached_result_accepts_a_well_formed_entry_with_a_null_error_rule_i
     }
     (cache_dir / "content-hash-config-hash.json").write_text(json.dumps(payload))
 
-    cached = read_cached_result(cache_dir, "content-hash", "config-hash", relative_path="a.py")
+    cached = read_cached_result(
+        cache_dir, "content-hash", "config-hash", relative_path="a.py", reporter=CacheReporter()
+    )
 
     assert cached is not None
     assert cached.findings[0].message == "import inside function"
     assert cached.errors[0].rule_id is None
 
 
-def test_corrupted_entry_is_silent_by_default_but_reported_under_debug(
+def test_corrupted_entry_is_reported_without_debug(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir(parents=True)
     (cache_dir / "content-hash-config-hash.json").write_text("not valid json {{{")
 
-    read_cached_result(cache_dir, "content-hash", "config-hash", relative_path="a.py")
-    assert capsys.readouterr().err == ""
+    read_cached_result(
+        cache_dir, "content-hash", "config-hash", relative_path="a.py", reporter=CacheReporter()
+    )
 
-    read_cached_result(cache_dir, "content-hash", "config-hash", relative_path="a.py", debug=True)
-    assert "a.py" in capsys.readouterr().err
+    captured = capsys.readouterr().err
+    assert captured.startswith("warning: ")
+    assert "a.py" in captured
 
 
-def test_write_failure_is_silent_by_default_but_reported_under_debug(
+def test_write_failure_is_reported_without_debug(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     blocked = tmp_path / "blocked"
     blocked.write_text("not a directory")
-    result = CachedFileResult()
 
-    write_cached_result(blocked / "cache", "x", "y", result)
-    assert capsys.readouterr().err == ""
+    write_cached_result(
+        blocked / "cache",
+        "x",
+        "y",
+        CachedFileResult(),
+        self_ignore=False,
+        reporter=CacheReporter(),
+    )
 
-    write_cached_result(blocked / "cache", "x", "y", result, debug=True)
-    assert capsys.readouterr().err != ""
+    assert capsys.readouterr().err.startswith("warning: ")
+
+
+def test_reporter_warns_once_then_falls_back_to_debug_only(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A broken cache directory fails once per scanned file. Reporting every one by default would
+    bury the single fact worth reporting, so only the first failure of a run is unconditional."""
+    quiet = CacheReporter()
+    quiet.failure("first failure")
+    quiet.failure("second failure")
+
+    captured = capsys.readouterr().err
+    assert captured == "warning: first failure\n"
+
+    verbose = CacheReporter(debug=True)
+    verbose.failure("first failure")
+    verbose.failure("second failure")
+
+    assert capsys.readouterr().err == "warning: first failure\ndebug: second failure\n"
 
 
 def test_write_cached_result_is_best_effort_and_does_not_raise_on_a_bad_directory(
@@ -333,15 +379,24 @@ def test_write_cached_result_is_best_effort_and_does_not_raise_on_a_bad_director
     blocked.write_text("not a directory")
     result = CachedFileResult(findings=(), errors=(), suppressed_count=0, files_scanned=1)
 
-    write_cached_result(blocked / "cache", "x", "y", result)  # must not raise
+    write_cached_result(
+        blocked / "cache", "x", "y", result, self_ignore=False, reporter=CacheReporter()
+    )  # must not raise
 
 
 def test_write_cached_result_writes_atomically_and_leaves_no_temp_file(tmp_path: Path) -> None:
     cache_dir = tmp_path / "cache"
-    prepare_cache_dir(cache_dir, self_ignore=False)
+    prepare_cache_dir(cache_dir, self_ignore=False, reporter=CacheReporter())
     result = CachedFileResult()
 
-    write_cached_result(cache_dir, "content-hash", "config-hash", result)
+    write_cached_result(
+        cache_dir,
+        "content-hash",
+        "config-hash",
+        result,
+        self_ignore=False,
+        reporter=CacheReporter(),
+    )
 
     entries = {entry.name for entry in cache_dir.iterdir()}
     assert entries == {"content-hash-config-hash.json", ".house-lint-version"}
@@ -354,15 +409,72 @@ def test_write_cached_result_removes_its_temp_file_when_the_atomic_replace_fails
     """A stranded `.<pid>.tmp` file is unrecognisable to every later run, so nothing would ever
     clean it up — repeated interrupted or failing writes would accumulate forever."""
     cache_dir = tmp_path / "cache"
-    prepare_cache_dir(cache_dir, self_ignore=False)
+    prepare_cache_dir(cache_dir, self_ignore=False, reporter=CacheReporter())
 
     def failing_replace(source: object, target: object) -> None:
         raise OSError("no space left on device")
 
     monkeypatch.setattr(os, "replace", failing_replace)
-    write_cached_result(cache_dir, "content-hash", "config-hash", CachedFileResult())
+    write_cached_result(
+        cache_dir,
+        "content-hash",
+        "config-hash",
+        CachedFileResult(),
+        self_ignore=False,
+        reporter=CacheReporter(),
+    )
 
     assert [entry.name for entry in cache_dir.iterdir()] == [".house-lint-version"]
+
+
+def test_write_cached_result_recreates_a_namespace_pruned_out_from_under_it(
+    tmp_path: Path,
+) -> None:
+    """`prepare_cache_dir` runs once per scan and is never retried, so a concurrent house-lint
+    process pruning this namespace mid-run would otherwise cost every remaining write. The write
+    restores the directory once and retries, bounding the loss to the entry in flight."""
+    cache_dir = tmp_path / ".house-lint-cache" / "1.0.0"
+    prepare_cache_dir(cache_dir, self_ignore=True, reporter=CacheReporter())
+
+    shutil.rmtree(cache_dir)  # stands in for a sibling process's prune
+
+    assert write_cached_result(
+        cache_dir,
+        "content-hash",
+        "config-hash",
+        CachedFileResult(files_scanned=1),
+        self_ignore=True,
+        reporter=CacheReporter(),
+    )
+    assert (cache_dir / "content-hash-config-hash.json").is_file()
+    assert (cache_dir / ".house-lint-version").is_file(), "the namespace marker must be restored"
+
+
+def test_write_cached_result_does_not_retry_a_failure_that_cannot_resolve_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a vanished directory is worth retrying. A permissions or out-of-space failure will
+    not fix itself between two adjacent calls, so retrying would just pay twice."""
+    cache_dir = tmp_path / "cache"
+    prepare_cache_dir(cache_dir, self_ignore=False, reporter=CacheReporter())
+    attempts = 0
+
+    def failing_replace(source: object, target: object) -> None:
+        nonlocal attempts
+        attempts += 1
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+
+    assert not write_cached_result(
+        cache_dir,
+        "content-hash",
+        "config-hash",
+        CachedFileResult(),
+        self_ignore=False,
+        reporter=CacheReporter(),
+    )
+    assert attempts == 1
 
 
 def test_prepare_cache_dir_creates_self_ignoring_gitignore_for_the_default_base(
@@ -370,7 +482,7 @@ def test_prepare_cache_dir_creates_self_ignoring_gitignore_for_the_default_base(
 ) -> None:
     base = tmp_path / ".house-lint-cache"
 
-    prepare_cache_dir(base / "1.2.3", self_ignore=True)
+    prepare_cache_dir(base / "1.2.3", self_ignore=True, reporter=CacheReporter())
 
     assert (base / ".gitignore").read_text(encoding="utf-8") == "*\n"
 
@@ -384,7 +496,7 @@ def test_prepare_cache_dir_never_writes_a_gitignore_into_a_user_supplied_cache_d
     base = tmp_path / "shared-cache"
     (base / "someone-elses-data").mkdir(parents=True)
 
-    prepare_cache_dir(base / "1.2.3", self_ignore=False)
+    prepare_cache_dir(base / "1.2.3", self_ignore=False, reporter=CacheReporter())
 
     assert not (base / ".gitignore").exists()
     assert (base / "someone-elses-data").exists()
@@ -397,7 +509,7 @@ def test_prepare_cache_dir_does_not_overwrite_an_existing_gitignore_marker(
     base.mkdir(parents=True)
     (base / ".gitignore").write_text("custom content\n", encoding="utf-8")
 
-    prepare_cache_dir(base / "1.2.3", self_ignore=True)
+    prepare_cache_dir(base / "1.2.3", self_ignore=True, reporter=CacheReporter())
 
     assert (base / ".gitignore").read_text(encoding="utf-8") == "custom content\n"
 
@@ -410,8 +522,8 @@ def test_prune_stale_cache_dirs_removes_superseded_sibling_namespaces(tmp_path: 
     (old_version_dir / ".house-lint-version").write_text("")
     current_version_dir = base / "1.0.0-bbbbbbbbbbbbbbbb"
 
-    prepare_cache_dir(current_version_dir, self_ignore=True)
-    prune_stale_cache_dirs(current_version_dir)
+    prepare_cache_dir(current_version_dir, self_ignore=True, reporter=CacheReporter())
+    prune_stale_cache_dirs(current_version_dir, reporter=CacheReporter())
 
     assert not old_version_dir.exists()
     assert current_version_dir.exists()
@@ -425,7 +537,7 @@ def test_prepare_cache_dir_does_not_prune_on_its_own(tmp_path: Path) -> None:
     old_version_dir.mkdir(parents=True)
     (old_version_dir / ".house-lint-version").write_text("")
 
-    prepare_cache_dir(base / "1.0.0-bbbbbbbbbbbbbbbb", self_ignore=True)
+    prepare_cache_dir(base / "1.0.0-bbbbbbbbbbbbbbbb", self_ignore=True, reporter=CacheReporter())
 
     assert old_version_dir.exists()
 
@@ -441,8 +553,8 @@ def test_prune_stale_cache_dirs_does_not_prune_directories_without_the_version_m
     unrelated_dir.mkdir(parents=True)
     (unrelated_dir / "important-data.txt").write_text("do not delete")
 
-    prepare_cache_dir(base / "1.0.0", self_ignore=False)
-    prune_stale_cache_dirs(base / "1.0.0")
+    prepare_cache_dir(base / "1.0.0", self_ignore=False, reporter=CacheReporter())
+    prune_stale_cache_dirs(base / "1.0.0", reporter=CacheReporter())
 
     assert unrelated_dir.exists()
     assert (unrelated_dir / "important-data.txt").exists()
@@ -454,8 +566,15 @@ def test_prepare_cache_dir_leaves_the_current_namespace_untouched(tmp_path: Path
     current_version_dir.mkdir(parents=True)
     (current_version_dir / "existing-entry.json").write_text("{}")
 
-    prepare_cache_dir(current_version_dir, self_ignore=True)
-    write_cached_result(current_version_dir, "content-hash", "config-hash", CachedFileResult())
+    prepare_cache_dir(current_version_dir, self_ignore=True, reporter=CacheReporter())
+    write_cached_result(
+        current_version_dir,
+        "content-hash",
+        "config-hash",
+        CachedFileResult(),
+        self_ignore=False,
+        reporter=CacheReporter(),
+    )
 
     assert (current_version_dir / "existing-entry.json").exists()
     assert (current_version_dir / "content-hash-config-hash.json").exists()
@@ -465,7 +584,9 @@ def test_prepare_cache_dir_is_best_effort_on_an_unusable_directory(tmp_path: Pat
     blocked = tmp_path / "blocked"
     blocked.write_text("not a directory")
 
-    prepare_cache_dir(blocked / "cache", self_ignore=True)  # must not raise
+    prepare_cache_dir(
+        blocked / "cache", self_ignore=True, reporter=CacheReporter()
+    )  # must not raise
 
 
 def test_code_identity_is_stable_within_a_process_and_shapes_the_cache_namespace(

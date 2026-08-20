@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from house_lint import cli, scanner
+from house_lint import source as source_module
 from house_lint.analysis import MAX_CANDIDATES_PER_FILE
 
 
@@ -407,7 +408,37 @@ def test_a_run_of_pure_cache_hits_does_not_prune_another_namespace(repository: P
     assert not foreign.exists()
 
 
-def test_cache_hit_never_calls_scan_file(
+def test_an_unusable_cache_dir_warns_once_without_debug_and_still_scans(repository: Path) -> None:
+    """The runs this tool is built for — CI, pre-commit — never pass `--debug`. Without a
+    default-visible line, an unwritable cache directory means every scan silently pays the full
+    re-analysis cost with nothing to explain why. The scan itself must be unaffected."""
+    blocked = repository / "blocked"
+    blocked.write_text("not a directory")
+    (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
+
+    result = _run(
+        repository,
+        "check",
+        "--root",
+        str(repository),
+        "--select",
+        "HSL002",
+        "--cache-dir",
+        str(blocked / "cache"),
+        "--format",
+        "json",
+    )
+
+    assert result.returncode == 1, result.stderr
+    warnings = [line for line in result.stderr.splitlines() if line.startswith("warning: ")]
+    assert len(warnings) == 1, result.stderr
+    assert "cache" in warnings[0]
+    payload = json.loads(result.stdout)
+    assert [finding["rule_id"] for finding in payload["findings"]] == ["HSL002"]
+    assert payload["errors"] == [], "a cache failure must never become a scan error"
+
+
+def test_cache_hit_never_scans_the_source(
     repository: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
@@ -420,45 +451,49 @@ def test_cache_hit_never_calls_scan_file(
 
     def record_call(*args: object, **kwargs: object) -> None:
         calls.append(args)
-        raise AssertionError("scan_file must not be called on a cache hit")
+        raise AssertionError("scan_source must not be called on a cache hit")
 
-    monkeypatch.setattr(cli, "scan_file", record_call)
+    monkeypatch.setattr(cli, "scan_source", record_call)
 
     second_code = cli.check(root=repository, select=["HSL002"], format="json")
     second_output = capsys.readouterr().out
 
-    assert calls == [], "scan_file must not be called on a cache hit"
+    assert calls == [], "scan_source must not be called on a cache hit"
     assert second_code == first_code
     assert json.loads(second_output) == json.loads(first_output)
 
 
-def test_cache_write_is_skipped_when_content_changes_during_scan(
-    repository: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("cache_state", ["cold", "warm"])
+def test_each_scanned_file_is_read_exactly_once(
+    repository: Path, monkeypatch: pytest.MonkeyPatch, cache_state: str
 ) -> None:
-    # Simulates the TOCTOU race between the cache-key hash (_cache_keys -> hash_file_content)
-    # and scan_file's own independent read of the same file: if the file's real content
-    # changes in between (e.g. an editor autosaving mid-scan), the two reads disagree and the
-    # scan result must never be cached under the now-stale first hash.
+    # A cache entry is a promise that this exact content produced these exact findings. That
+    # promise only holds because the cache key and the findings come from the same buffer: the
+    # file is read once, and everything downstream derives from it. A second read of the same
+    # path would reopen a TOCTOU window in which an edit landing between reads lets the entry be
+    # written under a key describing content that was never scanned. Counting reads is what
+    # guards the structure — the race is unobservable once it is gone, but a regression would
+    # show up here as a count above one. The counter intercepts `source.read_regular_file_bytes`,
+    # which is the only file-reading entry point on the scan path (`cli` and `cache` no longer
+    # import one); a re-read added through some other API would need its own guard.
     (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
+    if cache_state == "warm":
+        assert cli.check(root=repository, select=["HSL002"], format="json") == 1
 
-    real_hash_file_content = cli.hash_file_content
-    call_counts: dict[Path, int] = {}
+    real_read = source_module.read_regular_file_bytes
+    reads: dict[str, int] = {}
 
-    def stale_on_first_read(path: Path) -> str | None:
-        call_counts[path] = call_counts.get(path, 0) + 1
-        if call_counts[path] == 1:
-            # First call per file is the cache-key computation in _cache_keys. Return a hash
-            # that cannot match the real content, standing in for "the file already changed
-            # by the time scan_file does its own read a moment later".
-            return "0" * 64
-        return real_hash_file_content(path)
+    def counting_read(path: Path, *, max_bytes: int) -> bytes | None:
+        reads[path.name] = reads.get(path.name, 0) + 1
+        return real_read(path, max_bytes=max_bytes)
 
-    monkeypatch.setattr(cli, "hash_file_content", stale_on_first_read)
+    monkeypatch.setattr(source_module, "read_regular_file_bytes", counting_read)
 
-    code = cli.check(root=repository, select=["HSL002"], format="json")
+    assert cli.check(root=repository, select=["HSL002"], format="json") == 1
 
-    assert code == 1
-    assert list((repository / ".house-lint-cache").rglob("*.json")) == []
+    assert reads, "the scan must have read at least one file"
+    assert reads["finding.py"] == 1
+    assert set(reads.values()) == {1}, f"every file must be read exactly once, got {reads}"
 
 
 def test_cache_does_not_cross_contaminate_hsl101_filename_findings_between_same_content_files(
@@ -999,7 +1034,7 @@ def test_source_construction_failure_preserves_completed_results(
     second.write_text("value = 1\n")
     source_file = scanner.SourceFile
 
-    def fail_second(path: Path, root: Path) -> scanner.SourceFile:
+    def fail_second(path: Path, root: Path, **kwargs: object) -> scanner.SourceFile:
         if path == second:
             raise RuntimeError("simulated construction failure")
         return source_file(path, root)

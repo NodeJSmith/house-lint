@@ -677,6 +677,23 @@ def test_direct_symlink_file_is_safe_only_when_target_is_in_root(tmp_path: Path)
         outside.unlink()
 
 
+def test_result_maps_each_file_to_the_resolved_target_it_validated(tmp_path: Path) -> None:
+    """The scan reads `resolved_paths[file]`, not its own fresh `resolve()`, so containment is
+    checked and the read is performed against the same target — see `SourceFile.__init__`."""
+    source = tmp_path / "src"
+    source.mkdir()
+    plain = source / "a.py"
+    plain.write_text("value = 1\n")
+    link = source / "link.py"
+    link.symlink_to(plain)
+
+    result = discover_files(tmp_path, explicit=(plain, link))
+
+    assert set(result.resolved_paths) == set(result.files)
+    for reported, resolved in result.resolved_paths.items():
+        assert resolved == reported.resolve()
+
+
 def test_walked_file_symlinks_are_not_selected(tmp_path: Path) -> None:
     source = tmp_path / "src"
     source.mkdir()

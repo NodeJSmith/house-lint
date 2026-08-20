@@ -60,6 +60,11 @@ signature: `(source, options, *, limit=None) -> list[CandidateFinding]`.
   pruned directory, not one per file inside it.
 - Default scan roots are `src`, `tests`, `scripts`, `tools`, `examples`, configurable via
   `[tool.house-lint] include`.
+- A scanned file is read **exactly once** per scan, by `SourceFile.load()`. The cache key is
+  derived from that same buffer (`SourceFile.content_bytes` → `hash_source_content`), which is
+  what stops an entry from ever describing content that was not scanned under that key. Adding a
+  second read of a scanned path reopens that window;
+  `test_each_scanned_file_is_read_exactly_once` is what catches it.
 - The result cache is namespaced by `<version>-<hash of house-lint's own sources>`, so editing
   rule code invalidates it without a version bump. house-lint writes a self-ignoring `.gitignore`
   into its own default cache base only — never into a user-supplied `--cache-dir`.

@@ -2,7 +2,7 @@
 
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,9 +30,18 @@ class DiscoveryError(ValueError):
 
 @dataclass(frozen=True)
 class DiscoveryResult:
+    """Selected files, plus the resolved target discovery actually validated for each.
+
+    `files` holds unresolved paths, because those are what the user named and what findings are
+    reported against. `resolved_paths` maps each of them to the `resolve()` result that passed the
+    containment check, so the scan can read *that* target rather than resolving the symlink a
+    second time and possibly following it somewhere else — see `SourceFile.__init__`.
+    """
+
     files: tuple[Path, ...]
     files_skipped: int = 0
     errors: tuple[LintError, ...] = ()
+    resolved_paths: Mapping[Path, Path] = field(default_factory=lambda: dict[Path, Path]())
 
 
 @dataclass(frozen=True)
@@ -267,8 +276,11 @@ class _FileSelector:
             self._consider(argument, explicit_paths=explicit_paths)
 
     def result(self) -> DiscoveryResult:
+        # `selected` is keyed by resolved path so a symlink and its target deduplicate; the scan
+        # needs the reverse direction, from the path it reports to the target it may read.
+        resolved_paths = {path: resolved for resolved, path in self.selected.items()}
         return DiscoveryResult(
-            tuple(sorted(self.selected.values())), self.files_skipped, tuple(self.errors)
+            tuple(sorted(resolved_paths)), self.files_skipped, tuple(self.errors), resolved_paths
         )
 
     def _consider(

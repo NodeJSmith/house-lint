@@ -118,6 +118,8 @@ The linter loads the selected root's `.gitignore` plus every nested `.gitignore`
 
 house-lint adds a self-ignoring `.gitignore` to its own default `.house-lint-cache/` directory so it stays invisible to `git status`. It never writes one into a directory you name with `--cache-dir` — that directory is yours.
 
+A cache failure never fails a scan, but it is never silent either: an unwritable directory, a full disk or a corrupted entry prints one `warning:` line to stderr the first time it happens in a run. Only that first failure is printed by default. A broken cache directory fails once per scanned file, so printing every one would bury the single fact worth reporting under thousands of near-identical lines; the remainder are shown under `--debug`. Findings and the exit code are unaffected.
+
 ## Suppressions
 
 Suppress a finding only with a rule ID and a meaningful reason (at least three alphanumeric characters):

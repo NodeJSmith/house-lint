@@ -40,9 +40,19 @@ The root `.gitignore` and every nested `.gitignore` between the root and each di
 
 An ignored directory is skipped without being enumerated, which is what keeps a large `.venv/` or `node_modules/` cheap to exclude. The reported `files skipped` count follows from that: one pruned directory counts as one skip, however many files it contains.
 
-house-lint reimplements git's ignore rules on top of [`pathspec`](https://pypi.org/project/pathspec/) rather than shelling out to git, and `tests/integration/test_gitignore_parity.py` checks that reimplementation against real `git check-ignore`.
+house-lint reimplements git's ignore rules on top of [`pathspec`](https://pypi.org/project/pathspec/) rather than shelling out to git. Two test suites check that reimplementation against real `git check-ignore`: `tests/integration/test_gitignore_parity.py` runs a curated table of pattern shapes, and `tests/integration/test_gitignore_fuzz.py` generates random combinations. The second is marked `slow` and deselected by default; run it with `pytest -m slow` (add `-s` to print the rates below).
 
-One divergence is known and deliberate: a negated directory-only pattern (`!sub/`) re-includes everything beneath it, whereas git re-includes only the `sub` entry itself and re-evaluates each descendant against the remaining patterns. Closing it would mean matching path components by hand instead of delegating to `pathspec`. It only changes the outcome when such a negation sits under a broader ignore that also covers the descendants — and it always errs toward linting a file git would ignore, never toward silently skipping one, so it cannot hide a finding. Randomised differential runs against `git check-ignore` put it at well under 1% of generated pattern combinations, all of that one shape.
+One divergence is known and deliberate: a negated directory-only pattern (`!sub/`) re-includes everything beneath it, whereas git re-includes only the `sub` entry itself and re-evaluates each descendant against the remaining patterns. It changes the outcome only when such a negation sits under a broader ignore that also covers the descendants, so it cannot occur at all without a negation. Closing it would mean owning the pattern-to-regex compiler rather than delegating to `pathspec`, which compiles every pattern as a prefix search and so cannot distinguish "this pattern matched this entry" from "it matched an ancestor".
+
+The guarantee that makes that trade acceptable is the *direction* of the divergence: it always errs toward linting a file git would ignore, never toward silently skipping one, so it cannot hide a finding. Over-linting is visible and silenced with one `exclude` entry; under-linting is indistinguishable from a clean run. `test_gitignore_fuzz.py` asserts that direction on every generated combination, and measures the rate against three declared pattern distributions:
+
+| `.gitignore` content | divergence rate | skips a file git lints |
+|---|---|---|
+| plain names and globs, no negation | 0.00% (0/1500) | never |
+| the same, 5% of patterns negated | 0.33% (5/1500) | never |
+| corner-hunting pool, 30% negated | 1.47% (22/1500) | never |
+
+A rate is meaningless without the distribution that produced it, which is why all three are declared in the test rather than summarised as one number. Regenerate them there and update this table in the same change.
 
 ## Caching
 
