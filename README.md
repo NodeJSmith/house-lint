@@ -112,7 +112,7 @@ The linter loads the selected root's `.gitignore` plus every nested `.gitignore`
 
 ## Caching
 
-`check` caches each file's result under `<root>/.house-lint-cache/<version>-<source fingerprint>/`, keyed by the file's content and its effective rule set for that file. A cache hit skips tokenization, parsing, and rule execution entirely for that file. Upgrading house-lint — or editing its rule code in a working checkout — starts from an empty cache automatically, because both the version and a fingerprint of house-lint's own sources are part of the cache path. Superseded directories are pruned rather than left to accumulate.
+`check` caches each file's result under `<root>/.house-lint-cache/<version>-<source fingerprint>/`, keyed by the file's content, its effective rule set for that file, and the running Python version — `ast.parse` accepts different grammar across the versions house-lint supports, so a cache shared between venvs must not replay one interpreter's parse result under another. A cache hit skips tokenization, parsing, and rule execution entirely for that file. Upgrading house-lint — or editing its rule code in a working checkout — starts from an empty cache automatically, because both the version and a fingerprint of house-lint's own sources are part of the cache path. Superseded directories are pruned rather than left to accumulate.
 
 `--no-cache` disables reading from the cache but still writes to it, keeping it warm for the next run. `--cache-dir` overrides where the cache lives (still namespaced underneath the path you give it).
 
