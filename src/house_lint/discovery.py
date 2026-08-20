@@ -429,6 +429,24 @@ class _FileSelector:
                 if self.limit_reached:
                     break
 
+    def _ancestor_chain(self, directory: Path) -> list[Path]:
+        """Every directory from the one just below root down to `directory`, root-first.
+
+        Both ancestor walks below need this same sequence, and both need it to stop cleanly for a
+        `directory` outside root — `relative_to` raises there, and the empty chain is the honest
+        answer: nothing between the two to check.
+        """
+        try:
+            relative_parts = directory.relative_to(self.root).parts
+        except ValueError:
+            return []
+        chain: list[Path] = []
+        current = self.root
+        for part in relative_parts:
+            current = current / part
+            chain.append(current)
+        return chain
+
     def _has_excluded_ancestor(self, directory: Path) -> bool:
         """Whether any directory between root and `directory` (inclusive) is itself excluded by
         `builtin_spec` or `exclude_spec`.
@@ -453,17 +471,10 @@ class _FileSelector:
         """
         if directory in self.excluded_ancestor_cache:
             return self.excluded_ancestor_cache[directory]
-        try:
-            relative_parts = directory.relative_to(self.root).parts
-        except ValueError:
-            relative_parts = ()
-        excluded = False
-        current = self.root
-        for part in relative_parts:
-            current = current / part
-            if _ignored(self.root, current, self.builtin_spec, self.exclude_spec, is_dir=True):
-                excluded = True
-                break
+        excluded = any(
+            _ignored(self.root, ancestor, self.builtin_spec, self.exclude_spec, is_dir=True)
+            for ancestor in self._ancestor_chain(directory)
+        )
         self.excluded_ancestor_cache[directory] = excluded
         return excluded
 
@@ -509,15 +520,7 @@ class _FileSelector:
             self.combined_gitignore_spec_cache[directory] = spec
             return spec
         lines: list[str] = list(self.root_gitignore_lines)
-        try:
-            relative_parts = directory.relative_to(self.root).parts
-        except ValueError:
-            relative_parts = ()
-        current = self.root
-        for part in relative_parts:
-            current = current / part
-            # `current` is built one path segment at a time out of `directory`'s own relative
-            # parts, so every value it takes is an ancestor directory of `directory` itself.
+        for current in self._ancestor_chain(directory):
             if lines and _ignored(
                 self.root,
                 current,
