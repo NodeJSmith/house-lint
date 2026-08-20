@@ -1,7 +1,7 @@
 ---
 task_id: "T04"
 title: "Update documentation and add pathspec dependency pin"
-status: "planned"
+status: "done"
 depends_on: ["T03"]
 implements: ["AC#10"]
 ---
