@@ -30,11 +30,11 @@ class ConfigError(ValueError):
     """Raised when a configuration cannot be used for a scan."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class TokenFamily:
     prefixes: tuple[str, ...]
     scopes: tuple[str, ...]
-    hash: str = "forbidden"
+    separator: str = "none"
     min_digits: int = 1
     max_digits: int | None = None
     suffix: str = "none"
@@ -42,9 +42,43 @@ class TokenFamily:
     not_followed_by_time: bool = False
 
 
+BUILTIN_SPEC = TokenFamily(
+    prefixes=("AC", "FR", "NFR", "WP"),
+    scopes=("comments", "docstrings", "filenames"),
+    separator="hash-optional",
+    min_digits=1,
+    max_digits=4,
+    suffix="optional-lower-alpha",
+)
+
+BUILTIN_TASK = TokenFamily(
+    prefixes=("T",),
+    scopes=("comments", "docstrings", "filenames"),
+    separator="hash-optional",
+    min_digits=1,
+    max_digits=4,
+    suffix="optional-lower-alpha",
+    not_followed_by_time=True,
+)
+
+BUILTIN_KNOWN_ISSUES = TokenFamily(
+    prefixes=("KI",),
+    scopes=("comments", "docstrings", "filenames"),
+    separator="dash",
+    min_digits=1,
+    max_digits=4,
+)
+
+BUILTIN_TOKEN_FAMILIES: tuple[TokenFamily, ...] = (
+    BUILTIN_SPEC,
+    BUILTIN_TASK,
+    BUILTIN_KNOWN_ISSUES,
+)
+
+
 @dataclass(frozen=True)
 class HSL101Options:
-    tokens: tuple[TokenFamily, ...] = ()
+    tokens: tuple[TokenFamily, ...] = BUILTIN_TOKEN_FAMILIES
     max_findings_per_file: int = DEFAULT_MAX_FINDINGS_PER_FILE
 
 
@@ -141,8 +175,6 @@ def default_config(
         cli_extend_select=cli_extend_select,
         cli_extend_ignore=cli_extend_ignore,
     )
-    if "HSL101" in enabled_rules:
-        raise ConfigError("HSL101 requires tokens when selected")
     return LintConfig(enabled_rules=enabled_rules)
 
 
@@ -277,7 +309,7 @@ def _token_family(raw: Any, index: int) -> TokenFamily:
         {
             "prefixes",
             "scopes",
-            "hash",
+            "separator",
             "min_digits",
             "max_digits",
             "suffix",
@@ -302,9 +334,9 @@ def _token_family(raw: Any, index: int) -> TokenFamily:
         or not set(scopes) <= {"comments", "docstrings", "filenames"}
     ):
         raise ConfigError(f"{name}.scopes contains an invalid scope")
-    hash_mode = table.get("hash", "forbidden")
-    if hash_mode not in {"forbidden", "optional", "required"}:
-        raise ConfigError(f"{name}.hash is invalid")
+    separator = table.get("separator", "none")
+    if separator not in {"none", "hash", "hash-optional", "dash", "dash-optional"}:
+        raise ConfigError(f"{name}.separator is invalid")
     min_digits = _bounded_int(table.get("min_digits", 1), f"{name}.min_digits", MAX_DIGITS_BOUND)
     max_digits_raw = table.get("max_digits")
     max_digits = (
@@ -319,14 +351,14 @@ def _token_family(raw: Any, index: int) -> TokenFamily:
         if key in table and type(table[key]) is not bool:
             raise ConfigError(f"{name}.{key} must be a boolean")
     return TokenFamily(
-        prefixes,
-        scopes,
-        hash_mode,
-        min_digits,
-        max_digits,
-        suffix,
-        table.get("case_sensitive", True),
-        table.get("not_followed_by_time", False),
+        prefixes=prefixes,
+        scopes=scopes,
+        separator=separator,
+        min_digits=min_digits,
+        max_digits=max_digits,
+        suffix=suffix,
+        case_sensitive=table.get("case_sensitive", True),
+        not_followed_by_time=table.get("not_followed_by_time", False),
     )
 
 
@@ -335,12 +367,17 @@ def _rule_options(raw: dict[str, Any]) -> tuple[HSL101Options, HSL102Options, HS
     _strict_keys(rules, {"HSL101", "HSL102", "HSL103"}, "rules")
     hsl101_raw = _table(rules.get("HSL101", {}), "rules.HSL101")
     _strict_keys(hsl101_raw, {"tokens", "max_findings_per_file"}, "rules.HSL101")
-    tokens: tuple[TokenFamily, ...] = ()
+    user_tokens: tuple[TokenFamily, ...] = ()
     if "tokens" in hsl101_raw:
         token_values = _array(hsl101_raw["tokens"], "HSL101.tokens")
         if not token_values or len(token_values) > MAX_TOKEN_FAMILIES:
             raise ConfigError(f"HSL101.tokens must contain 1 to {MAX_TOKEN_FAMILIES} families")
-        tokens = tuple(_token_family(item, i) for i, item in enumerate(token_values))
+        user_tokens = tuple(_token_family(item, i) for i, item in enumerate(token_values))
+    tokens = BUILTIN_TOKEN_FAMILIES + user_tokens
+    if len(tokens) > MAX_TOKEN_FAMILIES:
+        raise ConfigError(
+            f"HSL101.tokens combined with built-in families must not exceed {MAX_TOKEN_FAMILIES}"
+        )
     hsl101 = HSL101Options(
         tokens,
         _bounded_int(
@@ -434,8 +471,6 @@ def load_config(
     )
     per_file_ignores = _per_file_ignores(house.get("per-file-ignores", {}))
     options = _rule_options(house)
-    if "HSL101" in enabled and not options[0].tokens:
-        raise ConfigError("HSL101 requires tokens when selected")
     # `enabled` is already sorted with the always-on rule appended (see
     # `_effective_rule_selection`); re-sorting here would only differ from `default_config`'s
     # handling of the same value if an always-on rule ID ever stopped sorting last.

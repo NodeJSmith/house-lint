@@ -3,6 +3,11 @@ from pathlib import Path
 import pytest
 
 from house_lint.config import (
+    BUILTIN_KNOWN_ISSUES,
+    BUILTIN_SPEC,
+    BUILTIN_TASK,
+    BUILTIN_TOKEN_FAMILIES,
+    MAX_TOKEN_FAMILIES,
     ConfigError,
     compile_per_file_ignores,
     default_config,
@@ -87,9 +92,10 @@ def test_default_config_extend_select_layers_on_top_of_default_select() -> None:
     )
 
 
-def test_default_config_extend_select_still_enforces_hsl101_token_requirement() -> None:
-    with pytest.raises(ConfigError, match="HSL101 requires tokens"):
-        default_config(cli_extend_select=("HSL101",))
+def test_default_config_extend_select_hsl101_succeeds_with_builtin_tokens() -> None:
+    config = default_config(cli_extend_select=("HSL101",))
+
+    assert config.hsl101.tokens == BUILTIN_TOKEN_FAMILIES
 
 
 def test_extend_select_and_extend_ignore_reject_duplicate_and_always_on_ids(
@@ -207,9 +213,10 @@ def test_default_config_uses_the_shared_selection_precedence() -> None:
     )
 
 
-def test_default_config_rejects_cli_hsl101_without_tokens() -> None:
-    with pytest.raises(ConfigError, match="HSL101 requires tokens"):
-        default_config(cli_select=("HSL101",))
+def test_default_config_cli_hsl101_without_tokens_succeeds_with_builtin_tokens() -> None:
+    config = default_config(cli_select=("HSL101",))
+
+    assert config.hsl101.tokens == BUILTIN_TOKEN_FAMILIES
 
 
 def test_get_house_lint_table_detects_only_a_valid_house_lint_table() -> None:
@@ -247,14 +254,14 @@ def test_rule_selection_rejects_duplicate_and_always_on_ids(
         load_config(path)
 
 
-def test_hsl101_requires_tokens_only_when_selected(tmp_path: Path) -> None:
+def test_hsl101_succeeds_with_builtin_tokens_whether_or_not_selected(tmp_path: Path) -> None:
     path = tmp_path / "pyproject.toml"
     path.write_text('[tool.house-lint]\nselect = ["HSL001"]\n[tool.house-lint.rules.HSL101]\n')
     assert load_config(path).enabled_rules == ("HSL001", "HSL900")
 
     path.write_text('[tool.house-lint]\nselect = ["HSL101"]\n[tool.house-lint.rules.HSL101]\n')
-    with pytest.raises(ConfigError, match="tokens"):
-        load_config(path)
+    config = load_config(path)
+    assert config.hsl101.tokens == BUILTIN_TOKEN_FAMILIES
 
 
 def test_invalid_disabled_rule_table_is_still_rejected(tmp_path: Path) -> None:
@@ -328,8 +335,80 @@ def test_token_family_is_typed_and_validated(tmp_path: Path) -> None:
     path.write_text(
         '[tool.house-lint]\nselect = ["HSL101"]\n'
         "[[tool.house-lint.rules.HSL101.tokens]]\n"
-        'prefixes = ["AC"]\nscopes = ["comments"]\nhash = "optional"\n'
+        'prefixes = ["AC"]\nscopes = ["comments"]\nseparator = "hash-optional"\n'
     )
     config = load_config(path)
-    assert config.hsl101.tokens[0].prefixes == ("AC",)
-    assert config.hsl101.tokens[0].hash == "optional"
+    assert config.hsl101.tokens[3].prefixes == ("AC",)
+    assert config.hsl101.tokens[3].separator == "hash-optional"
+
+
+def test_builtin_token_families_have_expected_shape() -> None:
+    assert BUILTIN_SPEC.prefixes == ("AC", "FR", "NFR", "WP")
+    assert BUILTIN_SPEC.scopes == ("comments", "docstrings", "filenames")
+    assert BUILTIN_SPEC.separator == "hash-optional"
+    assert BUILTIN_SPEC.suffix == "optional-lower-alpha"
+    assert BUILTIN_SPEC.not_followed_by_time is False
+
+    assert BUILTIN_TASK.prefixes == ("T",)
+    assert BUILTIN_TASK.scopes == ("comments", "docstrings", "filenames")
+    assert BUILTIN_TASK.separator == "hash-optional"
+    assert BUILTIN_TASK.suffix == "optional-lower-alpha"
+    assert BUILTIN_TASK.not_followed_by_time is True
+
+    assert BUILTIN_KNOWN_ISSUES.prefixes == ("KI",)
+    assert BUILTIN_KNOWN_ISSUES.scopes == ("comments", "docstrings", "filenames")
+    assert BUILTIN_KNOWN_ISSUES.separator == "dash"
+    assert BUILTIN_KNOWN_ISSUES.suffix == "none"
+
+    assert BUILTIN_TOKEN_FAMILIES == (BUILTIN_SPEC, BUILTIN_TASK, BUILTIN_KNOWN_ISSUES)
+
+
+def test_hsl101_selected_with_no_user_tokens_produces_builtin_families(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text('[tool.house-lint]\nselect = ["HSL101"]\n')
+
+    config = load_config(path)
+
+    assert config.hsl101.tokens == BUILTIN_TOKEN_FAMILIES
+
+
+def test_hsl101_user_tokens_union_with_builtins(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text(
+        '[tool.house-lint]\nselect = ["HSL101"]\n'
+        "[[tool.house-lint.rules.HSL101.tokens]]\n"
+        'prefixes = ["JIRA"]\nscopes = ["comments"]\nseparator = "dash"\nmin_digits = 1\n'
+    )
+
+    config = load_config(path)
+
+    assert config.hsl101.tokens[:3] == BUILTIN_TOKEN_FAMILIES
+    assert config.hsl101.tokens[3].prefixes == ("JIRA",)
+    assert config.hsl101.tokens[3].separator == "dash"
+    assert len(config.hsl101.tokens) == 4
+
+
+def test_hsl101_tokens_exceeding_max_after_builtin_merge_raises_config_error(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "pyproject.toml"
+    user_families = "\n".join(
+        f'[[tool.house-lint.rules.HSL101.tokens]]\nprefixes = ["Z{i}"]\nscopes = ["comments"]\n'
+        for i in range(MAX_TOKEN_FAMILIES - 2)
+    )
+    path.write_text(f'[tool.house-lint]\nselect = ["HSL101"]\n{user_families}')
+
+    with pytest.raises(ConfigError, match="must not exceed"):
+        load_config(path)
+
+
+def test_token_family_separator_rejects_unknown_value(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text(
+        '[tool.house-lint]\nselect = ["HSL101"]\n'
+        "[[tool.house-lint.rules.HSL101.tokens]]\n"
+        'prefixes = ["AC"]\nscopes = ["comments"]\nseparator = "invalid"\n'
+    )
+
+    with pytest.raises(ConfigError, match="separator is invalid"):
+        load_config(path)
