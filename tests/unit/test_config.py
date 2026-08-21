@@ -392,6 +392,8 @@ def test_hsl101_tokens_exceeding_max_after_builtin_merge_raises_config_error(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "pyproject.toml"
+    # 3 built-ins + (MAX_TOKEN_FAMILIES - 2) user families = MAX_TOKEN_FAMILIES + 1, one over the
+    # limit enforced after the built-in merge.
     user_families = "\n".join(
         f'[[tool.house-lint.rules.HSL101.tokens]]\nprefixes = ["Z{i}"]\nscopes = ["comments"]\n'
         for i in range(MAX_TOKEN_FAMILIES - 2)

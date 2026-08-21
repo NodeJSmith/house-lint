@@ -135,7 +135,7 @@ def test_limits_findings_per_file(write_sample) -> None:
     ]
 
 
-def test_default_hash_mode_forbids_hash_and_default_cap_is_200(write_sample) -> None:
+def test_default_separator_forbids_a_separator_and_default_cap_is_200(write_sample) -> None:
     path = write_sample("# AC#1 " + " ".join(f"AC{number:03d}" for number in range(1, 202)) + "\n")
     options = HSL101Options((TokenFamily(prefixes=("AC",), scopes=("comments",)),))
 
