@@ -444,6 +444,18 @@ def test_build_patterns_marks_a_collapsed_double_star_run_as_not_anchored() -> N
     assert [is_anchored for _pattern, _is_dir_only, is_anchored in patterns] == [False]
 
 
+def test_build_patterns_does_not_collapse_a_double_star_fused_to_a_literal_segment() -> None:
+    # "foo**/**" is NOT a double-star run -- the leading "**" is fused to the literal "foo",
+    # forming its own ordinary (non-recursive) segment, not a standalone "**" path component.
+    # git keeps this pattern anchored to its owning directory (verified against real
+    # `git check-ignore`: a nested "foo"-prefixed directory two levels below the owning
+    # directory is not ignored, only one directly inside it). Collapsing "foo**/**" down to
+    # "foo**" would erase the embedded slash and misclassify it as unanchored.
+    patterns = _build_patterns_or_empty(("foo**/**",))
+
+    assert [is_anchored for _pattern, _is_dir_only, is_anchored in patterns] == [True]
+
+
 def test_build_patterns_returns_an_empty_tuple_and_the_error_on_parse_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

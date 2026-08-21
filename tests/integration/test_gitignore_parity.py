@@ -92,6 +92,15 @@ SCENARIOS = (
         {"src": ["**/**/b.py"]},
         ("src/a.py", "src/sub/b.py"),
     ),
+    # "foo**/**" is not a double-star run: the leading "**" is fused to the literal "foo",
+    # forming an ordinary segment, so the pattern stays anchored to its owning directory rather
+    # than collapsing to the unanchored "foo**". Only a "foo"-prefixed directory directly inside
+    # "src" is ignored -- one nested a level deeper is not.
+    Scenario(
+        "a '**' fused to a literal segment (e.g. 'foo**') does not un-anchor the pattern",
+        {"src": ["foo**/**"]},
+        ("src/foobar/x.py", "src/sub/foobar/y.py"),
+    ),
     # A leading `**/` combined with a further interior slash (`**/sub/deep.py`) requires the
     # two-segment suffix "sub/deep.py" at any depth -- not just the last component. A pattern
     # this shape is `is_anchored`'s edge case: the compiled regex's arbitrary-prefix group (from

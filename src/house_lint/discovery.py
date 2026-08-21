@@ -39,7 +39,13 @@ _ErrorOperation = Literal[
 # textual slash check. Not a revival of the old flatten/prefix pipeline's `_DOUBLE_STAR_RUN`
 # (deleted per this feature's AC#8): that one fed a full pattern-rewrite-and-reparse step; this one
 # only feeds a boolean classification, never rewrites a pattern that reaches `GitIgnoreSpec`.
-_DOUBLE_STAR_RUN = re.compile(r"\*\*(?:/\*\*)+")
+# The leading `**` must be its own complete path segment -- `(?<![^/])` requires it be preceded by
+# `/` or nothing -- so a fused segment like `foo**` in `foo**/**` is never swept into the collapse.
+# Without that guard, `foo**/**` collapses to `foo**` (no slash) and is misclassified as
+# unanchored, which then lets `_match_patterns` match `foo*`-prefixed directories at any depth
+# instead of only at the pattern's own directory, as real git does (verified against
+# `git check-ignore`; see the fused-segment scenario in the parity suite).
+_DOUBLE_STAR_RUN = re.compile(r"(?<![^/])\*\*(?:/\*\*)+")
 
 
 class DiscoveryError(ValueError):
