@@ -125,7 +125,7 @@ Adopt **Pattern 3** (additive vocabulary layering) as the primary model, consist
 cspell/Vale/codespell — the tools that most closely match house-lint's "vocabulary of token
 patterns" shape:
 
-1. Ship built-in token families with stable names (e.g., `"spec"` for AC/FR/NFR/WP/T, `"known-issues"` for KI).
+1. Ship built-in token families with stable names (e.g., `"spec"` for AC/FR/NFR/WP, `"task"` for T, and `"known-issues"` for KI).
 2. User-configured `tokens` entries **add** families on top of built-ins (union, not replace).
 3. Per-family opt-out via a negation mechanism — either a `"!name"` prefix in an `ignore-tokens`
    list, or a per-family `enabled = false` flag.
@@ -139,12 +139,14 @@ documented in flake8/Pylint.
 ## Sources
 
 ### Reference implementations
+
 - https://docs.astral.sh/ruff/settings/ — Ruff select/extend-select paired verbs
 - https://flake8.pycqa.org/en/latest/user/violations.html — flake8 extend-select/extend-ignore
 - https://cspell.org/docs/dictionaries/custom-dictionaries — cspell additive dictionary layering
 - https://github.com/codespell-project/codespell — codespell built-in + ignore-words
 
 ### Documentation & standards
+
 - https://eslint.org/docs/latest/use/configure/configuration-files — ESLint flat config merge
 - https://eslint.org/docs/latest/extend/shareable-configs — ESLint extends + per-key override
 - https://github.com/eslint/rfcs/blob/main/designs/2019-config-simplification/README.md — ESLint RFC on merge vs. replace tradeoff
@@ -154,6 +156,7 @@ documented in flake8/Pylint.
 - https://oxc.rs/docs/guide/usage/linter/nested-config.html — Oxlint nested config (anti-pattern)
 
 ### Bug reports & design discussions
+
 - https://github.com/pycqa/flake8/issues/284 — flake8 three-tier precedence confusion
 - https://github.com/PyCQA/pylint/issues/2635 — Pylint plugin default override surprise
 - https://eslint.org/blog/2025/03/flat-config-extends-define-config-global-ignores/ — ESLint flat-config extends reintroduction
