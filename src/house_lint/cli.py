@@ -20,7 +20,9 @@ from house_lint.cache import (
     write_cached_result,
 )
 from house_lint.config import (
+    CompiledPerFileIgnores,
     ConfigError,
+    DetectorInput,
     LintConfig,
     compile_per_file_ignores,
     default_config,
@@ -164,6 +166,30 @@ def _persist_cache_entry(
     )
 
 
+def _resolve_file_rules(
+    match_relative: str,
+    config: LintConfig,
+    detector_inputs: tuple[DetectorInput, ...],
+    compiled_per_file_ignores: CompiledPerFileIgnores,
+) -> tuple[tuple[str, ...], tuple[DetectorInput, ...]]:
+    """Return this file's (enabled_rules, detector_inputs), narrowed by per-file-ignores.
+
+    Suppression handling only flags pragmas naming a disabled rule (see
+    apply_suppressions/_collect_claims in suppressions.py) — it does not filter candidate
+    findings by enabled_rules. detector_inputs must be recomputed here so a per-file-ignored
+    rule's detector never runs for this file; skipping this recompute would let its findings
+    leak through unfiltered.
+    """
+    if not compiled_per_file_ignores:
+        return config.enabled_rules, detector_inputs
+    file_enabled_rules = per_file_enabled_rules(
+        config.enabled_rules, compiled_per_file_ignores, match_relative
+    )
+    if file_enabled_rules == config.enabled_rules:
+        return file_enabled_rules, detector_inputs
+    return file_enabled_rules, selected_detector_inputs(config, enabled_rules=file_enabled_rules)
+
+
 def _scan(
     paths: tuple[Path, ...],
     *,
@@ -237,21 +263,9 @@ def _scan(
         # keyed by resolved path, which is what makes a symlink and its target deduplicate. A
         # per-file-ignore therefore follows the file, not the spelling that reached it.
         match_relative = discovered.resolved_paths[path].relative_to(root).as_posix()
-        file_enabled_rules = config.enabled_rules
-        file_detector_inputs = detector_inputs
-        if compiled_per_file_ignores:
-            file_enabled_rules = per_file_enabled_rules(
-                config.enabled_rules, compiled_per_file_ignores, match_relative
-            )
-            if file_enabled_rules != config.enabled_rules:
-                # Suppression handling only flags pragmas naming a disabled rule (see
-                # apply_suppressions/_collect_claims in suppressions.py) — it does not filter
-                # candidate findings by enabled_rules. detector_inputs must be recomputed here
-                # so a per-file-ignored rule's detector never runs for this file; skipping this
-                # recompute would let its findings leak through unfiltered.
-                file_detector_inputs = selected_detector_inputs(
-                    config, enabled_rules=file_enabled_rules
-                )
+        file_enabled_rules, file_detector_inputs = _resolve_file_rules(
+            match_relative, config, detector_inputs, compiled_per_file_ignores
+        )
         # The file is read exactly once per scan, here. Everything below — the cache key, the
         # detectors, and the entry written back — derives from that one buffer, so a cache entry
         # can never describe bytes that were not the ones scanned.
