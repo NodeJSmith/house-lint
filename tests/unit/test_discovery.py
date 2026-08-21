@@ -25,6 +25,46 @@ def read_text_spy(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     return read_calls
 
 
+def test_builtin_excludes_matches_ruffs_default_exclude_list_plus_house_lint_extras() -> None:
+    # Pins `BUILTIN_EXCLUDES` to Ruff's full default exclude list (25 entries, per
+    # `ruff check --isolated --show-settings` against the locked ruff version -- `--isolated`
+    # matters because this repo's own `pyproject.toml` sets `exclude = ["design"]`, which replaces
+    # Ruff's defaults rather than extending them) plus house-lint's own extra (`__pycache__/`) --
+    # 26 total. This is load-bearing once the default include scans from the project root
+    # (planned) -- without entries like `venv/`, `.tox/`, and `.mypy_cache/`, a root-scanning
+    # default would enumerate thousands of vendored `.py` files. A silent shrink of this tuple
+    # would widen the default scan surface without any other test catching it.
+    assert discovery.BUILTIN_EXCLUDES == (
+        ".bzr/",
+        ".direnv/",
+        ".eggs/",
+        ".git/",
+        ".git-rewrite/",
+        ".hg/",
+        ".ipynb_checkpoints/",
+        ".mypy_cache/",
+        ".nox/",
+        ".pants.d/",
+        ".pyenv/",
+        ".pytest_cache/",
+        ".pytype/",
+        ".ruff_cache/",
+        ".svn/",
+        ".tox/",
+        ".venv/",
+        ".vscode/",
+        "__pycache__/",
+        "__pypackages__/",
+        "_build/",
+        "buck-out/",
+        "dist/",
+        "node_modules/",
+        "site-packages/",
+        "venv/",
+    )
+    assert len(discovery.BUILTIN_EXCLUDES) == 26
+
+
 def test_full_scan_applies_builtin_gitignore_configured_excludes_and_sorting(
     tmp_path: Path,
 ) -> None:

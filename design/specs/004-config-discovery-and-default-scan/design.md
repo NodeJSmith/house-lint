@@ -51,7 +51,7 @@ house-lint has two config/discovery limitations: (1) it only discovers `pyprojec
 - **AC#7** Running `house-lint` with `include = []` in config produces the base "empty scan" message but without config guidance (intentional empty scan). (FR#9)
 - **AC#8** Existing tests continue to pass — backward compatibility for projects with explicit `include` config. (FR#7)
 - **AC#9** `--root /path --config` not given checks for standalone config files in the root dir before falling back to no-config. (FR#2)
-- **AC#10** `BUILTIN_EXCLUDES` contains all 22 entries (Ruff's 20 + `__pycache__/` + `site-packages/`). (FR#10)
+- **AC#10** `BUILTIN_EXCLUDES` matches Ruff's actual current default exclude list (verified via `ruff check --isolated --show-settings`) plus house-lint's existing extras. (FR#10)
 - **AC#11** Running with `--debug` in a directory containing both `house-lint.toml` and `pyproject.toml` with `[tool.house-lint]` shows which file was used and which was shadowed. (FR#11)
 
 ## Approach
@@ -75,7 +75,7 @@ When `--debug` is active and more than one recognized config source exists at th
 
 Change `DEFAULT_INCLUDE` from `("src", "tests", "scripts", "tools", "examples")` to `(".",)`. This means `discover_files()` with default include will walk from the project root, filtered by builtin excludes and gitignore rules — infrastructure that already exists and works.
 
-As a prerequisite, expand `BUILTIN_EXCLUDES` to match Ruff's default exclude list plus house-lint's existing extras (`__pycache__/`, `site-packages/`). The full list (22 entries): `.bzr/`, `.direnv/`, `.eggs/`, `.git/`, `.git-rewrite/`, `.hg/`, `.mypy_cache/`, `.nox/`, `.pants.d/`, `.pytype/`, `.ruff_cache/`, `.svn/`, `.tox/`, `.venv/`, `__pycache__/`, `__pypackages__/`, `_build/`, `buck-out/`, `dist/`, `node_modules/`, `site-packages/`, `venv/`. This is load-bearing for the scan-from-root change — without entries like `venv/`, `.tox/`, and `.mypy_cache/`, the expanded default would scan thousands of vendored `.py` files.
+As a prerequisite, expand `BUILTIN_EXCLUDES` to match Ruff's actual current default exclude list (verified via `ruff check --isolated --show-settings` against the locked ruff version, not a hardcoded transcription that can drift on upgrade) plus house-lint's existing extra (`__pycache__/`; `site-packages/` is already one of Ruff's own defaults). The full list (26 entries): `.bzr/`, `.direnv/`, `.eggs/`, `.git/`, `.git-rewrite/`, `.hg/`, `.ipynb_checkpoints/`, `.mypy_cache/`, `.nox/`, `.pants.d/`, `.pyenv/`, `.pytest_cache/`, `.pytype/`, `.ruff_cache/`, `.svn/`, `.tox/`, `.venv/`, `.vscode/`, `__pycache__/`, `__pypackages__/`, `_build/`, `buck-out/`, `dist/`, `node_modules/`, `site-packages/`, `venv/`. This is load-bearing for the scan-from-root change — without entries like `venv/`, `.tox/`, and `.mypy_cache/`, the expanded default would scan thousands of vendored `.py` files.
 
 The `_validate_include()` function already accepts `"."` — `Path(".").is_absolute()` is `False`, `".."` is not in its parts, it's non-empty, and it contains no glob characters. The single-dot entry means "the root directory itself," which `discover_files()` already handles when it builds `requested = tuple(root / item for item in include)` — `root / "."` resolves to `root`. Add a test to confirm this.
 
@@ -130,7 +130,7 @@ house-lint
 ## Changed Files
 
 - modify: `src/house_lint/config.py` — add `get_standalone_table()`, change `DEFAULT_INCLUDE` to `(".",)`, add `include_is_default` to `LintConfig`, update `_validate_include()` to accept `"."`, update `load_config()` for standalone format
-- modify: `src/house_lint/discovery.py` — update `resolve_project()` to check standalone config files in the walk; update the `--root` without `--config` path similarly; expand `BUILTIN_EXCLUDES` to 22 entries
+- modify: `src/house_lint/discovery.py` — update `resolve_project()` to check standalone config files in the walk; update the `--root` without `--config` path similarly; expand `BUILTIN_EXCLUDES` to 26 entries
 - modify: `src/house_lint/cli.py` — pass `standalone=True` to `load_config()` for standalone config files; thread config context to reporters
 - modify: `src/house_lint/reporters/text.py` — make existing zero-file message context-aware with config-format guidance
 - modify: `src/house_lint/reporters/json.py` — add zero-file signal to JSON output

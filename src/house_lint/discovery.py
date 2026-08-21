@@ -23,7 +23,34 @@ from pathspec.patterns.gitignore.spec import (
 from house_lint.config import DEFAULT_INCLUDE, ConfigError, get_house_lint_table, load_toml
 from house_lint.results import LintError
 
-BUILTIN_EXCLUDES = (".git/", ".venv/", ".nox/", "__pycache__/", "site-packages/", "node_modules/")
+BUILTIN_EXCLUDES = (
+    ".bzr/",
+    ".direnv/",
+    ".eggs/",
+    ".git/",
+    ".git-rewrite/",
+    ".hg/",
+    ".ipynb_checkpoints/",
+    ".mypy_cache/",
+    ".nox/",
+    ".pants.d/",
+    ".pyenv/",
+    ".pytest_cache/",
+    ".pytype/",
+    ".ruff_cache/",
+    ".svn/",
+    ".tox/",
+    ".venv/",
+    ".vscode/",
+    "__pycache__/",
+    "__pypackages__/",
+    "_build/",
+    "buck-out/",
+    "dist/",
+    "node_modules/",
+    "site-packages/",
+    "venv/",
+)
 MAX_DISCOVERED_FILES = 100_000
 _CONTENTS_GLOB = re.compile(r"(?<!\*\*)/\*\*(/?)\Z")
 # `LintError.kind`/`.operation` are typed `str` in `results.py` (the public, schema-versioned

@@ -1,7 +1,7 @@
 ---
 task_id: "T06"
 title: "expand BUILTIN_EXCLUDES to match Ruff's default exclude list"
-status: "planned"
+status: "done"
 depends_on: []
 implements: ["FR#10"]
 ---
@@ -63,7 +63,7 @@ Check `tests/unit/test_discovery.py` for any tests that assert the exact content
 
 ## Verify
 
-- [ ] FR#10: `BUILTIN_EXCLUDES` contains all 22 entries
-- [ ] AC#10: The list matches Ruff's 20 + `__pycache__/` + `site-packages/`
+- [ ] FR#10: `BUILTIN_EXCLUDES` contains all 26 entries
+- [ ] AC#10: The list matches Ruff's actual current default exclude list (verified via `ruff check --isolated --show-settings`) plus house-lint's existing extra (`__pycache__/`)
 - [ ] `docs/configuration.md` reflects the expanded list
 - [ ] Existing tests pass with the expanded list
