@@ -168,43 +168,35 @@ def test_limits_materialized_candidates_when_requested(write_sample) -> None:
         detect(SourceFile(path, path.parent), options, limit=MAX_CANDIDATES_PER_FILE)
 
 
-def test_dash_separator_requires_the_dash(write_sample) -> None:
-    path = write_sample("# KI-001 KI001 KI#001\n")
+@pytest.mark.parametrize(
+    ("separator", "prefix", "sample", "expected_messages"),
+    [
+        ("dash", "KI", "# KI-001 KI001 KI#001\n", ["spec token KI-001 in comment"]),
+        (
+            "hash-optional",
+            "FR",
+            "# FR#6 FR6\n",
+            ["spec token FR#6 in comment", "spec token FR6 in comment"],
+        ),
+        (
+            "dash-optional",
+            "KI",
+            "# KI-001 KI001\n",
+            ["spec token KI-001 in comment", "spec token KI001 in comment"],
+        ),
+    ],
+)
+def test_separator_mode_matches_expected_tokens(
+    write_sample, separator: str, prefix: str, sample: str, expected_messages: list[str]
+) -> None:
+    path = write_sample(sample)
     options = HSL101Options(
-        (TokenFamily(prefixes=("KI",), scopes=("comments",), separator="dash"),)
+        (TokenFamily(prefixes=(prefix,), scopes=("comments",), separator=separator),)
     )
 
     findings = detect(SourceFile(path, path.parent), options)
 
-    assert [finding.message for finding in findings] == ["spec token KI-001 in comment"]
-
-
-def test_hash_optional_separator_matches_with_and_without_hash(write_sample) -> None:
-    path = write_sample("# FR#6 FR6\n")
-    options = HSL101Options(
-        (TokenFamily(prefixes=("FR",), scopes=("comments",), separator="hash-optional"),)
-    )
-
-    findings = detect(SourceFile(path, path.parent), options)
-
-    assert [finding.message for finding in findings] == [
-        "spec token FR#6 in comment",
-        "spec token FR6 in comment",
-    ]
-
-
-def test_dash_optional_separator_matches_with_and_without_dash(write_sample) -> None:
-    path = write_sample("# KI-001 KI001\n")
-    options = HSL101Options(
-        (TokenFamily(prefixes=("KI",), scopes=("comments",), separator="dash-optional"),)
-    )
-
-    findings = detect(SourceFile(path, path.parent), options)
-
-    assert [finding.message for finding in findings] == [
-        "spec token KI-001 in comment",
-        "spec token KI001 in comment",
-    ]
+    assert [finding.message for finding in findings] == expected_messages
 
 
 def test_builtin_task_family_detects_task_tokens_but_not_time_strings(write_sample) -> None:

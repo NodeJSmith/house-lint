@@ -24,6 +24,27 @@ MAX_TOKEN_FAMILIES = 32
 MAX_PREFIXES_PER_FAMILY = 32
 MAX_PREFIX_LENGTH = 12
 MAX_DIGITS_BOUND = 12
+_BUILTIN_MAX_DIGITS = 4
+
+VALID_SCOPES: tuple[str, ...] = ("comments", "docstrings", "filenames")
+
+# Single source of truth for separator/suffix vocabularies: the keys validate configured
+# values, and house_lint.rules.spec_tokens uses the values to build detection regexes.
+SEPARATOR_REGEX: Mapping[str, str] = MappingProxyType(
+    {
+        "none": "",
+        "hash": "#",
+        "hash-optional": "#?",
+        "dash": "-",
+        "dash-optional": "-?",
+    }
+)
+SUFFIX_REGEX: Mapping[str, str] = MappingProxyType(
+    {
+        "none": "",
+        "optional-lower-alpha": "[a-z]?",
+    }
+)
 
 
 class ConfigError(ValueError):
@@ -44,29 +65,26 @@ class TokenFamily:
 
 BUILTIN_SPEC = TokenFamily(
     prefixes=("AC", "FR", "NFR", "WP"),
-    scopes=("comments", "docstrings", "filenames"),
+    scopes=VALID_SCOPES,
     separator="hash-optional",
-    min_digits=1,
-    max_digits=4,
+    max_digits=_BUILTIN_MAX_DIGITS,
     suffix="optional-lower-alpha",
 )
 
 BUILTIN_TASK = TokenFamily(
     prefixes=("T",),
-    scopes=("comments", "docstrings", "filenames"),
+    scopes=VALID_SCOPES,
     separator="hash-optional",
-    min_digits=1,
-    max_digits=4,
+    max_digits=_BUILTIN_MAX_DIGITS,
     suffix="optional-lower-alpha",
     not_followed_by_time=True,
 )
 
 BUILTIN_KNOWN_ISSUES = TokenFamily(
     prefixes=("KI",),
-    scopes=("comments", "docstrings", "filenames"),
+    scopes=VALID_SCOPES,
     separator="dash",
-    min_digits=1,
-    max_digits=4,
+    max_digits=_BUILTIN_MAX_DIGITS,
 )
 
 BUILTIN_TOKEN_FAMILIES: tuple[TokenFamily, ...] = (
@@ -328,14 +346,10 @@ def _token_family(raw: Any, index: int) -> TokenFamily:
     if any(len(item) > MAX_PREFIX_LENGTH or not _PREFIX.fullmatch(item) for item in prefixes):
         raise ConfigError(f"{name}.prefixes contains an invalid prefix")
     scopes = _strings(table.get("scopes"), f"{name}.scopes")
-    if (
-        not scopes
-        or len(set(scopes)) != len(scopes)
-        or not set(scopes) <= {"comments", "docstrings", "filenames"}
-    ):
+    if not scopes or len(set(scopes)) != len(scopes) or not set(scopes) <= set(VALID_SCOPES):
         raise ConfigError(f"{name}.scopes contains an invalid scope")
     separator = table.get("separator", "none")
-    if separator not in {"none", "hash", "hash-optional", "dash", "dash-optional"}:
+    if separator not in SEPARATOR_REGEX:
         raise ConfigError(f"{name}.separator is invalid")
     min_digits = _bounded_int(table.get("min_digits", 1), f"{name}.min_digits", MAX_DIGITS_BOUND)
     max_digits_raw = table.get("max_digits")
@@ -345,7 +359,7 @@ def _token_family(raw: Any, index: int) -> TokenFamily:
         else None
     )
     suffix = table.get("suffix", "none")
-    if suffix not in {"none", "optional-lower-alpha"}:
+    if suffix not in SUFFIX_REGEX:
         raise ConfigError(f"{name}.suffix is invalid")
     for key in ("case_sensitive", "not_followed_by_time"):
         if key in table and type(table[key]) is not bool:
@@ -374,6 +388,8 @@ def _rule_options(raw: dict[str, Any]) -> tuple[HSL101Options, HSL102Options, HS
             raise ConfigError(f"HSL101.tokens must contain 1 to {MAX_TOKEN_FAMILIES} families")
         user_tokens = tuple(_token_family(item, i) for i, item in enumerate(token_values))
     tokens = BUILTIN_TOKEN_FAMILIES + user_tokens
+    # Re-check the same cap after merging: the check above only bounds the user-supplied
+    # list, before built-in families are added on top.
     if len(tokens) > MAX_TOKEN_FAMILIES:
         raise ConfigError(
             f"HSL101.tokens combined with built-in families must not exceed {MAX_TOKEN_FAMILIES}"

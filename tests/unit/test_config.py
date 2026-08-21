@@ -9,6 +9,7 @@ from house_lint.config import (
     BUILTIN_TOKEN_FAMILIES,
     MAX_TOKEN_FAMILIES,
     ConfigError,
+    TokenFamily,
     compile_per_file_ignores,
     default_config,
     get_house_lint_table,
@@ -342,24 +343,29 @@ def test_token_family_is_typed_and_validated(tmp_path: Path) -> None:
     assert config.hsl101.tokens[3].separator == "hash-optional"
 
 
-def test_builtin_token_families_have_expected_shape() -> None:
-    assert BUILTIN_SPEC.prefixes == ("AC", "FR", "NFR", "WP")
-    assert BUILTIN_SPEC.scopes == ("comments", "docstrings", "filenames")
-    assert BUILTIN_SPEC.separator == "hash-optional"
-    assert BUILTIN_SPEC.suffix == "optional-lower-alpha"
-    assert BUILTIN_SPEC.not_followed_by_time is False
+@pytest.mark.parametrize(
+    ("family", "prefixes", "separator", "suffix", "not_followed_by_time"),
+    [
+        (BUILTIN_SPEC, ("AC", "FR", "NFR", "WP"), "hash-optional", "optional-lower-alpha", False),
+        (BUILTIN_TASK, ("T",), "hash-optional", "optional-lower-alpha", True),
+        (BUILTIN_KNOWN_ISSUES, ("KI",), "dash", "none", False),
+    ],
+)
+def test_builtin_token_families_have_expected_shape(
+    family: TokenFamily,
+    prefixes: tuple[str, ...],
+    separator: str,
+    suffix: str,
+    not_followed_by_time: bool,
+) -> None:
+    assert family.prefixes == prefixes
+    assert family.scopes == ("comments", "docstrings", "filenames")
+    assert family.separator == separator
+    assert family.suffix == suffix
+    assert family.not_followed_by_time is not_followed_by_time
 
-    assert BUILTIN_TASK.prefixes == ("T",)
-    assert BUILTIN_TASK.scopes == ("comments", "docstrings", "filenames")
-    assert BUILTIN_TASK.separator == "hash-optional"
-    assert BUILTIN_TASK.suffix == "optional-lower-alpha"
-    assert BUILTIN_TASK.not_followed_by_time is True
 
-    assert BUILTIN_KNOWN_ISSUES.prefixes == ("KI",)
-    assert BUILTIN_KNOWN_ISSUES.scopes == ("comments", "docstrings", "filenames")
-    assert BUILTIN_KNOWN_ISSUES.separator == "dash"
-    assert BUILTIN_KNOWN_ISSUES.suffix == "none"
-
+def test_builtin_token_families_tuple_matches_the_individual_constants() -> None:
     assert BUILTIN_TOKEN_FAMILIES == (BUILTIN_SPEC, BUILTIN_TASK, BUILTIN_KNOWN_ISSUES)
 
 
