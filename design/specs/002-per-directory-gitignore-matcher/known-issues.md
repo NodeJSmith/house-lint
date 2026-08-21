@@ -225,3 +225,51 @@ Acceptance criteria:
   check instead of repeating it inline.
 - All 29 parity scenarios and all three fuzz distributions continue passing with 0% divergence,
   matching the current baseline.
+
+## KI-007: `_is_anchored_pattern` does not implement git's "leading `**/`" unanchoring rule
+
+Status: open
+Run: N/A -- found while addressing PR #29 review feedback, not during an orchestration run
+Source: PR review response (surfaced while verifying a codex-connector finding on the same
+function, `_is_anchored_pattern`)
+Observed in: pre-existing -- `_is_anchored_pattern` has only ever implemented the textual-slash
+check plus the consecutive-`**`-run collapse (`_DOUBLE_STAR_RUN`); it has never special-cased a
+leading `**/` on its own.
+Affected files:
+- src/house_lint/discovery.py
+
+Issue:
+git treats any pattern beginning with `**/` as unanchored -- matching at any depth -- regardless
+of what follows the leading `**/`, even when a later segment is itself complex or fused (verified
+against real `git check-ignore`: `**/x/**foo` ignores `nested/deep/x/yfoo/a.py`, not just
+`x/yfoo/a.py`). `_is_anchored_pattern` only recognizes the narrower case where the *entire*
+pattern collapses to a bare `**` via `_DOUBLE_STAR_RUN` (consecutive `**` segments). It has no
+rule for "the pattern starts with `**/` and something else follows that isn't part of the same
+run" -- for a pattern like `**/x/**foo`, the textual slash between `x` and `**foo` makes
+`_is_anchored_pattern` return `True` (anchored), so `_match_patterns` threads the full
+multi-segment path instead of truncating to the last segment, and a directory this pattern should
+match at any depth is missed once it appears below the pattern's own owning directory.
+
+Why deferred:
+This is a distinct, broader classification rule from the fused-double-star-segment fix made in
+this PR (see the `_DOUBLE_STAR_RUN` regex change and its accompanying tests) -- it needs its own
+branch in `_is_anchored_pattern` (detect a leading `**/` independent of what follows), its own
+test coverage, and a design.md update to `_is_anchored_pattern`'s documented algorithm, none of
+which the current PR's review comments asked for. Bundling it in would mix a reviewer-requested
+fix with a second, undesigned correctness change in the same commit.
+
+Recommended follow-up:
+Add a check to `_is_anchored_pattern` (or a preceding branch) that treats any pattern whose
+normalized text starts with `**/` as unanchored outright, before falling through to the existing
+textual-slash/double-star-run logic for the remainder. Add unit tests mirroring the fused-segment
+tests added in this PR (e.g. `**/x/**foo` -> `is_anchored=False`) and a parity-suite `Scenario`
+with a `.gitignore` like `{"src": ["**/x/**foo"]}` and files at both `src/x/yfoo/a.py` and
+`src/sub/x/yfoo/b.py` to pin the any-depth behavior differentially against real git. Update
+design.md's description of `_is_anchored_pattern`'s algorithm to document the new leading-`**/`
+branch.
+
+Acceptance criteria:
+- `_is_anchored_pattern` classifies any pattern starting with `**/` as unanchored regardless of
+  what follows.
+- A parity scenario and a unit test both pin this behavior.
+- design.md's `_is_anchored_pattern` description is updated to match.
