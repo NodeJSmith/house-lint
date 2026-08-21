@@ -92,6 +92,16 @@ SCENARIOS = (
         {"src": ["**/**/b.py"]},
         ("src/a.py", "src/sub/b.py"),
     ),
+    # A leading `**/` combined with a further interior slash (`**/sub/deep.py`) requires the
+    # two-segment suffix "sub/deep.py" at any depth -- not just the last component. A pattern
+    # this shape is `is_anchored`'s edge case: the compiled regex's arbitrary-prefix group (from
+    # the leading `**/`) makes it look textually similar to a bare unanchored pattern, but the
+    # pattern still needs its full multi-segment tail kept intact to match correctly.
+    Scenario(
+        "leading '**/' with a further interior slash keeps its full multi-segment suffix",
+        {"": ["**/sub/deep.py"]},
+        ("src/sub/deep.py", "src/other/sub/deep.py", "src/sub/shallow.py", "src/deep.py"),
+    ),
     # --- Directory-only patterns must not match a same-named regular file, and a directory-form
     # negation must be able to cancel an earlier file-form match (last matching line wins).
     Scenario(

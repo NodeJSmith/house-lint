@@ -1,7 +1,7 @@
 # Design: Per-Directory Gitignore Matcher
 
 **Date:** 2026-08-20
-**Status:** approved
+**Status:** archived
 **Scope-mode:** hold
 **Research:** design/research/2026-08-20-gitignore-style-exclusion-inclusion/research-brief.md
 
@@ -22,7 +22,7 @@ The earlier guarantee that "the divergence always errs toward over-linting, neve
 - Chasing the over-linting divergence specifically. If the new approach also fixes it, accept the fix; do not expand scope to pursue it.
 - Full gitignore reimplementation beyond what house-lint already covers.
 - Replacing pathspec entirely — it stays as the glob-to-regex compiler.
-- Performance optimization — correctness is the goal. Performance is expected to be comparable and can be measured after. The gitignore side's ancestor-exclusion memoization (previously an incidental side effect of the now-deleted `combined_gitignore_spec_cache`) is not replaced with a dedicated cache; the fused stack-build function re-walks the ancestor chain per explicit-path argument, with each level's compiled pattern tuple served from `own_matcher_cache`. This is an accepted trade-off under the correctness-first scope — the existing `excluded_ancestor_cache` for `builtin_spec`/`exclude_spec` stays as-is (see Architecture), and any per-ancestor gitignore verdict cache can be added later if profiling shows a need.
+- Performance optimization — correctness is the goal. Performance is expected to be comparable and can be measured after. The gitignore side's ancestor-exclusion memoization (previously an incidental side effect of the now-deleted `combined_gitignore_spec_cache`) is not replaced with a dedicated cache; the fused stack-build function re-walks the ancestor chain per file processed during any scan — walked or explicit-path — with each level's compiled pattern tuple served from `own_matcher_cache`. This is an accepted trade-off under the correctness-first scope — the existing `excluded_ancestor_cache` for `builtin_spec`/`exclude_spec` stays as-is (see Architecture), and any per-ancestor gitignore verdict cache can be added later if profiling shows a need.
 
 ## User Scenarios
 
@@ -79,14 +79,14 @@ The earlier guarantee that "the divergence always errs toward over-linting, neve
 
 - Do not shell out to git for file discovery (CLAUDE.md constraint).
 - Do not introduce new dependencies — pathspec stays, used differently (individual pattern compilation rather than aggregate spec matching).
-- `pathspec`'s `GitIgnoreSpecPattern` is used below the documented API surface (`.regex`, `.include`, `.pattern`, `.match_file()` on individual pattern objects). These are `__slots__`-based attributes on a `RegexPattern` subclass (not `@dataclass`-decorated, but structurally stable) and appear stable, but this is not the "parse a spec, call `match_file`" contract. Mitigated by upper-bound pinning (`pathspec>=0.12,<2` in `pyproject.toml`) so a breaking major bump can't silently reach end users.
+- `pathspec`'s `GitIgnoreSpecPattern` is used below the documented API surface (`.include`, `.pattern`, `.match_file()` on individual pattern objects). These are `__slots__`-based attributes on a `RegexPattern` subclass (not `@dataclass`-decorated, but structurally stable) and appear stable, but this is not the "parse a spec, call `match_file`" contract. `is_anchored` is derived textually from `.pattern` (collapsing consecutive `**` runs itself, per `_is_anchored_pattern`) rather than from `.regex`'s compiled-regex source text — the earlier regex-text-sniffing approach depended on the literal string pathspec's compiler happens to emit, a deeper, undocumented reliance on pathspec's internal formatting than mere attribute existence, with no exception to catch it if that formatting ever drifted. `_match_patterns`'s prefix-ambiguity guard still relies on the `_DIR_MARK` named regex group inside `.match_file()`'s returned match object (see `discovery.py`'s import comment); that reliance is unchanged by this fix. Mitigated by upper-bound pinning (`pathspec>=0.12,<2` in `pyproject.toml`) so a breaking major bump can't silently reach end users.
 - The `_normalize_contents_glob` transformation (rewriting trailing `/**` to `/**/*`) is currently applied at spec-build time via `_spec_for_lines`. With the per-directory approach, this normalization must happen when parsing each directory's `.gitignore` lines, before individual patterns are compiled. The transformation itself is still needed — it prevents `build/**` from matching the `build` directory itself, which would cause pruning that blocks negations underneath.
 
 ## Dependencies and Assumptions
 
-- **pathspec API stability**: The per-pattern `match_file()`, `.include`, `.pattern`, and `.regex` attributes on `GitIgnoreSpecPattern` are structural (`__slots__`-based attributes on `RegexPattern`), not incidental. A pathspec major version bump could break them. Acceptable risk — the attributes have been stable across releases, and the alternative (reimplementing gitwildmatch glob-to-regex) is far worse.
+- **pathspec API stability**: The per-pattern `match_file()`, `.include`, and `.pattern` attributes on `GitIgnoreSpecPattern` are structural (`__slots__`-based attributes on `RegexPattern`), not incidental. A pathspec major version bump could break them. Acceptable risk — the attributes have been stable across releases, and the alternative (reimplementing gitwildmatch glob-to-regex) is far worse.
 - **pathspec issue #93** (wildmatch divergences: `foo**/bar` matching `foobar`, bracket-class edge cases) affects glob-to-regex compilation and would be inherited by the new approach. Out of scope — these are pre-existing and the parity suite would catch regressions if they ever manifest.
-- **pathspec issue #131** (ReDoS in regex translation): crafted `**` chains can cause pathological regex behavior. Affects all approaches that keep pathspec. Out of scope for this change, worth monitoring.
+- **pathspec issue #131** (ReDoS in regex translation): crafted `**` chains can cause pathological regex behavior. Affects all approaches that keep pathspec. There is no timeout, `.gitignore` line-count cap, or per-scan cap on the number of distinct `.gitignore` files read — `MAX_DISCOVERED_FILES` bounds matched `.py` files only, not directories walked or gitignore files parsed. house-lint's threat model is trusted input only (the developer's own repos, or repos they've chosen to clone and lint), not a defense against adversarial `.gitignore` trees. Out of scope for this change; not being actively monitored by any mechanism in the code.
 
 ## Architecture
 

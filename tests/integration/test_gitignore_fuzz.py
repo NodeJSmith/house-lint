@@ -61,7 +61,13 @@ TREE = (
     "src/other/a.py",
     "src/other/deep/b.py",
 )
-IGNORE_OWNERS = ("", "src", "src/sub")
+# Includes a 3-level-deep owner (`src/sub/deep`) and a sibling branch (`src/other`) so
+# `CORNER_BODIES`' anchored/ambiguous-prefix shapes (the ones `_match_patterns`'s `_DIR_MARK`
+# guard exists for) get combined with nesting as deep as `TREE` itself goes, not just the 2
+# levels `"src"`/`"src/sub"` reach -- matching the "combine every shape with every depth" fix
+# the file's own history (see the two-`**` gap noted below, in `CORNER_BODIES`) says this class of
+# coverage gap needs.
+IGNORE_OWNERS = ("", "src", "src/sub", "src/sub/deep", "src/other")
 
 # Plain names and globs, the shape an actual project's .gitignore is made of.
 ORDINARY_BODIES = (
@@ -103,6 +109,13 @@ CORNER_BODIES = (
     "sub/a.py",
     "src/sub",
     "deep/",
+    # A leading `**/` plus a further interior slash (`**/sub/a.py`) requires the multi-segment
+    # suffix "sub/a.py" at any depth, not just its last component -- a pattern this shape was
+    # briefly misclassified as unanchored by an earlier, regex-text-sniffing `is_anchored`
+    # derivation (truncating the probe to "a.py" alone, which the compiled regex then never
+    # matched). Named here so a future regression in the anchoring rule gets fuzzed, not just
+    # pinned by the one curated parity scenario.
+    "**/sub/a.py",
 )
 
 
