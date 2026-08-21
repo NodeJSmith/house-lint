@@ -31,7 +31,7 @@ The four default rules are `HSL001`–`HSL004`. `HSL900` always reports invalid 
 | `HSL002` | On | Imports inside function or async-function bodies |
 | `HSL003` | On | Top-level `TYPE_CHECKING` guards followed by imports |
 | `HSL004` | On | Module constants after the first class/function, except derived bindings |
-| `HSL101` | Off | Configured planning/spec tokens in comments, docstrings, and filenames |
+| `HSL101` | Off | Built-in and/or configured planning/spec tokens in comments, docstrings, and filenames (built-in families active with zero configuration) |
 | `HSL102` | Off | Files whose `splitlines()` count exceeds a configured limit |
 | `HSL103` | Off | Bound exception names outside the allowed policy |
 | `HSL900` | Always | Invalid, unused, conflicting, or malformed suppressions |
@@ -63,15 +63,15 @@ max_lines = 800
 allowed = ["exc", "*_exc"]
 
 [[tool.house-lint.rules.HSL101.tokens]]
-prefixes = ["AC", "FR", "NFR", "WP"]
-hash = "optional"
+prefixes = ["JIRA"]
+separator = "dash"
 min_digits = 1
 suffix = "optional-lower-alpha"
 scopes = ["comments", "docstrings", "filenames"]
 case_sensitive = true
 ```
 
-`HSL101` requires at least one token family whenever you select it. `HSL102` defaults to `800` lines and `HSL103` defaults to `exc` or `*_exc` when selected.
+`HSL101` ships built-in token families (`AC`/`FR`/`NFR`/`WP`, `T`, `KI`) that are active as soon as you select it — a `tokens` array is only needed to add families on top of the built-ins. `HSL102` defaults to `800` lines and `HSL103` defaults to `exc` or `*_exc` when selected.
 
 CLI selection overrides configuration:
 
