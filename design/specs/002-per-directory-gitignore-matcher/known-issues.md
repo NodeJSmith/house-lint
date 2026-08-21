@@ -226,9 +226,9 @@ Acceptance criteria:
 - All 29 parity scenarios and all three fuzz distributions continue passing with 0% divergence,
   matching the current baseline.
 
-## KI-007: `_is_anchored_pattern` does not implement git's "leading `**/`" unanchoring rule
+## KI-007 (not a bug): leading `**/` patterns correctly get `is_anchored=True`
 
-Status: open
+Status: resolved -- not a bug (issue #30)
 Run: N/A -- found while addressing PR #29 review feedback, not during an orchestration run
 Source: PR review response (surfaced while verifying a codex-connector finding on the same
 function, `_is_anchored_pattern`)
@@ -238,7 +238,7 @@ leading `**/` on its own.
 Affected files:
 - src/house_lint/discovery.py
 
-Issue:
+Original issue:
 git treats any pattern beginning with `**/` as unanchored -- matching at any depth -- regardless
 of what follows the leading `**/`, even when a later segment is itself complex or fused (verified
 against real `git check-ignore`: `**/x/**foo` ignores `nested/deep/x/yfoo/a.py`, not just
@@ -247,29 +247,24 @@ pattern collapses to a bare `**` via `_DOUBLE_STAR_RUN` (consecutive `**` segmen
 rule for "the pattern starts with `**/` and something else follows that isn't part of the same
 run" -- for a pattern like `**/x/**foo`, the textual slash between `x` and `**foo` makes
 `_is_anchored_pattern` return `True` (anchored), so `_match_patterns` threads the full
-multi-segment path instead of truncating to the last segment, and a directory this pattern should
-match at any depth is missed once it appears below the pattern's own owning directory.
+multi-segment path instead of truncating to the last segment.
 
-Why deferred:
-This is a distinct, broader classification rule from the fused-double-star-segment fix made in
-this PR (see the `_DOUBLE_STAR_RUN` regex change and its accompanying tests) -- it needs its own
-branch in `_is_anchored_pattern` (detect a leading `**/` independent of what follows), its own
-test coverage, and a design.md update to `_is_anchored_pattern`'s documented algorithm, none of
-which the current PR's review comments asked for. Bundling it in would mix a reviewer-requested
-fix with a second, undesigned correctness change in the same commit.
+Resolution (issue #30):
+The described behavior is correct, not a bug. `_is_anchored_pattern` returning `True` for
+patterns like `**/x/**foo` and `**/sub/deep.py` is pragmatically correct because `is_anchored`
+controls path truncation in `_match_patterns`, not gitignore's semantic concept of anchoring.
+These patterns need the full multi-segment path passed to `match_file` for correct matching --
+pathspec's compiled regex already handles the any-depth matching via a `(?:.+/)?` prefix baked
+into the regex for every leading-`**/` pattern.
 
-Recommended follow-up:
-Add a check to `_is_anchored_pattern` (or a preceding branch) that treats any pattern whose
-normalized text starts with `**/` as unanchored outright, before falling through to the existing
-textual-slash/double-star-run logic for the remainder. Add unit tests mirroring the fused-segment
-tests added in this PR (e.g. `**/x/**foo` -> `is_anchored=False`) and a parity-suite `Scenario`
-with a `.gitignore` like `{"src": ["**/x/**foo"]}` and files at both `src/x/yfoo/a.py` and
-`src/sub/x/yfoo/b.py` to pin the any-depth behavior differentially against real git. Update
-design.md's description of `_is_anchored_pattern`'s algorithm to document the new leading-`**/`
-branch.
+Marking them as `is_anchored=False` would truncate the probe to the last path segment (e.g.
+`deep.py` instead of `sub/deep.py`), which can't match the pattern's multi-segment structure.
+This was verified empirically: adding `if core.startswith("**/"): return False` broke both the
+existing `**/sub/deep.py` parity scenario and the new `**/x/**foo` scenario, while the original
+code passes all parity tests including the new scenario.
 
-Acceptance criteria:
-- `_is_anchored_pattern` classifies any pattern starting with `**/` as unanchored regardless of
-  what follows.
-- A parity scenario and a unit test both pin this behavior.
-- design.md's `_is_anchored_pattern` description is updated to match.
+A parity scenario (`"leading '**/' with a fused interior segment matches at any depth"`) was
+added to pin the correct behavior differentially against real git. Unit tests document the
+`is_anchored=True` classification and why it is correct. The docstring on `_is_anchored_pattern`
+was updated to explain the semantic divergence between gitignore's "anchored" concept and
+house-lint's use of `is_anchored` for path truncation.
