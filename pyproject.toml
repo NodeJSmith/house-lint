@@ -19,7 +19,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Topic :: Software Development :: Quality Assurance",
 ]
-dependencies = ["cyclopts>=3.0", "pathspec>=0.12,<2"]
+dependencies = ["cyclopts>=3.0", "pathspec>=1.0,<2"]
 
 [project.scripts]
 house-lint = "house_lint.cli:main"

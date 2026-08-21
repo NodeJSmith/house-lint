@@ -73,13 +73,13 @@ The earlier guarantee that "the divergence always errs toward over-linting, neve
 - **AC#7** `uv run pytest` passes (full test suite, not just integration). (regression guard)
 - **AC#8** The functions `_prefix_pattern`, `_escape_gitignore_literal`, `_strip_unescaped_trailing_whitespace`, `_collapse_double_star_run`, `_normalize_contents_glob`, and the constant `IGNORE_EVERYTHING` are deleted from `discovery.py`. (simplification goal)
 - **AC#9** If `test_negated_directory_pattern_does_not_re_include_nested_directories` (`test_gitignore_parity.py:287`) also starts passing, its strict xfail marker is removed in the same change; if it still fails, it is left unchanged. (over-linting xfail governance)
-- **AC#10** `pyproject.toml` pins `pathspec>=0.12,<2` (upper-bound cap on the undocumented-internals dependency). (dependency safety)
+- **AC#10** `pyproject.toml` pins `pathspec>=1.0,<2` (lower bound at the first release providing `patterns.gitignore.spec`; upper-bound cap on the undocumented-internals dependency). (dependency safety)
 
 ## Key Constraints
 
 - Do not shell out to git for file discovery (CLAUDE.md constraint).
 - Do not introduce new dependencies — pathspec stays, used differently (individual pattern compilation rather than aggregate spec matching).
-- `pathspec`'s `GitIgnoreSpecPattern` is used below the documented API surface (`.include`, `.pattern`, `.match_file()` on individual pattern objects). These are `__slots__`-based attributes on a `RegexPattern` subclass (not `@dataclass`-decorated, but structurally stable) and appear stable, but this is not the "parse a spec, call `match_file`" contract. `is_anchored` is derived textually from `.pattern` (collapsing consecutive `**` runs itself, per `_is_anchored_pattern`) rather than from `.regex`'s compiled-regex source text — the earlier regex-text-sniffing approach depended on the literal string pathspec's compiler happens to emit, a deeper, undocumented reliance on pathspec's internal formatting than mere attribute existence, with no exception to catch it if that formatting ever drifted. `_match_patterns`'s prefix-ambiguity guard still relies on the `_DIR_MARK` named regex group inside `.match_file()`'s returned match object (see `discovery.py`'s import comment); that reliance is unchanged by this fix. Mitigated by upper-bound pinning (`pathspec>=0.12,<2` in `pyproject.toml`) so a breaking major bump can't silently reach end users.
+- `pathspec`'s `GitIgnoreSpecPattern` is used below the documented API surface (`.include`, `.pattern`, `.match_file()` on individual pattern objects). These are `__slots__`-based attributes on a `RegexPattern` subclass (not `@dataclass`-decorated, but structurally stable) and appear stable, but this is not the "parse a spec, call `match_file`" contract. `is_anchored` is derived textually from `.pattern` (collapsing consecutive `**` runs itself, per `_is_anchored_pattern`) rather than from `.regex`'s compiled-regex source text — the earlier regex-text-sniffing approach depended on the literal string pathspec's compiler happens to emit, a deeper, undocumented reliance on pathspec's internal formatting than mere attribute existence, with no exception to catch it if that formatting ever drifted. `_match_patterns`'s prefix-ambiguity guard still relies on the `_DIR_MARK` named regex group inside `.match_file()`'s returned match object (see `discovery.py`'s import comment); that reliance is unchanged by this fix. Mitigated by pinning (`pathspec>=1.0,<2` in `pyproject.toml`) so a breaking major bump can't silently reach end users; the lower bound is set at 1.0 because `patterns.gitignore.spec` (source of `GitIgnoreSpecPattern` and `_DIR_MARK`) doesn't exist before that release.
 - The `_normalize_contents_glob` transformation (rewriting trailing `/**` to `/**/*`) is currently applied at spec-build time via `_spec_for_lines`. With the per-directory approach, this normalization must happen when parsing each directory's `.gitignore` lines, before individual patterns are compiled. The transformation itself is still needed — it prevents `build/**` from matching the `build` directory itself, which would cause pruning that blocks negations underneath.
 
 ## Dependencies and Assumptions
@@ -282,7 +282,7 @@ The `adversarial` distribution must show 0 under-linting divergences.
 - modify `tests/unit/test_discovery.py` — remove tests for deleted functions, add tests for `_match_patterns`, update tests for stack evaluation
 - modify `docs/configuration.md` — remove under-linting bullet, regenerate divergence rates
 - modify `CLAUDE.md` — update gitignore divergence notes
-- modify `pyproject.toml` — add upper-bound pin `pathspec>=0.12,<2`
+- modify `pyproject.toml` — add version pin `pathspec>=1.0,<2`
 
 ### Behavioral Invariants
 
