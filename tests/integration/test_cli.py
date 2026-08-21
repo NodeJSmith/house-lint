@@ -606,6 +606,47 @@ def test_cache_does_not_cross_contaminate_hsl101_filename_findings_between_same_
     assert [finding["path"] for finding in result["findings"]] == ["src/TASK123.py"]
 
 
+def test_hsl101_zero_config_detects_builtin_token_families(repository: Path) -> None:
+    """Selecting HSL101 with no `[tool.house-lint.rules.HSL101]` table at all must still detect
+    the built-in spec, task, and known-issues families."""
+    (repository / "src" / "finding.py").write_text("# AC1 FR#2a T05 KI-001 WP03\nvalue = 1\n")
+    (repository / "pyproject.toml").write_text('[tool.house-lint]\nextend-select = ["HSL101"]\n')
+
+    completed = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    result = json.loads(completed.stdout)
+    assert completed.returncode == 1
+    messages = {finding["message"] for finding in result["findings"]}
+    assert {
+        "spec token AC1 in comment",
+        "spec token FR#2a in comment",
+        "spec token T05 in comment",
+        "spec token KI-001 in comment",
+        "spec token WP03 in comment",
+    } <= messages
+
+
+def test_hsl101_user_tokens_stack_on_top_of_builtin_families(repository: Path) -> None:
+    """A user-defined token family adds to, rather than replaces, the built-in families."""
+    (repository / "src" / "finding.py").write_text("# JIRA-1 AC1 KI-001\nvalue = 1\n")
+    (repository / "pyproject.toml").write_text(
+        '[tool.house-lint]\nextend-select = ["HSL101"]\n'
+        "[[tool.house-lint.rules.HSL101.tokens]]\n"
+        'prefixes = ["JIRA"]\nscopes = ["comments"]\nseparator = "dash"\nmin_digits = 1\n'
+    )
+
+    completed = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    result = json.loads(completed.stdout)
+    assert completed.returncode == 1
+    messages = {finding["message"] for finding in result["findings"]}
+    assert {
+        "spec token JIRA-1 in comment",
+        "spec token AC1 in comment",
+        "spec token KI-001 in comment",
+    } <= messages
+
+
 @pytest.mark.parametrize(
     ("option", "value"),
     [

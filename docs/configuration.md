@@ -93,16 +93,20 @@ allowed = ["exc", "*_exc"]
 
 ## HSL101 token families
 
-`HSL101` has no default token vocabulary. Select it only with a non-empty `tokens` array:
+`HSL101` ships three built-in token families — `spec` (`AC`, `FR`, `NFR`, `WP`), `task` (`T`), and
+`known-issues` (`KI`) — so selecting it with no `[tool.house-lint.rules.HSL101]` table at all
+still detects those tokens in comments, docstrings, and filenames. Add a `tokens` array only to
+extend the vocabulary; user-defined families stack on top of the built-ins rather than replacing
+them:
 
 ```toml
 [tool.house-lint.rules.HSL101]
 max_findings_per_file = 200
 
 [[tool.house-lint.rules.HSL101.tokens]]
-prefixes = ["AC", "FR", "NFR", "WP"]
+prefixes = ["JIRA"]
 scopes = ["comments", "docstrings", "filenames"]
-hash = "optional"
+separator = "dash"
 min_digits = 1
 max_digits = 12
 suffix = "optional-lower-alpha"
@@ -110,6 +114,6 @@ case_sensitive = true
 not_followed_by_time = false
 ```
 
-Each family requires unique `prefixes` (1–32 uppercase values, up to 12 characters each) and unique `scopes` drawn from `comments`, `docstrings`, and `filenames`. You may configure at most 32 families. `hash` is `forbidden`, `optional`, or `required`; `min_digits` is 1–12; `max_digits`, when present, is from `min_digits` through 12; `suffix` is `none` or `optional-lower-alpha`; and both boolean options must be TOML booleans. `max_findings_per_file` is a positive integer no greater than 10,000.
+Each family requires unique `prefixes` (1–32 uppercase values, up to 12 characters each) and unique `scopes` drawn from `comments`, `docstrings`, and `filenames`. You may configure at most 32 families in total once the three active built-in families are counted — 29 user-defined families at most with all built-ins active. `separator` is `none`, `hash`, `hash-optional`, `dash`, or `dash-optional`; `min_digits` is 1–12; `max_digits`, when present, is from `min_digits` through 12; `suffix` is `none` or `optional-lower-alpha`; and both boolean options must be TOML booleans. `max_findings_per_file` is a positive integer no greater than 10,000.
 
 Rule tables do not have `enabled` keys. Selection is owned exclusively by top-level selection and CLI overrides; disabled rule tables are still validated.

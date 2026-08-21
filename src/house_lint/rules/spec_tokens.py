@@ -13,7 +13,7 @@ from house_lint.analysis import (
     comment_owner_for_line,
     docstring_owner_for_line,
 )
-from house_lint.config import HSL101Options, TokenFamily
+from house_lint.config import SEPARATOR_REGEX, SUFFIX_REGEX, HSL101Options, TokenFamily
 from house_lint.source import SourceFile
 
 
@@ -102,9 +102,8 @@ def _filename_candidates(
     source: SourceFile, family: TokenFamily, seen: set[tuple[str, int | None, str]]
 ) -> Iterator[CandidateFinding]:
     pattern = _filename_pattern(family)
-    for segment in re.split(r"[._-]", source.path.name):
-        if not pattern.fullmatch(segment):
-            continue
+    for match in pattern.finditer(source.path.name):
+        segment = match.group(0)
         key = ("filename", None, segment)
         if key in seen:
             continue
@@ -123,29 +122,36 @@ def _filename_candidates(
 
 @lru_cache
 def _content_pattern(family: TokenFamily) -> re.Pattern[str]:
-    return re.compile(_token_expression(family, boundaries=True))
+    token = _token_expression(family)
+    return re.compile(f"(?<![A-Za-z0-9_]){token}(?![A-Za-z0-9_])")
 
 
 @lru_cache
 def _filename_pattern(family: TokenFamily) -> re.Pattern[str]:
-    return re.compile(_token_expression(family, boundaries=False))
+    # Filenames commonly use "_" (alongside "." and "-") as a segment
+    # separator, so unlike content matching, "_" must count as a boundary
+    # rather than a word character. Forbidding only adjacent letters/digits
+    # still prevents matching inside a longer alphanumeric run (e.g. the "AC1"
+    # in "xAC1y"), while allowing "notes-KI-001-fix.py" and "test-T05_AC1.py"
+    # to match without the separator being stripped away first.
+    token = _token_expression(family)
+    return re.compile(f"(?<![A-Za-z0-9]){token}(?![A-Za-z0-9])")
 
 
-def _token_expression(family: TokenFamily, *, boundaries: bool) -> str:
+def _token_expression(family: TokenFamily) -> str:
     prefixes = "|".join(
         re.escape(prefix) for prefix in sorted(family.prefixes, key=len, reverse=True)
     )
     if not family.case_sensitive:
         prefixes = f"(?i:{prefixes})"
-    hash_part = {"forbidden": "", "optional": "#?", "required": "#"}[family.hash]
+    separator_part = SEPARATOR_REGEX[family.separator]
     maximum = "" if family.max_digits is None else str(family.max_digits)
     digits = (
         f"[0-9]{{{family.min_digits},{maximum}}}" if maximum else f"[0-9]{{{family.min_digits},}}"
     )
-    suffix = "[a-z]?" if family.suffix == "optional-lower-alpha" else ""
+    suffix = SUFFIX_REGEX[family.suffix]
     time_guard = "(?!:[0-9])" if family.not_followed_by_time else ""
-    token = f"(?:{prefixes}){hash_part}{digits}{suffix}{time_guard}"
-    return f"(?<![A-Za-z0-9_]){token}(?![A-Za-z0-9_])" if boundaries else token
+    return f"(?:{prefixes}){separator_part}{digits}{suffix}{time_guard}"
 
 
 __all__ = ["detect"]
