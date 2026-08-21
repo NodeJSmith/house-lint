@@ -248,14 +248,18 @@ def _build(root: Path, scenario: Scenario) -> None:
         (directory / ".gitignore").symlink_to(target.name)
 
 
+def _house_lint_skipped(result: DiscoveryResult, root: Path, files: tuple[str, ...]) -> set[str]:
+    selected = {path.relative_to(root.resolve()).as_posix() for path in result.files}
+    return {relative for relative in files if relative not in selected}
+
+
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda item: item.name)
 def test_discovery_matches_git_check_ignore(scenario: Scenario, tmp_path: Path) -> None:
     _build(tmp_path, scenario)
     init_repository(tmp_path)
 
     result = discover_files(tmp_path, include=scenario.include)
-    selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
-    house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
+    house_lint_skipped = _house_lint_skipped(result, tmp_path, scenario.files)
     ignored_by_git = git_ignored(tmp_path, scenario.files)
 
     assert result.errors == ()
@@ -267,7 +271,7 @@ def test_explicit_paths_match_git_check_ignore(scenario: Scenario, tmp_path: Pat
     """The same table, but reaching each file directly instead of walking to it.
 
     An explicit path skips `_traversable_dirs` entirely and leans on
-    `_gitignore_excluded` alone, so walk-time pruning cannot mask a wrong answer here.
+    `_is_gitignore_excluded` alone, so walk-time pruning cannot mask a wrong answer here.
     That makes this the stricter half of the pair: `house-lint check src/generated/foo.py` has
     to reach the same verdict git does with no directory traversal to help it.
     """
@@ -275,8 +279,7 @@ def test_explicit_paths_match_git_check_ignore(scenario: Scenario, tmp_path: Pat
     init_repository(tmp_path)
 
     result = discover_files(tmp_path, explicit=tuple(tmp_path / item for item in scenario.files))
-    selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
-    house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
+    house_lint_skipped = _house_lint_skipped(result, tmp_path, scenario.files)
 
     assert result.errors == ()
     assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
@@ -292,8 +295,7 @@ def test_negated_directory_pattern_does_not_re_include_nested_directories(tmp_pa
     init_repository(tmp_path)
 
     result = discover_files(tmp_path, include=scenario.include)
-    selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
-    house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
+    house_lint_skipped = _house_lint_skipped(result, tmp_path, scenario.files)
 
     assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
 
@@ -310,8 +312,7 @@ def test_negated_directory_pattern_re_includes_a_directory_git_descends_into(
     init_repository(tmp_path)
 
     result = discover_files(tmp_path, include=scenario.include)
-    selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
-    house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
+    house_lint_skipped = _house_lint_skipped(result, tmp_path, scenario.files)
 
     assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
 
@@ -331,8 +332,7 @@ def test_explicit_directory_arguments_match_git_check_ignore(
     init_repository(tmp_path)
 
     result = discover_files(tmp_path, explicit=tuple(tmp_path / item for item in scenario.include))
-    selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
-    house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
+    house_lint_skipped = _house_lint_skipped(result, tmp_path, scenario.files)
 
     assert result.errors == ()
     assert house_lint_skipped == git_ignored(tmp_path, scenario.files)

@@ -5,7 +5,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 from pathspec import GitIgnoreSpec
 
@@ -26,6 +26,14 @@ from house_lint.results import LintError
 BUILTIN_EXCLUDES = (".git/", ".venv/", ".nox/", "__pycache__/", "site-packages/", "node_modules/")
 MAX_DISCOVERED_FILES = 100_000
 _CONTENTS_GLOB = re.compile(r"(?<!\*\*)/\*\*(/?)\Z")
+# `LintError.kind`/`.operation` are typed `str` in `results.py` (the public, schema-versioned
+# result type), so nothing there enforces this vocabulary -- these `Literal` aliases are this
+# module's own closed set of the `kind`/`operation` values it actually passes to `_error`, so a
+# typo (e.g. `"trversal"`) is a pyright error here rather than a silently-unvalidated string.
+_ErrorKind = Literal["path", "traversal", "budget"]
+_ErrorOperation = Literal[
+    "stat", "read", "parse", "resolve", "walk", "containment", "qualify", "discover", "combine"
+]
 # Collapses a run of consecutive `**` path segments to a single `**` -- see
 # `_is_anchored_pattern`'s docstring for why `is_anchored` needs this collapse rather than a bare
 # textual slash check. Not a revival of the old flatten/prefix pipeline's `_DOUBLE_STAR_RUN`
@@ -72,7 +80,9 @@ def _inside(root: Path, path: Path) -> bool:
     return True
 
 
-def _load_gitignore_lines(path: Path, on_error: Callable[[str, str], None]) -> tuple[str, ...]:
+def _load_gitignore_lines(
+    path: Path, on_error: Callable[[_ErrorOperation, str], None]
+) -> tuple[str, ...]:
     """Read and validate a `.gitignore` file's pattern lines, reporting stat/read/parse failures.
 
     Returns raw lines rather than a parsed spec: each directory's lines are compiled into their
@@ -167,7 +177,7 @@ def _ignored(root: Path, path: Path, *specs: GitIgnoreSpec, is_dir: bool) -> boo
 
     Scoped to the two static, root-anchored specs (`builtin_spec` and `exclude_spec`) — nested
     `.gitignore` patterns are matched separately, directory-relative, by
-    `_FileSelector._gitignore_excluded`, which is not one of these `*specs` and is checked
+    `_FileSelector._is_gitignore_excluded`, which is not one of these `*specs` and is checked
     independently at each call site.
 
     `is_dir` selects which single form the path is matched in: git classifies a path once, as
@@ -242,7 +252,7 @@ def _match_patterns(patterns: IgnorePatterns, relative_path: str, is_dir: bool) 
     An unanchored pattern (`is_anchored=False`, e.g. `cache`, `*.py`, `*`) is only probed with the
     *last* segment of `relative_path`, never the full multi-segment path. gitignore gives such a
     pattern "matches a component name at any depth" semantics, which `_FileSelector.
-    _gitignore_excluded`'s own ancestor-by-ancestor walk already provides one level at a time --
+    _is_gitignore_excluded`'s own ancestor-by-ancestor walk already provides one level at a time --
     every intermediate directory along the way gets its own, separate call to this function.
     Handing an unanchored pattern the *full* multi-segment path instead double-applies that "any
     depth" behavior through pathspec's regex too (its `(?:.+/)?` prefix lets the pattern match
@@ -409,7 +419,7 @@ class _FileSelector:
         return resolved != self.root and (
             self._has_excluded_ancestor(resolved.parent)
             or _ignored(self.root, resolved, self.builtin_spec, self.exclude_spec, is_dir=is_dir)
-            or self._gitignore_excluded(resolved.parent, resolved.name, is_dir=is_dir)
+            or self._is_gitignore_excluded(resolved.parent, resolved.name, is_dir=is_dir)
         )
 
     def _consider(self, path: Path, *, explicit_paths: bool) -> None:
@@ -547,7 +557,7 @@ class _FileSelector:
         """Whether any directory between root and `directory` (inclusive) is itself excluded by
         `builtin_spec` or `exclude_spec`.
 
-        The gitignore side of this already exists, inside `_gitignore_excluded`, for exactly
+        The gitignore side of this already exists, inside `_is_gitignore_excluded`, for exactly
         the reason spelled out there: git attributes the exclusion to the directory, so a
         negation can never re-include a file whose parent directory is excluded. Configured
         `exclude` accepts the same Git-ignore syntax, negations included, and `docs/configuration.md`
@@ -574,7 +584,7 @@ class _FileSelector:
         self.excluded_ancestor_cache[directory] = excluded
         return excluded
 
-    def _gitignore_excluded(self, directory: Path, relative_path: str, is_dir: bool) -> bool:
+    def _is_gitignore_excluded(self, directory: Path, relative_path: str, is_dir: bool) -> bool:
         """Whether `directory / relative_path` is excluded by the gitignore pattern stack from
         root through `directory`.
 
@@ -669,7 +679,7 @@ class _FileSelector:
     def _own_gitignore_lines(self, directory: Path) -> tuple[str, ...]:
         ignore = directory / ".gitignore"
 
-        def on_error(operation: str, message: str) -> None:
+        def on_error(operation: _ErrorOperation, message: str) -> None:
             self.errors.append(self._error(ignore, "traversal", operation, message))
 
         return _load_gitignore_lines(ignore, on_error)
@@ -684,9 +694,9 @@ class _FileSelector:
         whether to descend into it would let a negation inside that file "resurrect" files
         that should stay excluded because the directory itself is ignored — real git never
         reads ignore files inside a directory it never descends into. Skipping the
-        directory here means `_own_gitignore_lines`/`_gitignore_excluded` are simply
+        directory here means `_own_gitignore_lines`/`_is_gitignore_excluded` are simply
         never called for it, so its nested `.gitignore` (if any) is never read at all.
-        `_gitignore_excluded` already folds in `use_gitignore` (it short-circuits to `False`
+        `_is_gitignore_excluded` already folds in `use_gitignore` (it short-circuits to `False`
         when disabled), and `builtin_spec`/`exclude_spec` inside `_ignored` apply
         unconditionally, matching how file-level ignoring already treats those two specs.
         """
@@ -705,21 +715,23 @@ class _FileSelector:
                 continue
             if _ignored(
                 self.root, child, self.builtin_spec, self.exclude_spec, is_dir=True
-            ) or self._gitignore_excluded(current_path, item, is_dir=True):
+            ) or self._is_gitignore_excluded(current_path, item, is_dir=True):
                 self.files_skipped += 1
                 continue
             kept.append(item)
         return kept
 
     def _filesystem_error(
-        self, path: Path, operation: str, message: str, *, explicit_paths: bool
+        self, path: Path, operation: _ErrorOperation, message: str, *, explicit_paths: bool
     ) -> None:
         err = self._error(path, "path" if explicit_paths else "traversal", operation, message)
         if explicit_paths:
             raise DiscoveryError(err)
         self.errors.append(err)
 
-    def _error(self, path: Path, kind: str, operation: str, message: str) -> LintError:
+    def _error(
+        self, path: Path, kind: _ErrorKind, operation: _ErrorOperation, message: str
+    ) -> LintError:
         try:
             relative = path.relative_to(self.root).as_posix()
         except ValueError:
