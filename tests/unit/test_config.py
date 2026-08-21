@@ -13,6 +13,8 @@ from house_lint.config import (
     compile_per_file_ignores,
     default_config,
     get_house_lint_table,
+    get_standalone_table,
+    is_standalone_config,
     load_config,
     per_file_enabled_rules,
 )
@@ -226,6 +228,44 @@ def test_get_house_lint_table_detects_only_a_valid_house_lint_table() -> None:
     assert get_house_lint_table({"tool": {"house-lint": table}}) is table
     assert get_house_lint_table({"tool": {"house-lint": []}}) is None
     assert get_house_lint_table({"tool": []}) is None
+
+
+def test_get_standalone_table_detects_only_a_valid_house_lint_table() -> None:
+    table = {"select": ["HSL001"]}
+
+    assert get_standalone_table({"house-lint": table}) is table
+    assert get_standalone_table({"house-lint": []}) is None
+    assert get_standalone_table({}) is None
+
+
+def test_load_config_standalone_true_loads_from_house_lint_table(tmp_path: Path) -> None:
+    path = tmp_path / "house-lint.toml"
+    path.write_text('[house-lint]\nselect = ["HSL001"]\n')
+
+    config = load_config(path, standalone=True)
+
+    assert config.enabled_rules == ("HSL001", "HSL900")
+
+
+def test_load_config_standalone_true_raises_when_house_lint_table_is_missing(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "house-lint.toml"
+    path.write_text('[tool.house-lint]\nselect = ["HSL001"]\n')
+
+    with pytest.raises(ConfigError, match=r"\[house-lint\]"):
+        load_config(path, standalone=True)
+
+
+@pytest.mark.parametrize("filename", ["house-lint.toml", ".house-lint.toml"])
+def test_is_standalone_config_recognizes_both_filename_variants(
+    tmp_path: Path, filename: str
+) -> None:
+    assert is_standalone_config(tmp_path / filename) is True
+
+
+def test_is_standalone_config_rejects_pyproject_toml(tmp_path: Path) -> None:
+    assert is_standalone_config(tmp_path / "pyproject.toml") is False
 
 
 def test_selection_omission_empty_and_cli_precedence(tmp_path: Path) -> None:
