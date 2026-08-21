@@ -135,8 +135,17 @@ def test_limits_findings_per_file(write_sample) -> None:
     ]
 
 
-def test_default_separator_forbids_a_separator_and_default_cap_is_200(write_sample) -> None:
-    path = write_sample("# AC#1 " + " ".join(f"AC{number:03d}" for number in range(1, 202)) + "\n")
+def test_none_separator_forbids_any_separator(write_sample) -> None:
+    path = write_sample("# AC#1 AC001\n")
+    options = HSL101Options((TokenFamily(prefixes=("AC",), scopes=("comments",)),))
+
+    findings = detect(SourceFile(path, path.parent), options)
+
+    assert [finding.message for finding in findings] == ["spec token AC001 in comment"]
+
+
+def test_default_max_findings_per_file_is_200(write_sample) -> None:
+    path = write_sample("# " + " ".join(f"AC{number:03d}" for number in range(1, 202)) + "\n")
     options = HSL101Options((TokenFamily(prefixes=("AC",), scopes=("comments",)),))
 
     findings = detect(SourceFile(path, path.parent), options)
