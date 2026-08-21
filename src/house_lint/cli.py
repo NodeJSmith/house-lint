@@ -26,6 +26,7 @@ from house_lint.config import (
     LintConfig,
     compile_per_file_ignores,
     default_config,
+    is_standalone_config,
     load_config,
     per_file_enabled_rules,
     selected_detector_inputs,
@@ -413,6 +414,12 @@ def check(
         resolution = resolve_project(root=root, config=config)
         resolved_root = resolution.root
         resolved_config = resolution.config
+        if debug and resolution.shadowed:
+            shadowed_names = ", ".join(str(path) for path in resolution.shadowed)
+            print(
+                f"debug: config {resolution.config} used; shadowed: {shadowed_names}",
+                file=sys.stderr,
+            )
         lint_config = (
             default_config(
                 cli_select=cli_select,
@@ -423,6 +430,7 @@ def check(
             if resolution.config is None
             else load_config(
                 resolution.config,
+                standalone=is_standalone_config(resolution.config),
                 cli_select=cli_select,
                 cli_ignore=cli_ignore,
                 cli_extend_select=cli_extend_select,

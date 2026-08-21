@@ -1,7 +1,7 @@
 ---
 task_id: "T02"
 title: "update resolve_project() to discover standalone config files"
-status: "planned"
+status: "done"
 depends_on: ["T01"]
 implements: ["FR#1", "FR#2", "FR#5", "FR#11"]
 ---

@@ -1316,3 +1316,107 @@ def test_without_markers_falls_back_to_the_current_working_directory(tmp_path: P
 
     assert resolution.root == cwd
     assert resolution.config is None
+
+
+def test_upward_walk_finds_standalone_house_lint_toml(tmp_path: Path) -> None:
+    config_path = tmp_path / "house-lint.toml"
+    config_path.write_text('[house-lint]\nselect = ["HSL001"]\n')
+    child = tmp_path / "nested"
+    child.mkdir()
+
+    resolution = resolve_project(cwd=child)
+
+    assert resolution == type(resolution)(tmp_path, config_path)
+
+
+def test_upward_walk_finds_standalone_dot_house_lint_toml(tmp_path: Path) -> None:
+    config_path = tmp_path / ".house-lint.toml"
+    config_path.write_text('[house-lint]\nselect = ["HSL001"]\n')
+    child = tmp_path / "nested"
+    child.mkdir()
+
+    resolution = resolve_project(cwd=child)
+
+    assert resolution == type(resolution)(tmp_path, config_path)
+
+
+def test_house_lint_toml_takes_precedence_over_pyproject_in_same_directory(
+    tmp_path: Path,
+) -> None:
+    standalone = tmp_path / "house-lint.toml"
+    standalone.write_text('[house-lint]\nselect = ["HSL001"]\n')
+    (tmp_path / "pyproject.toml").write_text('[tool.house-lint]\nselect = ["HSL002"]\n')
+
+    resolution = resolve_project(cwd=tmp_path)
+
+    assert resolution.config == standalone
+    assert resolution.shadowed == (tmp_path / "pyproject.toml",)
+
+
+def test_house_lint_toml_without_table_falls_through_to_pyproject(tmp_path: Path) -> None:
+    (tmp_path / "house-lint.toml").write_text('[not-house-lint]\nfoo = "bar"\n')
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[tool.house-lint]\nselect = ["HSL001"]\n')
+
+    resolution = resolve_project(cwd=tmp_path)
+
+    assert resolution == type(resolution)(tmp_path, pyproject)
+
+
+def test_root_without_config_finds_standalone_config_in_root_directory(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    config_path = root / "house-lint.toml"
+    config_path.write_text('[house-lint]\nselect = ["HSL001"]\n')
+
+    resolution = resolve_project(root=root)
+
+    assert resolution == type(resolution)(root, config_path)
+
+
+def test_root_without_config_finds_dot_standalone_config_in_root_directory(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    config_path = root / ".house-lint.toml"
+    config_path.write_text('[house-lint]\nselect = ["HSL001"]\n')
+
+    resolution = resolve_project(root=root)
+
+    assert resolution == type(resolution)(root, config_path)
+
+
+def test_explicit_config_path_to_standalone_house_lint_toml_resolves_correctly(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    config_path = project / "house-lint.toml"
+    config_path.write_text('[house-lint]\nselect = ["HSL001"]\n')
+
+    resolution = resolve_project(config=config_path)
+
+    assert resolution == type(resolution)(project, config_path)
+
+
+def test_malformed_lower_precedence_config_does_not_block_a_valid_winner(
+    tmp_path: Path,
+) -> None:
+    winner = tmp_path / "house-lint.toml"
+    winner.write_text('[house-lint]\nselect = ["HSL001"]\n')
+    (tmp_path / ".house-lint.toml").write_text("not valid toml {{{\n")
+
+    resolution = resolve_project(cwd=tmp_path)
+
+    assert resolution.config == winner
+    assert resolution.shadowed == ()
+
+
+def test_malformed_sole_config_at_a_directory_is_still_a_configuration_failure(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "house-lint.toml").write_text("not valid toml {{{\n")
+
+    with pytest.raises(ConfigError, match="invalid project configuration"):
+        resolve_project(cwd=tmp_path)

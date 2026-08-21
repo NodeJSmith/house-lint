@@ -20,7 +20,14 @@ from pathspec.patterns.gitignore.spec import (
     GitIgnoreSpecPattern,
 )
 
-from house_lint.config import DEFAULT_INCLUDE, ConfigError, get_house_lint_table, load_toml
+from house_lint.config import (
+    DEFAULT_INCLUDE,
+    STANDALONE_CONFIG_NAMES,
+    ConfigError,
+    get_house_lint_table,
+    get_standalone_table,
+    load_toml,
+)
 from house_lint.results import LintError
 
 BUILTIN_EXCLUDES = (
@@ -103,6 +110,10 @@ class DiscoveryResult:
 class ProjectResolution:
     root: Path
     config: Path | None
+    shadowed: tuple[Path, ...] = ()
+    """Recognized config sources at the same directory as `config` that lost to it on
+    discovery precedence (`house-lint.toml` > `.house-lint.toml` > `pyproject.toml`). Only
+    ever non-empty when `config` is not `None`. Surfaced by `--debug` (see `cli.py`)."""
 
 
 def _inside(root: Path, path: Path) -> bool:
@@ -853,6 +864,55 @@ def discover_files(
     return selector.result()
 
 
+def _recognized_configs(directory: Path) -> tuple[Path, ...]:
+    """Every config source at `directory` recognized as valid -- existing, parseable, and
+    carrying the table its file type expects -- in discovery-precedence order: `house-lint.toml`,
+    `.house-lint.toml` (both `[house-lint]`), then `pyproject.toml` (`[tool.house-lint]`).
+
+    A recognized standalone file without the expected table (e.g. a `house-lint.toml`
+    incidentally left over from another tool, with no `[house-lint]` table) is not included here
+    -- it is silently skipped, falling through to the next name in precedence order, per FR#1.
+    Shared by both `resolve_project` sites that need this three-file check: the upward walk and
+    the `--root`-without-`--config`/fallback-marker path, so precedence can't drift between them.
+
+    A candidate that fails to parse never blocks a *recognized* candidate elsewhere at the same
+    directory -- a malformed loser is silently skipped just like a missing table would be. But if
+    nothing at this directory is recognized and at least one candidate failed to parse, that parse
+    failure is re-raised rather than swallowed: an unreadable config with no valid alternative is a
+    configuration error, not "no config here" (pins the pre-existing malformed-ancestor-pyproject
+    behavior).
+
+    Callers that also need to know whether `directory / "pyproject.toml"` exists at all --
+    regardless of its table -- for `found_marker` fallback purposes must stat it separately; this
+    function only reports it when it is a recognized house-lint config source.
+    """
+    found: list[Path] = []
+    parse_error: ConfigError | None = None
+    for name in STANDALONE_CONFIG_NAMES:
+        candidate = directory / name
+        if not candidate.is_file():
+            continue
+        try:
+            document = load_toml(candidate)
+        except ConfigError as exc:
+            parse_error = parse_error or exc
+            continue
+        if get_standalone_table(document) is not None:
+            found.append(candidate)
+    pyproject = directory / "pyproject.toml"
+    if pyproject.is_file():
+        try:
+            document = load_toml(pyproject)
+        except ConfigError as exc:
+            parse_error = parse_error or exc
+            document = None
+        if document is not None and get_house_lint_table(document) is not None:
+            found.append(pyproject)
+    if not found and parse_error is not None:
+        raise parse_error
+    return tuple(found)
+
+
 def resolve_project(
     *, root: Path | None = None, config: Path | None = None, cwd: Path | None = None
 ) -> ProjectResolution:
@@ -867,11 +927,10 @@ def resolve_project(
         start = (cwd or Path.cwd()).expanduser().resolve()
         found_marker: Path | None = None
         for candidate in (start, *start.parents):
-            pyproject = candidate / "pyproject.toml"
-            if pyproject.is_file():
-                document = load_toml(pyproject)
-                if get_house_lint_table(document) is not None:
-                    return ProjectResolution(candidate, pyproject)
+            recognized = _recognized_configs(candidate)
+            if recognized:
+                return ProjectResolution(candidate, recognized[0], recognized[1:])
+            if (candidate / "pyproject.toml").is_file():
                 found_marker = found_marker or candidate
             if (candidate / ".git").exists():
                 found_marker = found_marker or candidate
@@ -883,9 +942,7 @@ def resolve_project(
         if not resolved_config.is_file():
             raise ConfigError(f"config does not exist: {config}")
         return ProjectResolution(resolved_root, resolved_config)
-    candidate = resolved_root / "pyproject.toml"
-    if candidate.is_file():
-        document = load_toml(candidate)
-        if get_house_lint_table(document) is not None:
-            return ProjectResolution(resolved_root, candidate)
+    recognized = _recognized_configs(resolved_root)
+    if recognized:
+        return ProjectResolution(resolved_root, recognized[0], recognized[1:])
     return ProjectResolution(resolved_root, None)

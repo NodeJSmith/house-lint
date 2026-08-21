@@ -756,6 +756,32 @@ def test_debug_tracebacks_survive_a_warm_cache(repository: Path) -> None:
         assert "def broken()" in completed.stderr
 
 
+def test_debug_reports_shadowed_config_when_standalone_and_pyproject_both_exist(
+    repository: Path,
+) -> None:
+    (repository / "house-lint.toml").write_text('[house-lint]\nselect = ["HSL001"]\n')
+    (repository / "pyproject.toml").write_text('[tool.house-lint]\nselect = ["HSL001"]\n')
+
+    debug_run = _run(repository, "check", "--root", str(repository), "--debug")
+    quiet_run = _run(repository, "check", "--root", str(repository))
+
+    assert debug_run.returncode == 0
+    assert quiet_run.returncode == 0
+    assert "debug: config" in debug_run.stderr
+    assert "house-lint.toml used; shadowed:" in debug_run.stderr
+    assert "pyproject.toml" in debug_run.stderr
+    assert "shadowed" not in quiet_run.stderr
+
+
+def test_debug_omits_shadow_line_when_only_one_config_source_exists(repository: Path) -> None:
+    (repository / "house-lint.toml").write_text('[house-lint]\nselect = ["HSL001"]\n')
+
+    completed = _run(repository, "check", "--root", str(repository), "--debug")
+
+    assert completed.returncode == 0
+    assert "shadowed" not in completed.stderr
+
+
 def test_invalid_check_format_writes_only_a_usage_diagnostic_to_stderr(repository: Path) -> None:
     completed = _run(repository, "check", "--root", str(repository), "--format", "xml")
 
