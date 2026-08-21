@@ -420,3 +420,39 @@ def test_token_family_separator_rejects_unknown_value(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="separator is invalid"):
         load_config(path)
+
+
+def test_token_family_separator_rejects_malformed_array(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text(
+        '[tool.house-lint]\nselect = ["HSL101"]\n'
+        "[[tool.house-lint.rules.HSL101.tokens]]\n"
+        'prefixes = ["AC"]\nscopes = ["comments"]\nseparator = []\n'
+    )
+
+    with pytest.raises(ConfigError, match="separator is invalid"):
+        load_config(path)
+
+
+def test_token_family_suffix_rejects_unknown_value(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text(
+        '[tool.house-lint]\nselect = ["HSL101"]\n'
+        "[[tool.house-lint.rules.HSL101.tokens]]\n"
+        'prefixes = ["AC"]\nscopes = ["comments"]\nsuffix = "invalid"\n'
+    )
+
+    with pytest.raises(ConfigError, match="suffix is invalid"):
+        load_config(path)
+
+
+def test_token_family_suffix_rejects_malformed_array(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text(
+        '[tool.house-lint]\nselect = ["HSL101"]\n'
+        "[[tool.house-lint.rules.HSL101.tokens]]\n"
+        'prefixes = ["AC"]\nscopes = ["comments"]\nsuffix = []\n'
+    )
+
+    with pytest.raises(ConfigError, match="suffix is invalid"):
+        load_config(path)

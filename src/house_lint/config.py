@@ -349,7 +349,7 @@ def _token_family(raw: Any, index: int) -> TokenFamily:
     if not scopes or len(set(scopes)) != len(scopes) or not set(scopes) <= set(VALID_SCOPES):
         raise ConfigError(f"{name}.scopes contains an invalid scope")
     separator = table.get("separator", "none")
-    if separator not in SEPARATOR_REGEX:
+    if not isinstance(separator, str) or separator not in SEPARATOR_REGEX:
         raise ConfigError(f"{name}.separator is invalid")
     min_digits = _bounded_int(table.get("min_digits", 1), f"{name}.min_digits", MAX_DIGITS_BOUND)
     max_digits_raw = table.get("max_digits")
@@ -359,7 +359,7 @@ def _token_family(raw: Any, index: int) -> TokenFamily:
         else None
     )
     suffix = table.get("suffix", "none")
-    if suffix not in SUFFIX_REGEX:
+    if not isinstance(suffix, str) or suffix not in SUFFIX_REGEX:
         raise ConfigError(f"{name}.suffix is invalid")
     for key in ("case_sensitive", "not_followed_by_time"):
         if key in table and type(table[key]) is not bool:
