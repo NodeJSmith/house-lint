@@ -213,11 +213,8 @@ class IgnorePattern(NamedTuple):
     `is_dir_only` is `True` when the raw pattern text (after stripping a leading `!`) ends with
     `/` -- gitwildmatch's own directory-only marker. `is_anchored` controls whether
     `_match_patterns` passes the full multi-segment `relative_path` or truncates to the last
-    segment. This diverges from gitignore's own "anchored" concept: patterns starting with `**/`
-    are gitignore-unanchored (match at any depth) but get `is_anchored=True` here because they
-    need the full path for correct multi-segment matching -- pathspec's compiled regex already
-    handles the any-depth behavior via its `(?:.+/)?` prefix. See `_is_anchored_pattern` and
-    `_match_patterns` for the full reasoning.
+    segment -- this diverges from gitignore's own "anchored" concept for leading-`**/` patterns;
+    see `_is_anchored_pattern` for the full reasoning.
 
     `is_anchored` is derived by `_is_anchored_pattern` from the pattern's own text (after
     collapsing consecutive `**` runs to one via `_DOUBLE_STAR_RUN`), not from pathspec's compiled
@@ -280,11 +277,10 @@ def _match_patterns(patterns: IgnorePatterns, relative_path: str, is_dir: bool) 
     status a closer, more specific negation (`!cache/`) already resolved differently -- confirmed
     against real `git check-ignore`: `["cache", "!cache/"]` does not ignore `src/cache/c.py`.
 
-    An anchored pattern (`is_anchored=True`, e.g. `a/**/`, `/a.py`, `sub/x.py`, `**/sub/deep.py`)
-    keeps the full path. For slash-containing patterns this is straightforward (their embedded slash
-    pins them to a specific depth). For leading-`**/` patterns it is also correct: pathspec's regex
-    already handles any-depth matching via `(?:.+/)?`, so no truncation is needed and the full path
-    is required for multi-segment suffixes to match. See `_is_anchored_pattern`'s docstring. But the same
+    An anchored pattern (`is_anchored=True`, e.g. `a/**/`, `/a.py`, `sub/x.py`,
+    `**/sub/deep.py`) keeps the full path — including leading-`**/` patterns, which are
+    gitignore-unanchored but need the full path for multi-segment matching; see
+    `_is_anchored_pattern` for why. But the same
     intermediate-ancestor ambiguity can still surface here: an anchored, ambiguous (no trailing
     slash) pattern like `src/sub` matches a *prefix* of a deeper probe too (`src/sub` followed by
     `/`, with more path remaining), for the identical reason `cache` does. A match is only accepted
