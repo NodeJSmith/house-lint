@@ -168,7 +168,7 @@ def _build_tree(root: Path) -> None:
 
 
 def _random_rules(rng: random.Random, distribution: Distribution) -> dict[str, tuple[str, ...]]:
-    """Pick one to three `.gitignore` files, each with one to four patterns."""
+    """Pick one to five `.gitignore` files, each with one to four patterns."""
     owners = rng.sample(IGNORE_OWNERS, k=rng.randint(1, len(IGNORE_OWNERS)))
     rules: dict[str, tuple[str, ...]] = {}
     for owner in owners:
