@@ -92,6 +92,25 @@ SCENARIOS = (
         {"src": ["**/**/b.py"]},
         ("src/a.py", "src/sub/b.py"),
     ),
+    # "foo**/**" is not a double-star run: the leading "**" is fused to the literal "foo",
+    # forming an ordinary segment, so the pattern stays anchored to its owning directory rather
+    # than collapsing to the unanchored "foo**". Only a "foo"-prefixed directory directly inside
+    # "src" is ignored -- one nested a level deeper is not.
+    Scenario(
+        "a '**' fused to a literal segment (e.g. 'foo**') does not un-anchor the pattern",
+        {"src": ["foo**/**"]},
+        ("src/foobar/x.py", "src/sub/foobar/y.py"),
+    ),
+    # A leading `**/` combined with a further interior slash (`**/sub/deep.py`) requires the
+    # two-segment suffix "sub/deep.py" at any depth -- not just the last component. A pattern
+    # this shape is `is_anchored`'s edge case: the compiled regex's arbitrary-prefix group (from
+    # the leading `**/`) makes it look textually similar to a bare unanchored pattern, but the
+    # pattern still needs its full multi-segment tail kept intact to match correctly.
+    Scenario(
+        "leading '**/' with a further interior slash keeps its full multi-segment suffix",
+        {"": ["**/sub/deep.py"]},
+        ("src/sub/deep.py", "src/other/sub/deep.py", "src/sub/shallow.py", "src/deep.py"),
+    ),
     # --- Directory-only patterns must not match a same-named regular file, and a directory-form
     # negation must be able to cancel an earlier file-form match (last matching line wins).
     Scenario(
@@ -238,14 +257,18 @@ def _build(root: Path, scenario: Scenario) -> None:
         (directory / ".gitignore").symlink_to(target.name)
 
 
+def _house_lint_skipped(result: DiscoveryResult, root: Path, files: tuple[str, ...]) -> set[str]:
+    selected = {path.relative_to(root.resolve()).as_posix() for path in result.files}
+    return {relative for relative in files if relative not in selected}
+
+
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda item: item.name)
 def test_discovery_matches_git_check_ignore(scenario: Scenario, tmp_path: Path) -> None:
     _build(tmp_path, scenario)
     init_repository(tmp_path)
 
     result = discover_files(tmp_path, include=scenario.include)
-    selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
-    house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
+    house_lint_skipped = _house_lint_skipped(result, tmp_path, scenario.files)
     ignored_by_git = git_ignored(tmp_path, scenario.files)
 
     assert result.errors == ()
@@ -257,7 +280,7 @@ def test_explicit_paths_match_git_check_ignore(scenario: Scenario, tmp_path: Pat
     """The same table, but reaching each file directly instead of walking to it.
 
     An explicit path skips `_traversable_dirs` entirely and leans on
-    `_combined_gitignore_spec` alone, so walk-time pruning cannot mask a wrong answer here.
+    `_is_gitignore_excluded` alone, so walk-time pruning cannot mask a wrong answer here.
     That makes this the stricter half of the pair: `house-lint check src/generated/foo.py` has
     to reach the same verdict git does with no directory traversal to help it.
     """
@@ -265,25 +288,12 @@ def test_explicit_paths_match_git_check_ignore(scenario: Scenario, tmp_path: Pat
     init_repository(tmp_path)
 
     result = discover_files(tmp_path, explicit=tuple(tmp_path / item for item in scenario.files))
-    selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
-    house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
+    house_lint_skipped = _house_lint_skipped(result, tmp_path, scenario.files)
 
     assert result.errors == ()
     assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known pathspec/git divergence: a negated directory-only pattern ('!sub/') re-includes "
-        "everything beneath it in pathspec, while git re-includes only the 'sub' entry itself "
-        "and re-evaluates each descendant. Closing this would mean matching path components "
-        "against git's precedence by hand instead of delegating whole-path matching to "
-        "pathspec. It errs toward linting a file git would ignore, never toward skipping one, "
-        "so it cannot hide a finding. Strict xfail: if this starts passing, the limitation is "
-        "gone and the note in docs/configuration.md should go with it."
-    ),
-)
 def test_negated_directory_pattern_does_not_re_include_nested_directories(tmp_path: Path) -> None:
     scenario = Scenario(
         "negated directory pattern re-includes only the directory itself",
@@ -294,28 +304,11 @@ def test_negated_directory_pattern_does_not_re_include_nested_directories(tmp_pa
     init_repository(tmp_path)
 
     result = discover_files(tmp_path, include=scenario.include)
-    selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
-    house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
+    house_lint_skipped = _house_lint_skipped(result, tmp_path, scenario.files)
 
     assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known pathspec/git divergence, same directory-negation family as the test above but "
-        "pointing the other way — and this one *under*-lints. pathspec will not let a "
-        "directory-only negation win for a directory path: "
-        "GitIgnoreSpec.from_lines(('**', '!**/')).match_file('src') returns True, while git "
-        "reports '.gitignore:2:!**/ src' re-including the directory and descends into it. "
-        "house-lint asks pathspec exactly that when deciding whether to prune, so it prunes a "
-        "subtree git walks and every file underneath vanishes from the scan. Passing 'src/' "
-        "does not change pathspec's answer, so no shape of question fixes it here; deciding it "
-        "means owning the matcher (see design/research/"
-        "2026-08-20-gitignore-style-exclusion-inclusion/). Strict xfail: if this starts "
-        "passing, the limitation is gone and docs/configuration.md should say so."
-    ),
-)
 def test_negated_directory_pattern_re_includes_a_directory_git_descends_into(
     tmp_path: Path,
 ) -> None:
@@ -328,8 +321,7 @@ def test_negated_directory_pattern_re_includes_a_directory_git_descends_into(
     init_repository(tmp_path)
 
     result = discover_files(tmp_path, include=scenario.include)
-    selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
-    house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
+    house_lint_skipped = _house_lint_skipped(result, tmp_path, scenario.files)
 
     assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
 
@@ -349,8 +341,7 @@ def test_explicit_directory_arguments_match_git_check_ignore(
     init_repository(tmp_path)
 
     result = discover_files(tmp_path, explicit=tuple(tmp_path / item for item in scenario.include))
-    selected = {path.relative_to(tmp_path.resolve()).as_posix() for path in result.files}
-    house_lint_skipped = {relative for relative in scenario.files if relative not in selected}
+    house_lint_skipped = _house_lint_skipped(result, tmp_path, scenario.files)
 
     assert result.errors == ()
     assert house_lint_skipped == git_ignored(tmp_path, scenario.files)

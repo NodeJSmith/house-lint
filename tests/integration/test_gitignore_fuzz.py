@@ -8,8 +8,8 @@ distribution below: a disagreement may leave house-lint linting a file git would
 never leave it skipping a file git would lint. Over-linting is visible and fixable in one
 `exclude` line; under-linting is silent, and a linter that silently skips a file has failed at its
 only job. The divergence *rate* is the softer one — a tripwire under a documented ceiling, so a
-`pathspec` bump or an edit to `_prefix_pattern`/`_normalize_contents_glob` shows up as a failure
-rather than as drift nobody measured.
+`pathspec` bump or an edit to the per-directory matcher shows up as a failure rather than as drift
+nobody measured.
 
 The rate is meaningless without the distribution that produced it, which is why three are
 declared rather than one. `docs/configuration.md` quotes these; regenerate with
@@ -49,12 +49,6 @@ TRIALS = 1500
 # Fixed so a reported rate is reproducible and a regression is bisectable. Change it only to
 # widen coverage deliberately, never to make a failing run pass.
 SEED = 20260820
-# How many under-linting divergences the known directory-negation defect is allowed to account
-# for in the adversarial distribution. A ceiling rather than a blanket exemption: the class is
-# tolerated because `pathspec` cannot currently decide it (see
-# `_is_known_directory_negation_defect`), but it must not silently grow. Regenerate alongside the
-# rates in `docs/configuration.md`.
-MAX_KNOWN_DIRECTORY_NEGATION_DIVERGENCES = 1
 
 # A tree deep and wide enough that anchoring, directory-only patterns, and negation inside a
 # nested directory all have somewhere to bite, but small enough that a trial stays cheap.
@@ -67,7 +61,13 @@ TREE = (
     "src/other/a.py",
     "src/other/deep/b.py",
 )
-IGNORE_OWNERS = ("", "src", "src/sub")
+# Includes a 3-level-deep owner (`src/sub/deep`) and a sibling branch (`src/other`) so
+# `CORNER_BODIES`' anchored/ambiguous-prefix shapes (the ones `_match_patterns`'s `_DIR_MARK`
+# guard exists for) get combined with nesting as deep as `TREE` itself goes, not just the 2
+# levels `"src"`/`"src/sub"` reach -- matching the "combine every shape with every depth" fix
+# the file's own history (see the two-`**` gap noted below, in `CORNER_BODIES`) says this class of
+# coverage gap needs.
+IGNORE_OWNERS = ("", "src", "src/sub", "src/sub/deep", "src/other")
 
 # Plain names and globs, the shape an actual project's .gitignore is made of.
 ORDINARY_BODIES = (
@@ -109,6 +109,13 @@ CORNER_BODIES = (
     "sub/a.py",
     "src/sub",
     "deep/",
+    # A leading `**/` plus a further interior slash (`**/sub/a.py`) requires the multi-segment
+    # suffix "sub/a.py" at any depth, not just its last component -- a pattern this shape was
+    # briefly misclassified as unanchored by an earlier, regex-text-sniffing `is_anchored`
+    # derivation (truncating the probe to "a.py" alone, which the compiled regex then never
+    # matched). Named here so a future regression in the anchoring rule gets fuzzed, not just
+    # pinned by the one curated parity scenario.
+    "**/sub/a.py",
 )
 
 
@@ -127,8 +134,11 @@ DISTRIBUTIONS = (
     # With no negation in play there is nothing to diverge about, so this ceiling is exactly zero
     # — the strongest of the three, and the one that would catch a genuinely new class of bug.
     Distribution("no-negation", 0.0, ORDINARY_BODIES, 0.0),
-    Distribution("typical", 0.05, ORDINARY_BODIES, 0.01),
-    Distribution("adversarial", 0.30, CORNER_BODIES, 0.04),
+    # Observed 0/1500 for both distributions with the per-directory matcher (SEED is fixed, so
+    # this is reproducible, not a lucky sample) — ceilings lowered to match rather than left at
+    # their pre-fix slack.
+    Distribution("typical", 0.05, ORDINARY_BODIES, 0.0),
+    Distribution("adversarial", 0.30, CORNER_BODIES, 0.0),
 )
 
 
@@ -150,33 +160,6 @@ class Divergence:
         )
 
 
-def _is_known_directory_negation_defect(divergence: Divergence) -> bool:
-    """Whether this under-linting divergence is the known `pathspec` directory-negation defect.
-
-    `pathspec` will not let a directory-only negation win for a directory path:
-    `GitIgnoreSpec.from_lines(("**", "!**/")).match_file("src")` returns True, while git reports
-    `.gitignore:2:!**/` re-including `src` and descends into it. house-lint asks `pathspec` that
-    exact question when deciding whether to prune a directory, so it prunes a subtree git walks
-    — and every file underneath vanishes from the scan.
-
-    The defect is one level below house-lint. Passing a trailing-slash candidate (`"src/"`)
-    does not change `pathspec`'s answer, so there is no shape of question house-lint can ask
-    that gets the right verdict; deciding it means owning the matcher rather than delegating
-    whole-path matching (see `design/research/2026-08-20-gitignore-style-exclusion-inclusion/`).
-
-    Recognised by the ingredient that makes the verdict `pathspec`'s to get wrong: a negated
-    directory-only pattern somewhere in the rule set. Deliberately narrow — an under-linting
-    divergence *without* one is a genuinely new bug and still fails the suite. This is the only
-    reason a wrongly-skipped file is tolerated anywhere in this file, and it is capped by
-    `MAX_KNOWN_DIRECTORY_NEGATION_DIVERGENCES` so the class cannot quietly widen.
-    """
-    return any(
-        line.startswith("!") and line.endswith("/")
-        for lines in divergence.ignores.values()
-        for line in lines
-    )
-
-
 def _build_tree(root: Path) -> None:
     for relative in TREE:
         path = root / relative
@@ -185,7 +168,7 @@ def _build_tree(root: Path) -> None:
 
 
 def _random_rules(rng: random.Random, distribution: Distribution) -> dict[str, tuple[str, ...]]:
-    """Pick one to three `.gitignore` files, each with one to four patterns."""
+    """Pick one to five `.gitignore` files, each with one to four patterns."""
     owners = rng.sample(IGNORE_OWNERS, k=rng.randint(1, len(IGNORE_OWNERS)))
     rules: dict[str, tuple[str, ...]] = {}
     for owner in owners:
@@ -255,41 +238,17 @@ def test_no_divergence_ever_skips_a_file_git_would_lint(
     user can see and silence. It is the property the surveyed alternatives (`igittigitt`,
     `dulwich.ignore`) fail.
 
-    This used to read "every known divergence errs the second way." That is no longer true:
-    `_is_known_directory_negation_defect` documents one class that errs the *first* way, found
-    once the corner pool learned to compose repeated `**` segments. The assertion is narrowed
-    to that named class rather than dropped — an under-linting divergence outside it is still a
-    hard failure, which is the whole point of running this at all.
+    The known directory-negation defect that used to carve out an exemption here (a negated
+    directory-only pattern winning against git's own verdict) no longer exists: the per-directory
+    matcher decides directory-only negations correctly instead of delegating whole-path matching
+    to pathspec's aggregate spec. There is no longer a tolerated class — any under-linting
+    divergence is a hard failure.
     """
     _, divergences = trial_run
     unsafe = [item for item in divergences if item.skipped_by_house_lint_only]
-    unexplained = [item for item in unsafe if not _is_known_directory_negation_defect(item)]
 
-    assert not unexplained, (
-        "discovery skipped files git would lint, outside the known directory-negation defect:\n"
-        + "\n".join(item.render() for item in unexplained[:10])
-    )
-
-
-def test_the_known_directory_negation_defect_does_not_widen(
-    trial_run: tuple[Distribution, tuple[Divergence, ...]],
-) -> None:
-    """Caps what the one tolerated under-linting class is allowed to account for.
-
-    Without a cap, `_is_known_directory_negation_defect` would be an open-ended licence to skip
-    files: any future regression involving a negated directory-only pattern would be absorbed
-    silently. Pinning the count means a change that widens the defect fails here even though the
-    safety test still passes.
-    """
-    distribution, divergences = trial_run
-    unsafe = [item for item in divergences if item.skipped_by_house_lint_only]
-
-    assert len(unsafe) <= MAX_KNOWN_DIRECTORY_NEGATION_DIVERGENCES, (
-        f"{distribution.name}: {len(unsafe)} under-linting divergences attributed to the known "
-        f"directory-negation defect, above the recorded ceiling of "
-        f"{MAX_KNOWN_DIRECTORY_NEGATION_DIVERGENCES}. Either a change widened the defect, or the "
-        f"ceiling needs regenerating alongside docs/configuration.md. Examples:\n"
-        + "\n".join(item.render() for item in unsafe[:10])
+    assert not unsafe, "discovery skipped files git would lint:\n" + "\n".join(
+        item.render() for item in unsafe[:10]
     )
 
 

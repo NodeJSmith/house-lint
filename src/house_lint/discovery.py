@@ -5,21 +5,47 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal, NamedTuple
 
 from pathspec import GitIgnoreSpec
+
+# `_DIR_MARK` is the named regex group pathspec's own aggregate matcher uses internally to tell a
+# directory-boundary match from an exact-candidate match; `_match_patterns` needs the same
+# distinction to avoid the ambiguity documented there. Underscore-prefixed and outside pathspec's
+# documented API surface, same risk profile as `GitIgnoreSpecPattern`'s own `.pattern`/`.include`/
+# `.match_file()` attributes (see `Key Constraints` in the design doc; mitigated by the
+# `pathspec<2` pin).
+from pathspec.patterns.gitignore.spec import (
+    _DIR_MARK,  # pyright: ignore[reportPrivateUsage]
+    GitIgnoreSpecPattern,
+)
 
 from house_lint.config import DEFAULT_INCLUDE, ConfigError, get_house_lint_table, load_toml
 from house_lint.results import LintError
 
 BUILTIN_EXCLUDES = (".git/", ".venv/", ".nox/", "__pycache__/", "site-packages/", "node_modules/")
-# Stands in for "an ancestor of this directory is excluded", where nothing beneath it can be
-# re-included — see `_FileSelector._combined_gitignore_spec`.
-IGNORE_EVERYTHING = ("**",)
 MAX_DISCOVERED_FILES = 100_000
-_GITIGNORE_METACHARS = re.compile(r"([!#*?\[\]\\])")
 _CONTENTS_GLOB = re.compile(r"(?<!\*\*)/\*\*(/?)\Z")
-# Two or more whole `**` segments in a row, which git reads as a single `**`.
-_DOUBLE_STAR_RUN = re.compile(r"\*\*(?:/\*\*)+")
+# `LintError.kind`/`.operation` are typed `str` in `results.py` (the public, schema-versioned
+# result type), so nothing there enforces this vocabulary -- these `Literal` aliases are this
+# module's own closed set of the `kind`/`operation` values it actually passes to `_error`, so a
+# typo (e.g. `"trversal"`) is a pyright error here rather than a silently-unvalidated string.
+_ErrorKind = Literal["path", "traversal", "budget"]
+_ErrorOperation = Literal[
+    "stat", "read", "parse", "resolve", "walk", "containment", "qualify", "discover", "combine"
+]
+# Collapses a run of consecutive `**` path segments to a single `**` -- see
+# `_is_anchored_pattern`'s docstring for why `is_anchored` needs this collapse rather than a bare
+# textual slash check. Not a revival of the old flatten/prefix pipeline's `_DOUBLE_STAR_RUN`
+# (deleted per this feature's AC#8): that one fed a full pattern-rewrite-and-reparse step; this one
+# only feeds a boolean classification, never rewrites a pattern that reaches `GitIgnoreSpec`.
+# The leading `**` must be its own complete path segment -- `(?<![^/])` requires it be preceded by
+# `/` or nothing -- so a fused segment like `foo**` in `foo**/**` is never swept into the collapse.
+# Without that guard, `foo**/**` collapses to `foo**` (no slash) and is misclassified as
+# unanchored, which then lets `_match_patterns` match `foo*`-prefixed directories at any depth
+# instead of only at the pattern's own directory, as real git does (verified against
+# `git check-ignore`; see the fused-segment scenario in the parity suite).
+_DOUBLE_STAR_RUN = re.compile(r"(?<![^/])\*\*(?:/\*\*)+")
 
 
 class DiscoveryError(ValueError):
@@ -60,31 +86,17 @@ def _inside(root: Path, path: Path) -> bool:
     return True
 
 
-def _gitignore_error(operation: str, message: str) -> LintError:
-    return LintError(
-        code="traversal-error",
-        kind="traversal",
-        path=".gitignore",
-        line=None,
-        column=None,
-        end_line=None,
-        end_column=None,
-        phase="discovery",
-        operation=operation,
-        rule_id=None,
-        message=message,
-    )
-
-
-def _load_gitignore_lines(path: Path, on_error: Callable[[str, str], None]) -> tuple[str, ...]:
+def _load_gitignore_lines(
+    path: Path, on_error: Callable[[_ErrorOperation, str], None]
+) -> tuple[str, ...]:
     """Read and validate a `.gitignore` file's pattern lines, reporting stat/read/parse failures.
 
-    Returns raw lines rather than a parsed spec: nested `.gitignore` files get their lines
-    rewritten (see `_prefix_pattern`) and combined with their ancestors' before the final parse,
-    so negation in a closer `.gitignore` can override a less-specific ignore the way git itself
-    resolves precedence. Parsing here first — then discarding the result — exists purely for
-    error attribution: without it, a bad line surviving into the merged multi-file list would
-    only be blamed on the directory being combined, not on the specific `.gitignore` at fault.
+    Returns raw lines rather than a parsed spec: each directory's lines are compiled into their
+    own pattern tuple by `_build_patterns`, which applies its own trailing-`/**` rewrite before
+    parsing — so a line valid here could in principle become invalid after that rewrite. Parsing
+    here first — then discarding the result — exists purely for error attribution: without it, a
+    bad line surfacing only once `_build_patterns` runs would be attributed to whatever directory
+    triggered that build, not the specific `.gitignore` file at fault.
     """
     try:
         # Checked before `is_file()`, which follows symlinks: git does not read a symlinked
@@ -112,161 +124,67 @@ def _load_gitignore_lines(path: Path, on_error: Callable[[str, str], None]) -> t
     return lines
 
 
-def _escape_gitignore_literal(segment: str) -> str:
-    """Escape characters gitwildmatch treats as pattern syntax within a literal path segment.
-
-    `_prefix_pattern` embeds real directory names into a pattern string that gets re-parsed by
-    `GitIgnoreSpec`. Without this, a directory literally named e.g. "sub[1]" or "!important"
-    would have its `[`/`]`/`!` read back as wildcard or negation syntax instead of literal
-    characters, silently changing which files the rewritten pattern matches.
-    """
-    return _GITIGNORE_METACHARS.sub(r"\\\1", segment)
-
-
-def _strip_unescaped_trailing_whitespace(text: str) -> str:
-    """Trim trailing spaces/tabs, except one quoted by a backslash escape.
-
-    Mirrors gitwildmatch's own trailing-whitespace rule ("trailing spaces are ignored unless
-    they are quoted with backslash") so a nested pattern's rewrite doesn't discard whitespace
-    that `GitIgnoreSpec` would otherwise treat as significant.
-
-    What decides the question is the *parity* of the backslash run before the whitespace, not
-    whether a single backslash sits there: backslashes quote each other pairwise, so an even
-    run leaves the space unquoted and git strips it. `a\\\\ ` (two backslashes, one space) is
-    the case that separates the two readings — git reduces it to `a\\\\`, which names `a\\`,
-    while treating the lone preceding backslash as an escape keeps the space and names `a\\ `
-    instead. Checked against real `git check-ignore`; see the parity suite.
-    """
-    end = len(text)
-    while end > 0 and text[end - 1] in " \t":
-        backslashes = 0
-        index = end - 2
-        while index >= 0 and text[index] == "\\":
-            backslashes += 1
-            index -= 1
-        if backslashes % 2 == 1:
-            break
-        end -= 1
-    return text[:end]
-
-
-def _collapse_double_star_run(core: str) -> str:
-    """Reduce every run of consecutive `**` segments in `core` to a single `**`.
-
-    git reads a run of `**` segments as one: `**/**/` ignores exactly what `**/` ignores, and
-    `**/**/b.py` matches exactly what `**/b.py` matches (checked against real `git check-ignore`;
-    see the collapse family in the parity suite). Collapsing here means the branches below only
-    ever see the canonical one-segment spelling, so the `core == "**"` case covers the whole
-    family rather than the single spelling someone happened to write down.
-
-    Without this, a repeated form reached the generic slash-containing branch instead — `**/**/`
-    became `<prefix>/**/**/`, which `GitIgnoreSpec` matches against an immediate regular file
-    (`<prefix>/a.py`) that git leaves alone, silently hiding it from the linter.
-    `_normalize_contents_glob` cannot repair that downstream: it deliberately skips a `/**`
-    preceded by another `*`.
-    """
-    return _DOUBLE_STAR_RUN.sub("**", core)
-
-
-def _normalize_contents_glob(pattern: str) -> str:
+def _normalized_gitignore_line(line: str) -> str:
     """Rewrite a trailing `/**` so it cannot match the directory whose contents it names.
 
     git reads `build/**` as "everything inside build" and never matches `build` itself;
-    `GitIgnoreSpec` matches the directory too. The difference is invisible until a later
-    negation re-includes something underneath, because house-lint prunes `build/` at walk time
-    and then never consults the negation inside it — git, by contrast, still descends. Spelling
-    the pattern `build/**/*` means the same thing to both, since `**` matches zero or more
-    directories but the trailing `*` still demands a path component.
+    `GitIgnoreSpec` matches the directory too. Spelling the pattern `build/**/*` means the same
+    thing to both, since `**` matches zero or more directories but the trailing `*` still demands
+    a path component.
 
-    Runs on every pattern that reaches a spec (see `_spec_for_lines` and `_patterns`), so it
-    also sees `_prefix_pattern`'s output. The lookbehind matches `**` specifically rather than a
-    single `*`, so it skips only `a/**/**` — where rewriting has no evidence behind it — while
-    still rewriting `a/*/**`, an ordinary pattern whose preceding segment just happens to end in
-    a star. `_prefix_pattern` handles a bare `**` line itself rather than emitting
-    `<prefix>/**/**` and relying on this to clean it up: the two `**` fixes are deliberately
-    split that way, and neither subsumes the other.
+    Shared by `_build_patterns` (per-directory `.gitignore` lines) and `_patterns` (the
+    root-anchored `exclude_spec` lines) — both build a spec from raw gitignore-syntax lines and
+    both need the same fix, since configured `exclude` accepts the same syntax
+    `docs/configuration.md` documents as following git's semantics.
     """
-    if not pattern or pattern.startswith("#"):
-        return pattern
-    return _CONTENTS_GLOB.sub(r"/**/*\1", pattern)
+    if not line or line.startswith("#"):
+        return line
+    return _CONTENTS_GLOB.sub(r"/**/*\1", line)
 
 
-def _prefix_pattern(prefix: str, line: str) -> str:
-    """Rewrite a gitignore pattern owned by `prefix` into an equivalent root-anchored pattern.
+def _is_anchored_pattern(text: str) -> bool:
+    """Whether a gitignore pattern is relative to its own directory rather than "any depth".
 
-    `prefix` is the pattern's owning directory, relative to root, posix-style, no trailing slash,
-    with each path segment already escaped via `_escape_gitignore_literal` (e.g. "src/sub").
-    Mirrors git's own per-directory pattern semantics: a pattern with no other slash matches at
-    any depth under its directory (`_prefix_pattern("src", "foo.py") == "src/**/foo.py"`, which
-    `GitIgnoreSpec` matches against both "src/foo.py" and "src/sub/foo.py" — "**" matches zero or
-    more directories), one with an embedded (or leading) slash is anchored to that directory, and
-    a leading "!" negates independent of anchoring.
+    git's rule (gitignore(5)): a separator at the beginning or middle of the pattern anchors it
+    to the `.gitignore`'s own directory; a pattern with no such separator may match at any depth
+    below it. A bare textual "does the pattern's core contain a slash" check gets a run of
+    consecutive `**` segments wrong, though: git collapses `**/**/` to mean exactly what `**/`
+    means (a single, unanchored "any depth" pattern) even though the raw text has a slash between
+    the two `**` (verified against real `git check-ignore`; see the collapse family in the parity
+    suite). Collapsing first, via `_DOUBLE_STAR_RUN`, is what makes the check correct for that case
+    without reaching into pathspec's compiled regex the way an earlier version of this function
+    did — the earlier version parsed the regex source pathspec's compiler emitted, an
+    implementation detail of pathspec's own internals rather than something gitignore syntax
+    itself defines, and riskier than the below-API-surface attribute reliance `Key Constraints`
+    documents (an attribute can stay stable in name and type while pathspec's regex-formatting
+    internals drift, silently misclassifying a pattern with no exception to catch it).
 
-    Only *unescaped trailing* whitespace is insignificant per gitwildmatch — a leading space is
-    part of the pattern (matches a filename that itself starts with a space), and "#"/"!" only
-    carry their special meaning as the pattern's literal first character. Blindly stripping the
-    whole line (as an earlier version of this function did) silently dropped a leading space from
-    the matched filename and could misidentify a leading-whitespace-prefixed "#"/"!" as
-    comment/negation syntax that real gitignore parsing (verified against `GitIgnoreSpec` directly)
-    does not treat as such — so only `.strip()`'s result is used to test for an all-whitespace
-    (blank) line; the pattern body itself is built from the unstripped `line`.
+    `text` is the pattern as pathspec parsed it (post `_normalized_gitignore_line` rewrite) --
+    same source `is_dir_only` reads. That rewrite only ever adds slashes to an already-anchored
+    trailing `/**`, so operating on the normalized text gives the same answer as the pre-rewrite
+    raw line in every case.
     """
-    if not line.strip():
-        return line
-    if line.startswith("#"):
-        return line
-    negated = line.startswith("!")
-    body = _strip_unescaped_trailing_whitespace(line[1:] if negated else line)
-    if body in ("", "/"):
-        # A bare "/" (or an empty pattern after stripping "!") has no defined gitignore meaning;
-        # treat it as inert rather than accidentally suppressing the whole owning directory.
-        return line
-    has_trailing_slash = body.endswith("/") and body != "/"
-    core = _collapse_double_star_run(body[:-1] if has_trailing_slash else body)
-    if core.startswith("/"):
-        anchored_core = f"{prefix}/{core[1:]}"
-    elif "/" in core:
-        anchored_core = f"{prefix}/{core}"
-    elif core == "**":
-        # `**` is the one no-slash pattern the general expansion below gets wrong: it would
-        # produce `<prefix>/**/**`, which `GitIgnoreSpec` matches against `<prefix>` itself and
-        # — in the directory-only `**/` form — against an immediate regular file
-        # (`<prefix>/a.py`) that git leaves alone. Naming an explicit segment (`*`) after the
-        # `**` keeps "at any depth" while still requiring a path component to be there.
-        # `_normalize_contents_glob` cannot repair this downstream: it deliberately skips a
-        # `/**` preceded by another `*`, so the bad form has to not be produced here.
-        anchored_core = f"{prefix}/**/*"
-    else:
-        anchored_core = f"{prefix}/**/{core}"
-    anchored = anchored_core + ("/" if has_trailing_slash else "")
-    return f"!{anchored}" if negated else anchored
+    core = text.removeprefix("!")
+    if core.endswith("/") and core != "/":
+        core = core[:-1]
+    core = _DOUBLE_STAR_RUN.sub("**", core)
+    return "/" in core
 
 
-def _patterns(
-    root: Path, excludes: tuple[str, ...], use_gitignore: bool
-) -> tuple[GitIgnoreSpec, GitIgnoreSpec, tuple[str, ...], tuple[LintError, ...]]:
-    errors: list[LintError] = []
-    root_gitignore_lines: tuple[str, ...] = ()
-    if use_gitignore:
-
-        def on_error(operation: str, message: str) -> None:
-            errors.append(_gitignore_error(operation, message))
-
-        root_gitignore_lines = _load_gitignore_lines(root / ".gitignore", on_error)
+def _patterns(excludes: tuple[str, ...]) -> tuple[GitIgnoreSpec, GitIgnoreSpec]:
     return (
         GitIgnoreSpec.from_lines(BUILTIN_EXCLUDES),
-        GitIgnoreSpec.from_lines(_normalize_contents_glob(value) for value in excludes),
-        root_gitignore_lines,
-        tuple(errors),
+        GitIgnoreSpec.from_lines(_normalized_gitignore_line(value) for value in excludes),
     )
 
 
 def _ignored(root: Path, path: Path, *specs: GitIgnoreSpec, is_dir: bool) -> bool:
     """Match `path`, relative to `root`, against each spec.
 
-    All specs here are root-anchored, including the combined gitignore-hierarchy spec built by
-    `_FileSelector._combined_gitignore_spec` — nested `.gitignore` patterns are rewritten to be
-    root-anchored before that spec is built, so no directory-relative matching is needed here.
+    Scoped to the two static, root-anchored specs (`builtin_spec` and `exclude_spec`) — nested
+    `.gitignore` patterns are matched separately, directory-relative, by
+    `_FileSelector._is_gitignore_excluded`, which is not one of these `*specs` and is checked
+    independently at each call site.
 
     `is_dir` selects which single form the path is matched in: git classifies a path once, as
     either a file or a directory, and then applies last-matching-line-wins within that one
@@ -281,29 +199,208 @@ def _ignored(root: Path, path: Path, *specs: GitIgnoreSpec, is_dir: bool) -> boo
     return any(spec.match_file(probe) for spec in specs)
 
 
+class IgnorePattern(NamedTuple):
+    """One compiled `.gitignore` pattern, paired with whether it is directory-only and whether
+    it is anchored to its owning directory.
+
+    `is_dir_only` is `True` when the raw pattern text (after stripping a leading `!`) ends with
+    `/` -- gitwildmatch's own directory-only marker. `is_anchored` is gitignore's own rule for
+    "this pattern is relative to its owning directory" rather than "this pattern matches a
+    component name at any depth below it" (`git`'s own wording: a separator at the beginning or
+    middle of the pattern anchors it; otherwise it may also match at any level below) --
+    `_match_patterns` uses it to decide how much of a multi-segment `relative_path` a pattern is
+    allowed to see, see that function's docstring.
+
+    `is_anchored` is derived by `_is_anchored_pattern` from the pattern's own text (after
+    collapsing consecutive `**` runs to one via `_DOUBLE_STAR_RUN`), not from pathspec's compiled
+    regex. A run of consecutive `**` segments has to be collapsed first because git treats
+    `**/**/` as exactly `**/` (a single, unanchored "any depth" pattern) even though the raw text
+    has a "middle" slash between the two `**` -- but that collapsing rule is small, documented in
+    `gitignore(5)`, and computed directly from the pattern text house-lint already has, rather
+    than reverse-engineered from the literal string pathspec's regex compiler happens to emit for
+    an unanchored pattern (an implementation detail of pathspec's internals, not something
+    gitignore syntax defines, and a narrower, more mechanical reimplementation than the deleted
+    flatten/prefix pipeline's full pattern-rewrite job).
+
+    A `NamedTuple` rather than a `@dataclass`: zero runtime cost over a plain tuple, stays
+    positionally compatible with the free-function convention `_match_patterns`/`_ignored`
+    already establish, but named-field access removes the risk of two adjacent `bool` fields
+    (`is_dir_only`, `is_anchored`) being silently transposed or a new field being inserted in the
+    wrong position -- exactly the class of drift `IgnorePatterns` already suffered once (a plain
+    2-tuple grew this `is_anchored` field without the design doc catching it in review).
+    """
+
+    pattern: GitIgnoreSpecPattern
+    is_dir_only: bool
+    is_anchored: bool
+
+
+IgnorePatterns = tuple[IgnorePattern, ...]
+"""One directory's own compiled `.gitignore` patterns. See `IgnorePattern` for the per-pattern
+fields."""
+
+_GitignoreStack = tuple[tuple[Path, IgnorePatterns], ...]
+"""Accumulated per-directory matchers from root down through some directory, innermost last --
+paired with the directory that owns each matcher, since a candidate must be probed relative to
+that owning directory rather than to root. See `_FileSelector._directory_gitignore_context`."""
+
+
+def _match_patterns(patterns: IgnorePatterns, relative_path: str, is_dir: bool) -> bool | None:
+    """Tri-state match of `relative_path` against one directory's own `.gitignore` patterns.
+
+    `relative_path` is relative to the directory that owns `patterns` (the directory containing
+    the `.gitignore` these were parsed from), not necessarily the discovery root -- the caller is
+    responsible for that relative-path threading when probing a stack of per-directory matchers.
+    It can span multiple segments (e.g. `"a/sub"`) when the owning directory is more than one
+    level above the candidate being checked.
+
+    Iterates in reverse so the last matching pattern wins, per git's own precedence rule. A
+    directory-only pattern (`is_dir_only=True`) is only eligible when `is_dir=True`; it is skipped
+    entirely otherwise, even if its regex would technically match the file-form probe. The probe
+    itself carries a trailing slash for directories -- `pattern.match_file("src/")` matches
+    directory-only patterns like `**/` where `pattern.match_file("src")` does not.
+
+    An unanchored pattern (`is_anchored=False`, e.g. `cache`, `*.py`, `*`) is only probed with the
+    *last* segment of `relative_path`, never the full multi-segment path. gitignore gives such a
+    pattern "matches a component name at any depth" semantics, which `_FileSelector.
+    _is_gitignore_excluded`'s own ancestor-by-ancestor walk already provides one level at a time --
+    every intermediate directory along the way gets its own, separate call to this function.
+    Handing an unanchored pattern the *full* multi-segment path instead double-applies that "any
+    depth" behavior through pathspec's regex too (its `(?:.+/)?` prefix lets the pattern match
+    starting partway through the string), which can let a plain ignore pattern owned by an outer
+    directory (e.g. `cache`) match straight through an intermediate directory whose exclusion
+    status a closer, more specific negation (`!cache/`) already resolved differently -- confirmed
+    against real `git check-ignore`: `["cache", "!cache/"]` does not ignore `src/cache/c.py`.
+
+    An anchored pattern (`is_anchored=True`, e.g. `a/**/`, `/a.py`, `sub/x.py`) keeps the full
+    path, per the design's relative-path threading -- its own embedded slash already pins it to a
+    specific depth, so there is no "any depth" behavior to double-apply by truncating. But the same
+    intermediate-ancestor ambiguity can still surface here: an anchored, ambiguous (no trailing
+    slash) pattern like `src/sub` matches a *prefix* of a deeper probe too (`src/sub` followed by
+    `/`, with more path remaining), for the identical reason `cache` does. A match is only accepted
+    if it covers the probe in full, or if it stops short at a position that is *not* a directory
+    boundary (`ps_d` unset -- see `_DIR_MARK`) -- the latter covers `*`/`**`, whose degenerate
+    regex (a bare `.`) matches a single arbitrary character via `re.search` and has no boundary
+    concept at all, so any match from it always counts regardless of position.
+
+    Returns `True` when the winning pattern is an ignore, `False` when it is a `!`-prefixed
+    negation, and `None` when nothing in `patterns` has an opinion -- the caller then falls back to
+    the next-outer directory's patterns, matching git's closest-`.gitignore`-wins precedence.
+
+    `include=True` on a `GitIgnoreSpecPattern` means "this is an ignore pattern," not "this
+    pattern includes/keeps the file" -- the name is the opposite of what it suggests, verified
+    empirically against `pathspec`. `include=False` means the pattern is a negation.
+    """
+    for pattern, is_dir_only, is_anchored in reversed(patterns):
+        if is_dir_only and not is_dir:
+            continue
+        probe_path = relative_path if is_anchored else relative_path.rpartition("/")[2]
+        probe = f"{probe_path}/" if is_dir else probe_path
+        result = pattern.match_file(probe)
+        if result is None:
+            continue
+        # `RegexMatchResult.match` is a bare `re.Match` in pathspec's own stub, unparameterized
+        # over `AnyStr` -- pyright treats every access through it as partially unknown. Every
+        # match here is over a `str` probe, so `.groupdict()`/`.end()` are the ordinary
+        # `str`-flavored `re.Match` methods.
+        match_end: int = result.match.end()  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        match_groups: dict[str, str | None] = result.match.groupdict()  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if match_groups.get(_DIR_MARK) and match_end < len(probe):
+            continue
+        return pattern.include
+    return None
+
+
+def _trailing_whitespace_trimmed(line: str) -> str:
+    """Trim trailing spaces/tabs from `line`, except one quoted by a backslash escape.
+
+    Mirrors gitwildmatch's own trailing-whitespace rule ("trailing spaces are ignored unless
+    they are quoted with backslash"). `GitIgnoreSpec.from_lines` does not implement this rule for
+    every backslash parity -- verified empirically: an even run of backslashes immediately before
+    a trailing space is still read as escaping that space, keeping a space real git strips. Run
+    before handing lines to `GitIgnoreSpec.from_lines` in `_build_patterns` to correct for it.
+
+    What decides the question is the *parity* of the backslash run before the whitespace, not
+    whether a single backslash sits there: backslashes quote each other pairwise, so an even run
+    leaves the space unquoted and git strips it. `a\\\\ ` (two backslashes, one space) is the case
+    that separates the two readings — git reduces it to `a\\\\`, which names `a\\`, while treating
+    the lone preceding backslash as an escape keeps the space and names `a\\ ` instead. Checked
+    against real `git check-ignore`; see the parity suite.
+    """
+    if not line.strip() or line.startswith("#"):
+        return line
+    end = len(line)
+    while end > 0 and line[end - 1] in " \t":
+        backslashes = 0
+        index = end - 2
+        while index >= 0 and line[index] == "\\":
+            backslashes += 1
+            index -= 1
+        if backslashes % 2 == 1:
+            break
+        end -= 1
+    return line[:end]
+
+
+def _build_patterns(lines: tuple[str, ...], on_error: Callable[[str], None]) -> IgnorePatterns:
+    """Parse one directory's raw `.gitignore` lines into a compiled `IgnorePatterns` tuple.
+
+    Applies `_trailing_whitespace_trimmed`'s backslash-parity fix, then
+    `_normalized_gitignore_line`'s trailing-`/**`-to-`/**/*` rewrite, before parsing (see that
+    function's docstring for why: git reads `build/**` as "everything inside build" and never
+    matches `build` itself, while `GitIgnoreSpec` matches the directory too).
+
+    `GitIgnoreSpec.from_lines()` is used to parse rather than constructing `GitIgnoreSpecPattern`
+    objects directly -- it is the only reliable entry point for gitignore-syntax parsing (comment
+    lines, blank lines, escaping, etc.).
+
+    On parse failure, returns `()` and calls `on_error(<message>)` instead of raising -- mirrors
+    `_load_gitignore_lines`'s callback convention: this function owns neither `self.errors` nor
+    the directory being processed, so the caller (`_own_matcher`) supplies the callback and
+    attributes the failure. Each source's own raw lines are already validated by
+    `_load_gitignore_lines`, so a failure here is only possible if this function's own
+    normalization step produces something unparsable -- rare, but a valid original line could in
+    principle become invalid once rewritten, so this stays live rather than being treated as
+    unreachable.
+    """
+    normalized = tuple(
+        _normalized_gitignore_line(_trailing_whitespace_trimmed(line)) for line in lines
+    )
+    try:
+        spec = GitIgnoreSpec.from_lines(normalized)
+    except (TypeError, ValueError, re.error) as exc:
+        on_error(str(exc))
+        return ()
+    built: list[IgnorePattern] = []
+    for pattern in spec.patterns:
+        # `.pattern` is typed `str | bytes | re.Pattern | None` upstream (a `RegexPattern` may in
+        # principle hold a compiled regex instead of source text), but every pattern here was
+        # built from `GitIgnoreSpec.from_lines()`'s own line-parsing path, which always stores the
+        # original `str` line -- never `bytes`, a compiled `re.Pattern`, or `None`.
+        raw: object = pattern.pattern  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        text = raw if isinstance(raw, str) else ""
+        is_dir_only = text.removeprefix("!").endswith("/")
+        is_anchored = _is_anchored_pattern(text)
+        built.append(IgnorePattern(pattern, is_dir_only, is_anchored))
+    return tuple(built)
+
+
 @dataclass
 class _FileSelector:
     root: Path
     builtin_spec: GitIgnoreSpec
     exclude_spec: GitIgnoreSpec
-    root_gitignore_lines: tuple[str, ...]
     errors: list[LintError]
     use_gitignore: bool = True
     selected: dict[Path, Path] = field(default_factory=lambda: dict[Path, Path]())
     files_skipped: int = 0
     limit_reached: bool = False
-    own_gitignore_lines_cache: dict[Path, tuple[str, ...]] = field(
-        default_factory=lambda: dict[Path, tuple[str, ...]]()
-    )
-    combined_gitignore_spec_cache: dict[Path, GitIgnoreSpec] = field(
-        default_factory=lambda: dict[Path, GitIgnoreSpec]()
-    )
-    spec_by_lines_cache: dict[tuple[str, ...], GitIgnoreSpec] = field(
-        default_factory=lambda: dict[tuple[str, ...], GitIgnoreSpec]()
+    own_matcher_cache: dict[Path, IgnorePatterns] = field(
+        default_factory=lambda: dict[Path, IgnorePatterns]()
     )
     excluded_ancestor_cache: dict[Path, bool] = field(default_factory=lambda: dict[Path, bool]())
-    reported_spec_failures: set[tuple[tuple[str, ...], Path]] = field(
-        default_factory=lambda: set[tuple[tuple[str, ...], Path]]()
+    directory_gitignore_context_cache: dict[Path, tuple[bool, _GitignoreStack]] = field(
+        default_factory=lambda: dict[Path, tuple[bool, _GitignoreStack]]()
     )
 
     def select(self, requested: tuple[Path, ...], *, explicit_paths: bool) -> None:
@@ -325,20 +422,22 @@ class _FileSelector:
             tuple(sorted(resolved_paths)), self.files_skipped, tuple(self.errors), resolved_paths
         )
 
-    def _consider(
-        self,
-        path: Path,
-        *,
-        explicit_paths: bool,
-        combined_gitignore_spec: GitIgnoreSpec | None = None,
-    ) -> None:
-        """Evaluate `path` for selection.
+    def _is_path_ignored(self, resolved: Path, *, is_dir: bool) -> bool:
+        """Shared three-way ignore check used by both `_consider` branches.
 
-        `combined_gitignore_spec` is precomputed once per directory by `_walk` and passed in for
-        every file it discovers there, avoiding a redundant per-file rebuild. Callers outside a
-        walk (`select`'s top-level `include`/`explicit` entries) leave it `None` and it's built
-        lazily below, once, for that single path.
+        A resolved path is ignored if it has an excluded ancestor, matches the
+        builtin/exclude spec, or is excluded by a `.gitignore`. Shared by the
+        directory and file branches of `_consider`, which differ only in the
+        `is_dir` value they pass through and in what happens on a non-match.
         """
+        return resolved != self.root and (
+            self._has_excluded_ancestor(resolved.parent)
+            or _ignored(self.root, resolved, self.builtin_spec, self.exclude_spec, is_dir=is_dir)
+            or self._is_gitignore_excluded(resolved.parent, resolved.name, is_dir=is_dir)
+        )
+
+    def _consider(self, path: Path, *, explicit_paths: bool) -> None:
+        """Evaluate `path` for selection."""
         if self.limit_reached:
             return
         try:
@@ -395,17 +494,7 @@ class _FileSelector:
             # under an ignored `src/`, which git never does. Matched against the spec for the
             # parent, deliberately excluding this directory's own `.gitignore`, for the same
             # reason `_traversable_dirs` does.
-            if resolved != self.root and (
-                self._has_excluded_ancestor(resolved.parent)
-                or _ignored(
-                    self.root,
-                    resolved,
-                    self.builtin_spec,
-                    self.exclude_spec,
-                    self._combined_gitignore_spec(resolved.parent),
-                    is_dir=True,
-                )
-            ):
+            if self._is_path_ignored(resolved, is_dir=True):
                 self.files_skipped += 1
                 return
             self._walk(resolved)
@@ -424,16 +513,7 @@ class _FileSelector:
         # apply its `.gitignore` to a file under `tests`. The two branches have to agree —
         # fixing only one left `check src/../tests` and `check src/../tests/a.py` disagreeing
         # with each other as well as with git. `path` stays the reported spelling.
-        if self._has_excluded_ancestor(resolved.parent) or _ignored(
-            self.root,
-            resolved,
-            self.builtin_spec,
-            self.exclude_spec,
-            combined_gitignore_spec
-            if combined_gitignore_spec is not None
-            else self._combined_gitignore_spec(resolved.parent),
-            is_dir=False,
-        ):
+        if self._is_path_ignored(resolved, is_dir=False):
             self.files_skipped += 1
             return
         if resolved in self.selected:
@@ -463,14 +543,9 @@ class _FileSelector:
             if self.limit_reached:
                 break
             current_path = Path(current)
-            combined_spec = self._combined_gitignore_spec(current_path)
-            dirs[:] = self._traversable_dirs(current_path, dirs, combined_spec)
+            dirs[:] = self._traversable_dirs(current_path, dirs)
             for name in sorted(names):
-                self._consider(
-                    current_path / name,
-                    explicit_paths=False,
-                    combined_gitignore_spec=combined_spec,
-                )
+                self._consider(current_path / name, explicit_paths=False)
                 if self.limit_reached:
                     break
 
@@ -496,7 +571,7 @@ class _FileSelector:
         """Whether any directory between root and `directory` (inclusive) is itself excluded by
         `builtin_spec` or `exclude_spec`.
 
-        The gitignore side of this already exists, inside `_combined_gitignore_spec`, for exactly
+        The gitignore side of this already exists, inside `_is_gitignore_excluded`, for exactly
         the reason spelled out there: git attributes the exclusion to the directory, so a
         negation can never re-include a file whose parent directory is excluded. Configured
         `exclude` accepts the same Git-ignore syntax, negations included, and `docs/configuration.md`
@@ -511,8 +586,8 @@ class _FileSelector:
         here too: they are directory patterns of the same shape (`.git/`, `.venv/`), and a
         configured negation must not resurrect a file out of one either.
 
-        Cached per directory, like the combined gitignore spec, so the walk pays O(depth) once
-        per directory rather than once per file.
+        Cached per directory so the walk pays O(depth) once per directory rather than once per
+        file.
         """
         if directory in self.excluded_ancestor_cache:
             return self.excluded_ancestor_cache[directory]
@@ -523,129 +598,153 @@ class _FileSelector:
         self.excluded_ancestor_cache[directory] = excluded
         return excluded
 
-    def _combined_gitignore_spec(self, directory: Path) -> GitIgnoreSpec:
-        """Root-anchored spec combining the root `.gitignore` with every nested `.gitignore`
-        between root and `directory`, ordered root-to-leaf (least to most specific) so
-        `GitIgnoreSpec`'s own last-matching-line-wins semantics reproduce git's
-        closest-directory-and-latest-line-wins precedence — including cross-level negation.
+    def _is_gitignore_excluded(self, directory: Path, relative_path: str, is_dir: bool) -> bool:
+        """Whether `directory / relative_path` is excluded by the gitignore pattern stack from
+        root through `directory`.
 
-        Rebuilds the ancestor chain on every call rather than maintaining a push/pop stack synced
-        to `os.walk`'s traversal order: `os.walk` backtracks between sibling subtrees with no
-        explicit "leaving a directory" signal, so a manual stack would need the same
-        relative-path bookkeeping this does anyway. `_own_gitignore_lines` memoizes each
-        directory's own `.gitignore` read, and the combined spec itself is cached per directory,
-        so the rebuild only repeats cheap dict lookups, not I/O or reparsing. A sibling
-        directory with no `.gitignore` of its own accumulates the exact same line tuple as its
-        parent, so `spec_by_lines_cache` is keyed on the accumulated lines themselves (not the
-        directory) to skip `GitIgnoreSpec.from_lines` entirely on that repeat, while
-        `combined_gitignore_spec_cache` still keeps the per-directory lookup itself O(1).
+        Delegates the root-to-`directory` walk to `_directory_gitignore_context`, cached per
+        `directory` — every file sharing a parent directory gets an identical ancestor verdict
+        and matcher stack, so only this method's own final candidate-vs-stack match (below) is
+        repeated per file. See that method's docstring for the ancestor-walk semantics (the
+        directory-attributed-exclusion rule, the stack-building order) that used to live here.
 
-        Checks each ancestor against the lines accumulated from *its* ancestors before reading
-        that ancestor's own `.gitignore` and folding its patterns in. Real git never reads ignore
-        files inside a directory it doesn't descend into, so once an ancestor is already excluded,
-        a nested negation further down must not be allowed to resurrect it. Normal tree walks
-        never hit this — `_traversable_dirs` already prunes an ignored directory before this
-        method is ever called for anything beneath it — but an *explicit* path (`house-lint check
-        src/ignored/foo.py`) reaches straight in here without going through that walk-time pruning.
+        After the walk, probes the candidate itself against the full stack, innermost matcher
+        first — the first one with an opinion wins, matching git's closest-`.gitignore`-wins,
+        last-matching-line-wins precedence.
 
-        An excluded ancestor therefore returns a match-everything spec rather than the patterns
-        accumulated so far. Merely stopping the walk is not enough: the accumulated lines can
-        themselves contain the resurrecting negation, since git allows `src/generated/` and
-        `!src/generated/foo.py` to sit in the *same* file. Returning those lines would let the
-        negation win for an explicit `src/generated/foo.py`, which git reports as ignored — it
-        attributes the exclusion to the directory, and a negation can never re-include a file
-        whose parent directory is excluded.
+        Each matcher in the stack is probed with the candidate's path relative to *that matcher's
+        own owning directory*, not to `directory` or root — a nested `.gitignore`'s patterns are
+        anchored to the directory that contains it. This is what makes a slash-containing pattern
+        in a non-root `.gitignore` (e.g. `src/.gitignore` with `a/**/`) match correctly against a
+        deeper candidate.
+
+        Short-circuits to `False` when `use_gitignore` is disabled, before any `.gitignore` is
+        read — `--no-gitignore` skips that filesystem I/O entirely, not just its result.
         """
-        if directory in self.combined_gitignore_spec_cache:
-            return self.combined_gitignore_spec_cache[directory]
         if not self.use_gitignore:
-            # Short-circuit before any nested `.gitignore` is even read, not just before the
-            # result is used — `--no-gitignore` should skip that filesystem I/O entirely.
-            spec = GitIgnoreSpec.from_lines(())
-            self.combined_gitignore_spec_cache[directory] = spec
-            return spec
-        lines: list[str] = list(self.root_gitignore_lines)
-        for current in self._ancestor_chain(directory):
-            if lines and _ignored(
-                self.root,
-                current,
-                self._spec_for_lines(tuple(lines), current),
-                is_dir=True,
-            ):
-                excluded = self._spec_for_lines(IGNORE_EVERYTHING, directory)
-                self.combined_gitignore_spec_cache[directory] = excluded
-                return excluded
-            prefix = "/".join(
-                _escape_gitignore_literal(segment)
-                for segment in current.relative_to(self.root).parts
+            return False
+        excluded, stack = self._directory_gitignore_context(directory)
+        if excluded:
+            return True
+        candidate = directory / relative_path
+        for owner, patterns in reversed(stack):
+            verdict = _match_patterns(
+                patterns, candidate.relative_to(owner).as_posix(), is_dir=is_dir
             )
-            lines.extend(
-                _prefix_pattern(prefix, line) for line in self._own_gitignore_lines(current)
-            )
-        spec = self._spec_for_lines(tuple(lines), directory)
-        self.combined_gitignore_spec_cache[directory] = spec
-        return spec
+            if verdict is not None:
+                return verdict
+        return False
 
-    def _spec_for_lines(self, lines: tuple[str, ...], directory: Path) -> GitIgnoreSpec:
-        """Build (or reuse) the `GitIgnoreSpec` for an accumulated line tuple.
+    def _directory_gitignore_context(self, directory: Path) -> tuple[bool, _GitignoreStack]:
+        """Whether `directory` itself is gitignore-excluded, plus the matcher stack accumulated
+        from root through `directory` when it is not — cached per `directory`.
 
-        `directory` is used only for error attribution if the lines fail to parse; it is not
-        part of the cache key, since two directories that accumulate the same lines (e.g. a
-        directory with no `.gitignore` of its own repeating its parent's accumulated lines) share
-        one parsed spec.
+        When `directory` is excluded, the walk below stops at the excluding ancestor, so the
+        returned stack is a partial prefix, not "root through `directory`" — harmless today
+        because the one caller, `_is_gitignore_excluded`, always checks the `excluded` half of
+        this return value first and never reads `stack` in that branch, but not a contract a
+        future caller should rely on without the same check.
+
+        Fuses what the deleted `_combined_gitignore_spec` used to do in one pass: building the
+        stack of per-directory matchers, and checking whether any ancestor along the way is
+        already excluded as a directory. Real git never reads ignore files inside a directory it
+        never descends into, so once an ancestor is excluded, a nested negation further down must
+        not be able to resurrect it — the same invariant `_traversable_dirs`'s walk-time pruning
+        already gives normal tree walks for free, but an *explicit* path (`house-lint check
+        src/ignored/foo.py`) reaches straight into `_is_gitignore_excluded` without going through
+        that pruning, so this method has to enforce it independently.
+
+        Walks root-to-leaf via `_ancestor_chain(directory)` (which ends at `directory` itself).
+        At each ancestor A, probes A **as a directory** against the stack accumulated from A's
+        ancestors only — A's own `.gitignore`, even if one exists, is never consulted when
+        deciding whether A itself is pruned. If A is excluded, the walk stops there: `directory`
+        is excluded regardless of any negation, even one sitting in the very same `.gitignore`
+        file (`src/generated/` plus `!src/generated/foo.py` still excludes
+        `src/generated/foo.py`, because git attributes the exclusion to the directory). If A is
+        not excluded, A's own matcher (from `own_matcher_cache`, built via `_build_patterns` and
+        `_own_gitignore_lines` on cache miss) is folded onto the stack before moving to the next
+        ancestor.
+
+        Every file in `directory` shares this same ancestor verdict and stack — caching by
+        `directory` turns what was an O(ancestor depth) recomputation per *file* into one per
+        *directory*, which is what `_is_gitignore_excluded` was doing before this was split out.
         """
-        cached_spec = self.spec_by_lines_cache.get(lines)
-        if cached_spec is not None:
-            return cached_spec
-        try:
-            spec = GitIgnoreSpec.from_lines(_normalize_contents_glob(line) for line in lines)
-        except (TypeError, ValueError, re.error) as exc:
-            # Each source's own lines are already validated in `_load_gitignore_lines`, but
-            # `_prefix_pattern`'s rewrite of them is not independently re-validated — a valid
-            # original line could in principle become invalid once prefixed, so this stays live.
-            #
-            # Reported once per (lines, directory) pair rather than once per call. A failing
-            # ancestor's lines are re-walked by `_combined_gitignore_spec` for every directory
-            # beneath it, so without this the same failure is appended once per descendant —
-            # hundreds of identical entries in a large tree, all attributed to the one ancestor.
-            # Keyed on the pair, not the lines alone, so a second directory whose accumulated
-            # lines fail the same way is still reported against its own path.
-            if (lines, directory) not in self.reported_spec_failures:
-                self.reported_spec_failures.add((lines, directory))
-                self.errors.append(self._error(directory, "traversal", "combine", str(exc)))
-            return GitIgnoreSpec.from_lines(())
-        self.spec_by_lines_cache[lines] = spec
-        return spec
+        cached = self.directory_gitignore_context_cache.get(directory)
+        if cached is not None:
+            return cached
+        stack: list[tuple[Path, IgnorePatterns]] = [(self.root, self._own_matcher(self.root))]
+        excluded = False
+        for ancestor in self._ancestor_chain(directory):
+            verdict = None
+            for owner, patterns in reversed(stack):
+                verdict = _match_patterns(
+                    patterns, ancestor.relative_to(owner).as_posix(), is_dir=True
+                )
+                if verdict is not None:
+                    break
+            if verdict:
+                excluded = True
+                break
+            stack.append((ancestor, self._own_matcher(ancestor)))
+        result = (excluded, tuple(stack))
+        self.directory_gitignore_context_cache[directory] = result
+        return result
+
+    def _own_matcher(self, directory: Path) -> IgnorePatterns:
+        """Compiled `.gitignore` pattern tuple for `directory`, cached by directory path.
+
+        Every directory, root included, gets its lines from `_own_gitignore_lines` -- the same
+        per-directory read-and-cache path the deleted `_combined_gitignore_spec` used. Root needs
+        no special treatment for that read-and-cache path: this method's own `own_matcher_cache`
+        guard already ensures `_own_gitignore_lines` is called at most once per directory, so
+        there's no double-read to avoid by pre-loading root's lines elsewhere. Root *is*
+        special-cased below, in `on_error`'s reported-path label -- root's `.gitignore` is
+        reported as `root / ".gitignore"` rather than as the bare root directory, since a
+        directory-only error would otherwise be indistinguishable from an error on the directory
+        itself.
+
+        `_build_patterns` cannot attribute a post-normalization parse failure to a directory or
+        append to `self.errors` itself -- it owns neither. This method does, via the `on_error`
+        callback it supplies -- the same callback convention `_own_gitignore_lines` already uses
+        for `_load_gitignore_lines` -- and is called at most once per directory (guarded by
+        `own_matcher_cache` below), so a failure here is reported exactly once per directory, same
+        as the deleted `_spec_for_lines`'s "combine" errors were.
+        """
+        if directory in self.own_matcher_cache:
+            return self.own_matcher_cache[directory]
+        resolved_lines = self._own_gitignore_lines(directory)
+
+        def on_error(message: str) -> None:
+            reported = directory / ".gitignore" if directory == self.root else directory
+            self.errors.append(self._error(reported, "traversal", "combine", message))
+
+        built = _build_patterns(resolved_lines, on_error)
+        self.own_matcher_cache[directory] = built
+        return built
 
     def _own_gitignore_lines(self, directory: Path) -> tuple[str, ...]:
-        if directory in self.own_gitignore_lines_cache:
-            return self.own_gitignore_lines_cache[directory]
         ignore = directory / ".gitignore"
 
-        def on_error(operation: str, message: str) -> None:
+        def on_error(operation: _ErrorOperation, message: str) -> None:
             self.errors.append(self._error(ignore, "traversal", operation, message))
 
-        lines = _load_gitignore_lines(ignore, on_error)
-        self.own_gitignore_lines_cache[directory] = lines
-        return lines
+        return _load_gitignore_lines(ignore, on_error)
 
-    def _traversable_dirs(
-        self, current_path: Path, dirs: list[str], combined_gitignore_spec: GitIgnoreSpec
-    ) -> list[str]:
+    def _traversable_dirs(self, current_path: Path, dirs: list[str]) -> list[str]:
         """Return child directory names to descend into, recording why each was dropped.
 
         Drops symlinked directories (never traversed) and directories already excluded by
-        `combined_gitignore_spec` — the spec accumulated from root down to `current_path`
-        (the parent), deliberately *not* including the child's own, not-yet-read
+        `builtin_spec`, `exclude_spec`, or the gitignore stack accumulated from root down to
+        `current_path` (the parent) — deliberately *not* including the child's own, not-yet-read
         `.gitignore`. Checking a child against its own nested `.gitignore` before deciding
         whether to descend into it would let a negation inside that file "resurrect" files
         that should stay excluded because the directory itself is ignored — real git never
         reads ignore files inside a directory it never descends into. Skipping the
-        directory here means `_own_gitignore_lines`/`_combined_gitignore_spec` are simply
+        directory here means `_own_gitignore_lines`/`_is_gitignore_excluded` are simply
         never called for it, so its nested `.gitignore` (if any) is never read at all.
-        `combined_gitignore_spec` already folds in `use_gitignore` (it's an empty spec when
-        disabled), and `builtin_spec`/`exclude_spec` inside `_ignored` apply unconditionally,
-        matching how file-level ignoring already treats those two specs.
+        `_is_gitignore_excluded` already folds in `use_gitignore` (it short-circuits to `False`
+        when disabled), and `builtin_spec`/`exclude_spec` inside `_ignored` apply
+        unconditionally, matching how file-level ignoring already treats those two specs.
         """
         kept: list[str] = []
         for item in sorted(dirs):
@@ -661,27 +760,24 @@ class _FileSelector:
                 )
                 continue
             if _ignored(
-                self.root,
-                child,
-                self.builtin_spec,
-                self.exclude_spec,
-                combined_gitignore_spec,
-                is_dir=True,
-            ):
+                self.root, child, self.builtin_spec, self.exclude_spec, is_dir=True
+            ) or self._is_gitignore_excluded(current_path, item, is_dir=True):
                 self.files_skipped += 1
                 continue
             kept.append(item)
         return kept
 
     def _filesystem_error(
-        self, path: Path, operation: str, message: str, *, explicit_paths: bool
+        self, path: Path, operation: _ErrorOperation, message: str, *, explicit_paths: bool
     ) -> None:
         err = self._error(path, "path" if explicit_paths else "traversal", operation, message)
         if explicit_paths:
             raise DiscoveryError(err)
         self.errors.append(err)
 
-    def _error(self, path: Path, kind: str, operation: str, message: str) -> LintError:
+    def _error(
+        self, path: Path, kind: _ErrorKind, operation: _ErrorOperation, message: str
+    ) -> LintError:
         try:
             relative = path.relative_to(self.root).as_posix()
         except ValueError:
@@ -711,16 +807,13 @@ def discover_files(
 ) -> DiscoveryResult:
     """Discover qualifying files, or raise for strict explicit path failures."""
     root = root.expanduser().resolve()
-    builtin_spec, exclude_spec, root_gitignore_lines, pattern_errors = _patterns(
-        root, excludes, use_gitignore
-    )
+    builtin_spec, exclude_spec = _patterns(excludes)
     requested = explicit or tuple(root / item for item in include)
     selector = _FileSelector(
         root,
         builtin_spec,
         exclude_spec,
-        root_gitignore_lines,
-        list(pattern_errors),
+        [],
         use_gitignore=use_gitignore,
     )
     selector.select(requested, explicit_paths=bool(explicit))
