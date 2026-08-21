@@ -760,6 +760,47 @@ def test_is_gitignore_excluded_returns_false_immediately_when_use_gitignore_disa
     assert read_text_spy == []
 
 
+def test_directory_gitignore_context_is_cached_per_directory(tmp_path: Path) -> None:
+    # A second call for the same directory must return the exact cached tuple rather than
+    # rebuilding it -- proves the cache is actually consulted, not just present and unused.
+    source = tmp_path / "src" / "nested"
+    source.mkdir(parents=True)
+    (tmp_path / ".gitignore").write_text("*.py\n")
+    selector = _make_selector(tmp_path)
+
+    first = selector._directory_gitignore_context(source)
+    second = selector._directory_gitignore_context(source)
+
+    assert second is first
+    assert selector.directory_gitignore_context_cache[source] is first
+
+
+def test_is_gitignore_excluded_reuses_directory_context_across_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every file in the same directory shares an identical ancestor verdict and pattern stack.
+    # `_ancestor_chain` is only invoked while building that stack, so two files sharing a
+    # directory must trigger exactly one call, not one per file -- this is the redundant
+    # per-file recomputation the caching fix eliminates.
+    source = tmp_path / "src" / "nested"
+    source.mkdir(parents=True)
+    (tmp_path / ".gitignore").write_text("kept.py\nother.py\n")
+    selector = _make_selector(tmp_path)
+    original_ancestor_chain = discovery._FileSelector._ancestor_chain
+    calls: list[Path] = []
+
+    def spy_ancestor_chain(self: discovery._FileSelector, directory: Path) -> list[Path]:
+        calls.append(directory)
+        return original_ancestor_chain(self, directory)
+
+    monkeypatch.setattr(discovery._FileSelector, "_ancestor_chain", spy_ancestor_chain)
+
+    assert selector._is_gitignore_excluded(source, "kept.py", is_dir=False) is True
+    assert selector._is_gitignore_excluded(source, "other.py", is_dir=False) is True
+
+    assert calls == [source]
+
+
 def test_no_gitignore_disables_nested_gitignore_too(tmp_path: Path) -> None:
     source = tmp_path / "src"
     source.mkdir()

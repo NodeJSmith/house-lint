@@ -239,6 +239,11 @@ IgnorePatterns = tuple[IgnorePattern, ...]
 """One directory's own compiled `.gitignore` patterns. See `IgnorePattern` for the per-pattern
 fields."""
 
+_GitignoreStack = tuple[tuple[Path, IgnorePatterns], ...]
+"""Accumulated per-directory matchers from root down through some directory, innermost last --
+paired with the directory that owns each matcher, since a candidate must be probed relative to
+that owning directory rather than to root. See `_FileSelector._directory_gitignore_context`."""
+
 
 def _match_patterns(patterns: IgnorePatterns, relative_path: str, is_dir: bool) -> bool | None:
     """Tri-state match of `relative_path` against one directory's own `.gitignore` patterns.
@@ -394,6 +399,9 @@ class _FileSelector:
         default_factory=lambda: dict[Path, IgnorePatterns]()
     )
     excluded_ancestor_cache: dict[Path, bool] = field(default_factory=lambda: dict[Path, bool]())
+    directory_gitignore_context_cache: dict[Path, tuple[bool, _GitignoreStack]] = field(
+        default_factory=lambda: dict[Path, tuple[bool, _GitignoreStack]]()
+    )
 
     def select(self, requested: tuple[Path, ...], *, explicit_paths: bool) -> None:
         seen_arguments: set[Path] = set()
@@ -594,54 +602,31 @@ class _FileSelector:
         """Whether `directory / relative_path` is excluded by the gitignore pattern stack from
         root through `directory`.
 
-        Fuses what the deleted `_combined_gitignore_spec` used to do in one pass: building the
-        stack of per-directory matchers, and checking whether any ancestor along the way is
-        already excluded as a directory. Real git never reads ignore files inside a directory it
-        never descends into, so once an ancestor is excluded, a nested negation further down must
-        not be able to resurrect it — the same invariant `_traversable_dirs`'s walk-time pruning
-        already gives normal tree walks for free, but an *explicit* path (`house-lint check
-        src/ignored/foo.py`) reaches straight in here without going through that pruning, so this
-        method has to enforce it independently.
-
-        Walks root-to-leaf via `_ancestor_chain(directory)` (which ends at `directory` itself).
-        At each ancestor A, probes A **as a directory** against the stack accumulated from A's
-        ancestors only — A's own `.gitignore`, even if one exists, is never consulted when
-        deciding whether A itself is pruned. If A is excluded, returns `True` immediately: the
-        candidate is excluded regardless of any negation, even one sitting in the very same
-        `.gitignore` file (`src/generated/` plus `!src/generated/foo.py` still excludes
-        `src/generated/foo.py`, because git attributes the exclusion to the directory). If A is
-        not excluded, A's own matcher (from `own_matcher_cache`, built via `_build_patterns` and
-        `_own_gitignore_lines` on cache miss) is folded onto the stack before moving to the next
-        ancestor.
+        Delegates the root-to-`directory` walk to `_directory_gitignore_context`, cached per
+        `directory` — every file sharing a parent directory gets an identical ancestor verdict
+        and matcher stack, so only this method's own final candidate-vs-stack match (below) is
+        repeated per file. See that method's docstring for the ancestor-walk semantics (the
+        directory-attributed-exclusion rule, the stack-building order) that used to live here.
 
         After the walk, probes the candidate itself against the full stack, innermost matcher
         first — the first one with an opinion wins, matching git's closest-`.gitignore`-wins,
         last-matching-line-wins precedence.
 
-        Each matcher in the stack is probed with the candidate's (or ancestor's) path relative to
-        *that matcher's own owning directory*, not to `directory` or root — a nested
-        `.gitignore`'s patterns are anchored to the directory that contains it. This is what makes
-        a slash-containing pattern in a non-root `.gitignore` (e.g. `src/.gitignore` with `a/**/`)
-        match correctly against a deeper candidate.
+        Each matcher in the stack is probed with the candidate's path relative to *that matcher's
+        own owning directory*, not to `directory` or root — a nested `.gitignore`'s patterns are
+        anchored to the directory that contains it. This is what makes a slash-containing pattern
+        in a non-root `.gitignore` (e.g. `src/.gitignore` with `a/**/`) match correctly against a
+        deeper candidate.
 
         Short-circuits to `False` when `use_gitignore` is disabled, before any `.gitignore` is
         read — `--no-gitignore` skips that filesystem I/O entirely, not just its result.
         """
         if not self.use_gitignore:
             return False
+        excluded, stack = self._directory_gitignore_context(directory)
+        if excluded:
+            return True
         candidate = directory / relative_path
-        stack: list[tuple[Path, IgnorePatterns]] = [(self.root, self._own_matcher(self.root))]
-        for ancestor in self._ancestor_chain(directory):
-            excluded = None
-            for owner, patterns in reversed(stack):
-                excluded = _match_patterns(
-                    patterns, ancestor.relative_to(owner).as_posix(), is_dir=True
-                )
-                if excluded is not None:
-                    break
-            if excluded:
-                return True
-            stack.append((ancestor, self._own_matcher(ancestor)))
         for owner, patterns in reversed(stack):
             verdict = _match_patterns(
                 patterns, candidate.relative_to(owner).as_posix(), is_dir=is_dir
@@ -649,6 +634,61 @@ class _FileSelector:
             if verdict is not None:
                 return verdict
         return False
+
+    def _directory_gitignore_context(self, directory: Path) -> tuple[bool, _GitignoreStack]:
+        """Whether `directory` itself is gitignore-excluded, plus the matcher stack accumulated
+        from root through `directory` when it is not — cached per `directory`.
+
+        When `directory` is excluded, the walk below stops at the excluding ancestor, so the
+        returned stack is a partial prefix, not "root through `directory`" — harmless today
+        because the one caller, `_is_gitignore_excluded`, always checks the `excluded` half of
+        this return value first and never reads `stack` in that branch, but not a contract a
+        future caller should rely on without the same check.
+
+        Fuses what the deleted `_combined_gitignore_spec` used to do in one pass: building the
+        stack of per-directory matchers, and checking whether any ancestor along the way is
+        already excluded as a directory. Real git never reads ignore files inside a directory it
+        never descends into, so once an ancestor is excluded, a nested negation further down must
+        not be able to resurrect it — the same invariant `_traversable_dirs`'s walk-time pruning
+        already gives normal tree walks for free, but an *explicit* path (`house-lint check
+        src/ignored/foo.py`) reaches straight into `_is_gitignore_excluded` without going through
+        that pruning, so this method has to enforce it independently.
+
+        Walks root-to-leaf via `_ancestor_chain(directory)` (which ends at `directory` itself).
+        At each ancestor A, probes A **as a directory** against the stack accumulated from A's
+        ancestors only — A's own `.gitignore`, even if one exists, is never consulted when
+        deciding whether A itself is pruned. If A is excluded, the walk stops there: `directory`
+        is excluded regardless of any negation, even one sitting in the very same `.gitignore`
+        file (`src/generated/` plus `!src/generated/foo.py` still excludes
+        `src/generated/foo.py`, because git attributes the exclusion to the directory). If A is
+        not excluded, A's own matcher (from `own_matcher_cache`, built via `_build_patterns` and
+        `_own_gitignore_lines` on cache miss) is folded onto the stack before moving to the next
+        ancestor.
+
+        Every file in `directory` shares this same ancestor verdict and stack — caching by
+        `directory` turns what was an O(ancestor depth) recomputation per *file* into one per
+        *directory*, which is what `_is_gitignore_excluded` was doing before this was split out.
+        """
+        cached = self.directory_gitignore_context_cache.get(directory)
+        if cached is not None:
+            return cached
+        stack: list[tuple[Path, IgnorePatterns]] = [(self.root, self._own_matcher(self.root))]
+        excluded = False
+        for ancestor in self._ancestor_chain(directory):
+            verdict = None
+            for owner, patterns in reversed(stack):
+                verdict = _match_patterns(
+                    patterns, ancestor.relative_to(owner).as_posix(), is_dir=True
+                )
+                if verdict is not None:
+                    break
+            if verdict:
+                excluded = True
+                break
+            stack.append((ancestor, self._own_matcher(ancestor)))
+        result = (excluded, tuple(stack))
+        self.directory_gitignore_context_cache[directory] = result
+        return result
 
     def _own_matcher(self, directory: Path) -> IgnorePatterns:
         """Compiled `.gitignore` pattern tuple for `directory`, cached by directory path.
