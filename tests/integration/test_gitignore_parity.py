@@ -111,6 +111,14 @@ SCENARIOS = (
         {"": ["**/sub/deep.py"]},
         ("src/sub/deep.py", "src/other/sub/deep.py", "src/sub/shallow.py", "src/deep.py"),
     ),
+    # A leading `**/` with a fused literal segment after a further interior slash
+    # (`**/x/**foo`) is unanchored: git matches it at any depth, not just below the owning
+    # directory. This pins the fix for KI-007.
+    Scenario(
+        "leading '**/' with a fused interior segment matches at any depth",
+        {"src": ["**/x/**foo"]},
+        ("src/x/yfoo/a.py", "src/sub/x/yfoo/b.py"),
+    ),
     # --- Directory-only patterns must not match a same-named regular file, and a directory-form
     # negation must be able to cancel an earlier file-form match (last matching line wins).
     Scenario(

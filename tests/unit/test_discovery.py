@@ -456,6 +456,16 @@ def test_build_patterns_does_not_collapse_a_double_star_fused_to_a_literal_segme
     assert [is_anchored for _pattern, _is_dir_only, is_anchored in patterns] == [True]
 
 
+def test_build_patterns_marks_leading_double_star_slash_patterns_as_anchored() -> None:
+    # Gitignore-unanchored (match at any depth), but is_anchored=True here because
+    # _match_patterns uses this flag for path truncation: these patterns need the full
+    # multi-segment path, and pathspec's regex already handles any-depth via (?:.+/)?.
+    # See the leading-**/ parity scenarios for differential proof.
+    patterns = _build_patterns_or_empty(("**/x/**foo", "**/sub/deep.py"))
+
+    assert [is_anchored for _pattern, _is_dir_only, is_anchored in patterns] == [True, True]
+
+
 def test_build_patterns_returns_an_empty_tuple_and_the_error_on_parse_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
