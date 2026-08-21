@@ -79,7 +79,8 @@ def test_trailing_ignore_owns_interior_comment_findings_in_multiline_statements(
     )
     candidates = tuple(
         detect_spec_tokens(
-            source, HSL101Options((TokenFamily(("T",), ("comments",), min_digits=2),))
+            source,
+            HSL101Options((TokenFamily(prefixes=("T",), scopes=("comments",), min_digits=2),)),
         )
     )
 
@@ -111,7 +112,8 @@ def test_header_ignore_does_not_own_comment_findings_in_its_body(write_sample) -
     )
     candidates = tuple(
         detect_spec_tokens(
-            source, HSL101Options((TokenFamily(("T",), ("comments",), min_digits=2),))
+            source,
+            HSL101Options((TokenFamily(prefixes=("T",), scopes=("comments",), min_digits=2),)),
         )
     )
 

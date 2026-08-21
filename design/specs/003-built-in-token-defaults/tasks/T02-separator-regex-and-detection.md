@@ -1,7 +1,7 @@
 ---
 task_id: "T02"
 title: "Update regex generation for separator field"
-status: "planned"
+status: "done"
 depends_on: ["T01"]
 implements: ["FR#4", "FR#5", "FR#6", "FR#7"]
 ---

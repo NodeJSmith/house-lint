@@ -16,6 +16,14 @@ from house_lint.analysis import (
 from house_lint.config import HSL101Options, TokenFamily
 from house_lint.source import SourceFile
 
+_SEP_REGEX = {
+    "none": "",
+    "hash": "#",
+    "hash-optional": "#?",
+    "dash": "-",
+    "dash-optional": "-?",
+}
+
 
 def detect(
     source: SourceFile, options: HSL101Options, *, limit: int | None = None
@@ -137,14 +145,14 @@ def _token_expression(family: TokenFamily, *, boundaries: bool) -> str:
     )
     if not family.case_sensitive:
         prefixes = f"(?i:{prefixes})"
-    hash_part = {"forbidden": "", "optional": "#?", "required": "#"}[family.hash]
+    sep_part = _SEP_REGEX[family.separator]
     maximum = "" if family.max_digits is None else str(family.max_digits)
     digits = (
         f"[0-9]{{{family.min_digits},{maximum}}}" if maximum else f"[0-9]{{{family.min_digits},}}"
     )
     suffix = "[a-z]?" if family.suffix == "optional-lower-alpha" else ""
     time_guard = "(?!:[0-9])" if family.not_followed_by_time else ""
-    token = f"(?:{prefixes}){hash_part}{digits}{suffix}{time_guard}"
+    token = f"(?:{prefixes}){sep_part}{digits}{suffix}{time_guard}"
     return f"(?<![A-Za-z0-9_]){token}(?![A-Za-z0-9_])" if boundaries else token
 
 
