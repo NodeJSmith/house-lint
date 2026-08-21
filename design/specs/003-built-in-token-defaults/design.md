@@ -1,7 +1,7 @@
 # Design: Built-in Token Defaults for HSL101
 
 **Date:** 2026-08-20
-**Status:** approved
+**Status:** archived
 **Scope-mode:** hold
 **Research:** design/research/2026-08-20-linter-token-vocabulary-defaults/research.md
 
