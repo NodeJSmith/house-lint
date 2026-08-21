@@ -121,6 +121,24 @@ def test_detects_whole_filename_segments_without_source_owner(tmp_path: Path) ->
     )
 
 
+def test_detects_dash_separated_family_as_joined_segment_in_filename(tmp_path: Path) -> None:
+    # Regression test: a naive implementation that splits the filename on
+    # "._-" before matching would see only "notes", "KI", "001", and "fix"
+    # as separate segments and never see the dash-joined "KI-001" token, so
+    # a dash-separated family (e.g. the built-in known-issues family) would
+    # never match. The pattern must be applied directly against the whole
+    # filename so the separator is preserved.
+    path = tmp_path / "notes-KI-001-fix.py"
+    path.write_text("value = 1\n")
+    options = HSL101Options(
+        (TokenFamily(prefixes=("KI",), scopes=("filenames",), separator="dash"),)
+    )
+
+    findings = detect(SourceFile(path, tmp_path), options)
+
+    assert [finding.message for finding in findings] == ["spec token KI-001 in filename"]
+
+
 def test_limits_findings_per_file(write_sample) -> None:
     path = write_sample("# AC1 AC2 AC3\n")
     options = HSL101Options(
