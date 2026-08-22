@@ -29,7 +29,7 @@ def test_defaults_and_cli_selection_precedence(tmp_path: Path) -> None:
     config = load_config(config_path, cli_select=("HSL003",), cli_ignore=("HSL003",))
 
     assert config.enabled_rules == ("HSL900",)
-    assert config.include == ("src", "tests", "scripts", "tools", "examples")
+    assert config.include == (".",)
 
 
 def test_extend_select_adds_to_configured_select_without_replacing_it(tmp_path: Path) -> None:
@@ -345,6 +345,56 @@ def test_include_rejects_glob_metacharacters(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="literal"):
         load_config(path)
+
+
+def test_include_accepts_dot_as_a_root_relative_path(tmp_path: Path) -> None:
+    # `_validate_include` must accept "." -- `Path(".").is_absolute()` is False, ".." is not in
+    # its parts, it's non-empty, and it contains no glob characters -- so a config that explicitly
+    # spells out the default include value round-trips through `load_config` without error.
+    path = tmp_path / "pyproject.toml"
+    path.write_text('[tool.house-lint]\ninclude = ["."]\n')
+
+    config = load_config(path)
+
+    assert config.include == (".",)
+
+
+def test_include_is_default_true_when_include_key_absent(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text("[tool.house-lint]\n")
+
+    config = load_config(path)
+
+    assert config.include_is_default is True
+    assert config.include == (".",)
+
+
+def test_include_is_default_false_when_include_explicitly_set(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text('[tool.house-lint]\ninclude = ["src"]\n')
+
+    config = load_config(path)
+
+    assert config.include_is_default is False
+
+
+def test_include_is_default_false_even_when_explicit_value_matches_the_default(
+    tmp_path: Path,
+) -> None:
+    # Presence-based detection: an explicit `include = ["."]` -- the same value as the default --
+    # still marks `include_is_default` False, since the flag tracks whether the user configured
+    # the key at all, not whether the resulting value happens to match the built-in default.
+    path = tmp_path / "pyproject.toml"
+    path.write_text('[tool.house-lint]\ninclude = ["."]\n')
+
+    config = load_config(path)
+
+    assert config.include_is_default is False
+
+
+def test_default_config_include_is_default_true() -> None:
+    assert default_config().include_is_default is True
+    assert default_config().include == (".",)
 
 
 def test_exclude_rejects_invalid_git_pattern(tmp_path: Path) -> None:

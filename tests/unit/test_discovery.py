@@ -29,11 +29,14 @@ def test_builtin_excludes_matches_ruffs_default_exclude_list_plus_house_lint_ext
     # Pins `BUILTIN_EXCLUDES` to Ruff's full default exclude list (25 entries, per
     # `ruff check --isolated --show-settings` against the locked ruff version -- `--isolated`
     # matters because this repo's own `pyproject.toml` sets `exclude = ["design"]`, which replaces
-    # Ruff's defaults rather than extending them) plus house-lint's own extra (`__pycache__/`) --
-    # 26 total. This is load-bearing once the default include scans from the project root
-    # (planned) -- without entries like `venv/`, `.tox/`, and `.mypy_cache/`, a root-scanning
-    # default would enumerate thousands of vendored `.py` files. A silent shrink of this tuple
-    # would widen the default scan surface without any other test catching it.
+    # Ruff's defaults rather than extending them) plus house-lint's own extras: `__pycache__/`
+    # and `.house-lint-cache/` (from `cache.CACHE_DIRNAME`) -- 27 total. Ruff has no concept of
+    # house-lint's own cache directory, so it is not part of the Ruff-parity set; it is load-
+    # bearing for a different reason -- once the default include scans from the project root,
+    # a default scan would otherwise walk into house-lint's own `.house-lint-cache/` and
+    # enumerate its version marker, `.gitignore`, and cached `<hash>.json` entries as skipped
+    # non-Python files. A silent shrink of this tuple would widen the default scan surface
+    # without any other test catching it.
     assert discovery.BUILTIN_EXCLUDES == (
         ".bzr/",
         ".direnv/",
@@ -41,6 +44,7 @@ def test_builtin_excludes_matches_ruffs_default_exclude_list_plus_house_lint_ext
         ".git/",
         ".git-rewrite/",
         ".hg/",
+        ".house-lint-cache/",
         ".ipynb_checkpoints/",
         ".mypy_cache/",
         ".nox/",
@@ -62,7 +66,7 @@ def test_builtin_excludes_matches_ruffs_default_exclude_list_plus_house_lint_ext
         "site-packages/",
         "venv/",
     )
-    assert len(discovery.BUILTIN_EXCLUDES) == 26
+    assert len(discovery.BUILTIN_EXCLUDES) == 27
 
 
 def test_full_scan_applies_builtin_gitignore_configured_excludes_and_sorting(
@@ -81,19 +85,31 @@ def test_full_scan_applies_builtin_gitignore_configured_excludes_and_sorting(
     assert result.files_skipped == 3
 
 
-def test_no_path_scan_uses_all_documented_default_include_roots(tmp_path: Path) -> None:
+def test_no_path_scan_discovers_files_anywhere_under_root(tmp_path: Path) -> None:
+    # Default include is now `(".",)` -- a root scan must find Python files in non-standard
+    # directories (e.g. `packages/`), not just the previously hardcoded roots, while builtin
+    # excludes still prune vendored/tooling directories like `.venv/` and `.git/`.
     expected: list[Path] = []
-    for root_name in ("src", "tests", "scripts", "tools", "examples"):
+    for root_name in ("src", "tests", "scripts", "tools", "examples", "packages", "lib"):
         path = tmp_path / root_name / f"{root_name}.py"
         path.parent.mkdir(parents=True)
         path.write_text(PY_CONTENT)
         expected.append(path)
-    (tmp_path / "outside.py").write_text(PY_CONTENT)
+    top_level = tmp_path / "top.py"
+    top_level.write_text(PY_CONTENT)
+    expected.append(top_level)
+    for excluded_dir in (".venv", ".git", "__pycache__", "node_modules", ".house-lint-cache"):
+        excluded_path = tmp_path / excluded_dir / "excluded.py"
+        excluded_path.parent.mkdir(parents=True)
+        excluded_path.write_text(PY_CONTENT)
 
     result = discover_files(tmp_path)
 
     assert result.files == tuple(sorted(expected))
-    assert result.files_skipped == 0
+    for excluded_dir in (".venv", ".git", "__pycache__", "node_modules", ".house-lint-cache"):
+        assert not any(excluded_dir in path.parts for path in result.files), (
+            f"{excluded_dir} should be pruned by BUILTIN_EXCLUDES"
+        )
 
 
 def test_explicit_paths_are_strict_and_directories_recursive(tmp_path: Path) -> None:
@@ -1115,8 +1131,10 @@ def test_empty_full_scan_is_explicitly_clean(tmp_path: Path) -> None:
     assert result.errors == ()
 
 
-def test_missing_implicit_include_root_is_an_empty_scan(tmp_path: Path) -> None:
-    result = discover_files(tmp_path, include=("missing",))
+def test_empty_root_with_default_include_is_an_empty_scan(tmp_path: Path) -> None:
+    # With `include=(".",)` a missing root is impossible -- the root always exists -- so the
+    # empty-scan case that matters now is a root with no Python files at all.
+    result = discover_files(tmp_path)
 
     assert result.files == ()
     assert result.errors == ()
@@ -1140,6 +1158,55 @@ def test_nested_directory_symlink_reports_error_and_keeps_reachable_files(
     assert isinstance(result.errors[0], LintError)
     assert result.errors[0].kind == "traversal"
     assert result.errors[0].path == "src/linked"
+
+
+def test_a_symlinked_excluded_directory_is_pruned_without_a_traversal_error(
+    tmp_path: Path,
+) -> None:
+    # A directory this walk was never going to descend into regardless (here, house-lint's own
+    # default `.house-lint-cache/`, a BUILTIN_EXCLUDES entry) must be pruned silently, even when
+    # it happens to be a symlink -- not surface the "directory symlink is not traversed" error
+    # `test_nested_directory_symlink_reports_error_and_keeps_reachable_files` pins for a
+    # non-excluded symlinked directory. A cloned repository controls the path a project-relative
+    # `.house-lint-cache` resolves to, so a scan must succeed cleanly even when that path is a
+    # symlink pointing outside the checkout.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "kept.py").write_text(PY_CONTENT)
+    outside = tmp_path / "outside-cache"
+    outside.mkdir()
+    (tmp_path / ".house-lint-cache").symlink_to(outside, target_is_directory=True)
+
+    result = discover_files(tmp_path)
+
+    assert result.files == (tmp_path / "src" / "kept.py",)
+    assert result.errors == ()
+
+
+def test_default_cache_directory_at_root_contributes_no_skip_count(tmp_path: Path) -> None:
+    # Unlike every other pruned directory (see
+    # `test_pruned_directory_counts_as_one_skip_not_one_per_contained_file`, which pins the
+    # general "1 skip per pruned directory" rule), house-lint's own default cache base
+    # (`root / CACHE_DIRNAME`) is created by the very run that would be counting it -- `cli.py`
+    # calls `prepare_cache_dir` after discovery has already produced its result. Two scans of the
+    # same otherwise-untouched root must report identical `files_skipped` regardless of whether
+    # an earlier run already created `.house-lint-cache/`; a mismatch here is exactly what broke
+    # `test_clean_check_is_equivalent_and_json_is_parseable` and
+    # `test_cache_hit_never_scans_the_source` in `tests/integration/test_cli.py` once the default
+    # scan became root-wide.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "kept.py").write_text(PY_CONTENT)
+
+    before = discover_files(tmp_path)
+
+    cache_base = tmp_path / ".house-lint-cache"
+    (cache_base / "0.0.0-abc123").mkdir(parents=True)
+    (cache_base / ".house-lint-version").write_text("")
+    (cache_base / "0.0.0-abc123" / "entry.json").write_text("{}")
+
+    after = discover_files(tmp_path)
+
+    assert before.files == after.files == (tmp_path / "src" / "kept.py",)
+    assert before.files_skipped == after.files_skipped == 0
 
 
 def test_walker_error_reports_failed_directory_and_keeps_reachable_files(

@@ -12,7 +12,7 @@ from pathspec import GitIgnoreSpec
 
 from house_lint.rule_catalog import DEFAULT_SELECT, ORDINARY_RULES
 
-DEFAULT_INCLUDE = ("src", "tests", "scripts", "tools", "examples")
+DEFAULT_INCLUDE = (".",)
 _PREFIX = re.compile(r"[A-Z][A-Z0-9_]*\Z")
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
@@ -123,6 +123,7 @@ class LintConfig:
     per_file_ignores: Mapping[str, tuple[str, ...]] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    include_is_default: bool = True
 
 
 DetectorOptions = HSL101Options | HSL102Options | HSL103Options | None
@@ -482,6 +483,7 @@ def load_config(
         },
         table_name,
     )
+    include_is_default = "include" not in house
     include = _validate_include(_strings(house.get("include", list(DEFAULT_INCLUDE)), "include"))
     exclude = _validate_exclude(_strings(house.get("exclude", []), "exclude"))
     # Every raw TOML value goes through `_strings` here rather than reaching
@@ -505,4 +507,6 @@ def load_config(
     # `enabled` is already sorted with the always-on rule appended (see
     # `_effective_rule_selection`); re-sorting here would only differ from `default_config`'s
     # handling of the same value if an always-on rule ID ever stopped sorting last.
-    return LintConfig(include, exclude, enabled, *options, per_file_ignores)
+    return LintConfig(
+        include, exclude, enabled, *options, per_file_ignores, include_is_default=include_is_default
+    )

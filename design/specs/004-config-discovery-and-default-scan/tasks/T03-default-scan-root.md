@@ -1,7 +1,7 @@
 ---
 task_id: "T03"
 title: "change default include to scan from project root"
-status: "planned"
+status: "done"
 depends_on: ["T01", "T06"]
 implements: ["FR#6", "FR#7"]
 ---
@@ -9,6 +9,7 @@ implements: ["FR#6", "FR#7"]
 ## Target Files
 
 - modify: `src/house_lint/config.py`
+- modify: `src/house_lint/discovery.py`
 - modify: `tests/unit/test_discovery.py`
 - modify: `tests/unit/test_config.py`
 

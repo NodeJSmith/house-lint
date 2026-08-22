@@ -20,6 +20,7 @@ from pathspec.patterns.gitignore.spec import (
     GitIgnoreSpecPattern,
 )
 
+from house_lint.cache import CACHE_DIRNAME
 from house_lint.config import (
     DEFAULT_INCLUDE,
     STANDALONE_CONFIG_NAMES,
@@ -37,6 +38,12 @@ BUILTIN_EXCLUDES = (
     ".git/",
     ".git-rewrite/",
     ".hg/",
+    # Not part of Ruff's default exclude list -- house-lint's own default cache directory
+    # (`cache.CACHE_DIRNAME`). Load-bearing since DEFAULT_INCLUDE became root-wide (`(".",)`):
+    # without this, a default scan walks into `.house-lint-cache/` and enumerates its version
+    # marker, `.gitignore`, and cached `<hash>.json` entries as skipped non-Python files. Kept
+    # as a reference to the constant, not a duplicated literal, so the two can never drift.
+    f"{CACHE_DIRNAME}/",
     ".ipynb_checkpoints/",
     ".mypy_cache/",
     ".nox/",
@@ -789,9 +796,28 @@ class _FileSelector:
         `_is_gitignore_excluded` already folds in `use_gitignore` (it short-circuits to `False`
         when disabled), and `builtin_spec`/`exclude_spec` inside `_ignored` apply
         unconditionally, matching how file-level ignoring already treats those two specs.
+
+        `root / CACHE_DIRNAME` is dropped before any of that -- silently, without incrementing
+        `files_skipped` and without a symlink stat. Every other pruned directory is either
+        stable for the run's duration (a `.venv/`, a `.gitignore`d `build/`) or was already
+        there when the run started, so counting it as "1 skip" is a meaningful signal. House-
+        lint's own default cache base is neither: `cli.py` creates it (via `prepare_cache_dir`)
+        as a side effect of the very run that would be counting it, strictly after discovery has
+        already produced its result for *this* run but strictly before any later run against the
+        same root sees the filesystem again. Two back-to-back scans of an otherwise-untouched
+        project would then disagree on `files_skipped` by exactly one, purely because the first
+        run's own bookkeeping directory didn't exist yet when it looked. Excluding it from the
+        walk (via `BUILTIN_EXCLUDES`) already keeps its contents out of the file count; excluding
+        it here too keeps the *directory* count -- and therefore the whole scan's reported output
+        -- identical regardless of which run happens to observe a cache directory some earlier
+        run already created. Scoped to `current_path == self.root`, since that is the only
+        location `default_cache_base` ever creates it at; a project that happens to contain an
+        unrelated directory of the same name somewhere deeper in the tree is not this case.
         """
         kept: list[str] = []
         for item in sorted(dirs):
+            if current_path == self.root and item == CACHE_DIRNAME:
+                continue
             child = current_path / item
             try:
                 is_symlink = child.is_symlink()
