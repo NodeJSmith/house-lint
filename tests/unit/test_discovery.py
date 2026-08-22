@@ -1,11 +1,11 @@
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import pytest
 
 from house_lint import discovery
-from house_lint.config import ConfigError
-from house_lint.discovery import DiscoveryError, discover_files, resolve_project
+from house_lint.config import STANDALONE_CONFIG_NAMES, ConfigError
+from house_lint.discovery import DiscoveryError, ProjectResolution, discover_files, resolve_project
 from house_lint.results import LintError
 
 PY_CONTENT = "x = 1\n"
@@ -1487,3 +1487,37 @@ def test_malformed_sole_config_at_a_directory_is_still_a_configuration_failure(
 
     with pytest.raises(ConfigError, match="invalid project configuration"):
         resolve_project(cwd=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "resolve",
+    [
+        lambda root: resolve_project(cwd=root),
+        lambda root: resolve_project(root=root),
+    ],
+    ids=["upward-walk", "root-without-config"],
+)
+def test_discovery_order_matches_documented_precedence(
+    tmp_path: Path, resolve: Callable[[Path], ProjectResolution]
+) -> None:
+    """`docs/configuration.md`'s "Discovery and precedence" section claims the order
+    `house-lint.toml` -> `.house-lint.toml` -> `pyproject.toml` (with `[tool.house-lint]`), for
+    both the upward walk (item 4) and `--root` without `--config` (item 3). Pins
+    `STANDALONE_CONFIG_NAMES`' own ordering plus `_recognized_configs`' pyproject-last placement
+    together, so a future reordering of either forces this test -- and the doc it backs -- to be
+    updated in the same change. Follows the naming convention
+    `test_no_path_scan_discovers_files_anywhere_under_root` sets for pinning a doc-claimed default
+    to a test named after it.
+    """
+    assert STANDALONE_CONFIG_NAMES == ("house-lint.toml", ".house-lint.toml")
+    (tmp_path / "house-lint.toml").write_text('[house-lint]\nselect = ["HSL001"]\n')
+    (tmp_path / ".house-lint.toml").write_text('[house-lint]\nselect = ["HSL002"]\n')
+    (tmp_path / "pyproject.toml").write_text('[tool.house-lint]\nselect = ["HSL003"]\n')
+
+    resolution = resolve(tmp_path)
+
+    assert resolution.config == tmp_path / "house-lint.toml"
+    assert resolution.shadowed == (
+        tmp_path / ".house-lint.toml",
+        tmp_path / "pyproject.toml",
+    )

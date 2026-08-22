@@ -1,10 +1,10 @@
 # Configuration
 
-Configure `house-lint` in `[tool.house-lint]` in `pyproject.toml`.
+Configure `house-lint` in `[tool.house-lint]` in `pyproject.toml`, or in a standalone
+`house-lint.toml`/`.house-lint.toml` file — see [Standalone config files](#standalone-config-files).
 
 ```toml
 [tool.house-lint]
-include = ["src", "tests", "scripts", "tools", "examples"]
 exclude = []
 select = ["HSL001", "HSL002", "HSL003", "HSL004"]
 ignore = []
@@ -12,7 +12,47 @@ extend-select = []
 extend-ignore = []
 ```
 
-`include` contains literal root-relative files or directories, not globs. An empty array intentionally selects no roots for a full scan. `exclude` uses root-relative Git-ignore-style patterns. Unknown keys, absolute paths, parent traversal, invalid patterns, duplicate IDs, and `HSL900` in `select`, `ignore`, `extend-select`, `extend-ignore`, or `per-file-ignores` are configuration errors. Unlike the rest of this schema, `extend-select`/`extend-ignore`/`per-file-ignores` are hyphenated by design, matching Ruff's spelling for the same concepts.
+`exclude` uses root-relative Git-ignore-style patterns. Unknown keys, absolute paths, parent traversal, invalid patterns, duplicate IDs, and `HSL900` in `select`, `ignore`, `extend-select`, `extend-ignore`, or `per-file-ignores` are configuration errors. Unlike the rest of this schema, `extend-select`/`extend-ignore`/`per-file-ignores` are hyphenated by design, matching Ruff's spelling for the same concepts.
+
+## Default scan scope
+
+When `include` is not set, house-lint scans from the project root — the entire tree, filtered by
+`.gitignore` and the built-in excludes (see [Discovery and precedence](#discovery-and-precedence))
+— rather than a fixed list of directory names. This matches the dominant pattern among Python
+linters (Ruff, Black): scan everything by default, then exclude what shouldn't be linted.
+
+Set `include` to narrow the scan to specific root-relative files or directories — useful for a
+monorepo where house-lint should only look at some packages, or any layout where you want to
+restrict the scan below what `.gitignore` and the built-in excludes already remove:
+
+```toml
+[tool.house-lint]
+include = ["src", "tests"]
+```
+
+`include` contains literal root-relative files or directories, not globs. An empty array
+(`include = []`) intentionally selects no roots for a full scan, producing a clean empty result
+without the [zero-file diagnostic](#zero-file-diagnostic)'s guidance clause below.
+
+## Standalone config files
+
+house-lint also recognizes two standalone config filenames: `house-lint.toml` and
+`.house-lint.toml`. Standalone files use `[house-lint]` as the top-level table, not
+`[tool.house-lint]` — they aren't embedded in a multi-tool manifest, so there's no `[tool.*]`
+namespace to nest under:
+
+```toml
+[house-lint]
+select = ["HSL001", "HSL002", "HSL003", "HSL004"]
+include = ["src", "tests"]
+```
+
+Every other key (`exclude`, `ignore`, `extend-select`, `extend-ignore`, `per-file-ignores`,
+`rules`) works identically to the `[tool.house-lint]` form — only the table path differs.
+`--config path/to/house-lint.toml` also works: the standalone format is detected by filename
+(`house-lint.toml` or `.house-lint.toml`), not by inspecting file contents. See
+[Discovery and precedence](#discovery-and-precedence) for how a standalone file is found relative
+to `pyproject.toml`.
 
 ## Per-file rule overrides
 
@@ -30,13 +70,13 @@ Applied after the base selection and `extend-select`/`extend-ignore` resolve, pe
 
 1. `--root` fixes the project boundary.
 2. `--config` selects an exact configuration. Without `--root`, its parent is the root; with `--root`, it must be inside the root.
-3. With `--root` and no `--config`, only `<root>/pyproject.toml` is considered.
-4. Without either option, the command searches upward from the current directory for the nearest `pyproject.toml` containing `[tool.house-lint]`. If none exists, it uses the nearest ancestor containing `.git` or any `pyproject.toml`; otherwise it uses the current directory.
+3. With `--root` and no `--config`, the root directory is checked for `house-lint.toml` → `.house-lint.toml` → `pyproject.toml` (with `[tool.house-lint]`), in that order — the first recognized file is used.
+4. Without either option, the command searches upward from the current directory. At each directory level, it checks `house-lint.toml` → `.house-lint.toml` → `pyproject.toml` (with `[tool.house-lint]`), in that order, and stops at the first directory where any of the three is recognized. If none exists anywhere in the walk, it uses the nearest ancestor containing `.git` or any `pyproject.toml`; otherwise it uses the current directory.
 5. The base selection is configured `select` minus configured `ignore`, or a CLI `--select` wholesale override when given.
 6. `extend-select`/`extend-ignore` (config and CLI, unioned together) layer additively on top of that base, regardless of whether the base came from config or `--select`. `extend-ignore` removes rules from the whole base, not just from `extend-select` — `select = ["HSL001"]` with `extend-ignore = ["HSL001"]` drops HSL001 entirely, it isn't limited to canceling out `extend-select` additions.
 7. CLI `--ignore` is applied last and always wins over everything above. `HSL900` is always added.
 
-The root `.gitignore` and every nested `.gitignore` between the root and each discovered file are loaded and combined with git's own precedence — a closer `.gitignore` can override a farther one, including via negation (`!pattern`). Built-in excludes are `.bzr/`, `.direnv/`, `.eggs/`, `.git/`, `.git-rewrite/`, `.hg/`, `.ipynb_checkpoints/`, `.mypy_cache/`, `.nox/`, `.pants.d/`, `.pyenv/`, `.pytest_cache/`, `.pytype/`, `.ruff_cache/`, `.svn/`, `.tox/`, `.venv/`, `.vscode/`, `__pycache__/`, `__pypackages__/`, `_build/`, `buck-out/`, `dist/`, `node_modules/`, `site-packages/`, and `venv/`; configured excludes are added afterwards. `--no-gitignore` disables `.gitignore` handling at every level.
+The root `.gitignore` and every nested `.gitignore` between the root and each discovered file are loaded and combined with git's own precedence — a closer `.gitignore` can override a farther one, including via negation (`!pattern`). Built-in excludes are `.bzr/`, `.direnv/`, `.eggs/`, `.git/`, `.git-rewrite/`, `.hg/`, `.house-lint-cache/`, `.ipynb_checkpoints/`, `.mypy_cache/`, `.nox/`, `.pants.d/`, `.pyenv/`, `.pytest_cache/`, `.pytype/`, `.ruff_cache/`, `.svn/`, `.tox/`, `.venv/`, `.vscode/`, `__pycache__/`, `__pypackages__/`, `_build/`, `buck-out/`, `dist/`, `node_modules/`, `site-packages/`, and `venv/`; configured excludes are added afterwards. `--no-gitignore` disables `.gitignore` handling at every level.
 
 An ignored directory is skipped without being enumerated, which is what keeps a large `.venv/` or `node_modules/` cheap to exclude. The reported `files skipped` count follows from that: one pruned directory counts as one skip, however many files it contains.
 
@@ -57,6 +97,18 @@ Both suites currently show zero divergence from `git check-ignore` across every 
 A rate is meaningless without the distribution that produced it, which is why all three are declared in the test rather than summarised as one number. Regenerate them there and update this table in the same change.
 
 `design/research/2026-08-20-gitignore-style-exclusion-inclusion/` surveys how git, ripgrep's `ignore` crate, fd, and the Node ecosystem handle this. The short version: matching the full path against one flattened, root-anchored pattern set is structurally unable to express "this directory was never entered," which is the rule git's own documentation calls out ("It is not possible to re-include a file if a parent directory of that file is excluded"). The same defect has been independently rediscovered in `pathspec` ([#81](https://github.com/cpburnz/python-pathspec/issues/81)), `node-ignore`, and other tools. house-lint's fix is a per-directory matcher stack evaluated during traversal, with the walker supplying `is_dir` to each pattern instead of delegating whole-path matching to `pathspec`'s aggregate spec.
+
+## Zero-file diagnostic
+
+When a scan discovers zero Python files and no errors occurred, `check` still exits cleanly but appends a diagnostic. The text reporter's existing `empty scan: no Python files selected` summary line grows a guidance clause naming what to check, based on which config format resolved:
+
+- No config file found: create one with an `include` list, or pass explicit paths (`house-lint <path>`)
+- `pyproject.toml` resolved: check the `include` list in its `[tool.house-lint]` table
+- A standalone config resolved: check the `include` list in its `[house-lint]` table
+
+The JSON reporter carries the same message under a `zero_file_diagnostic` key, present only when the scan found zero files — it has no equivalent in ordinary output.
+
+The guidance clause is suppressed in exactly two cases — the base "empty scan" message still appears in both, just without it: `include = []` explicitly configured (an intentional empty scan), and explicit paths given on the command line. A typo'd explicit `include` (e.g. `include = ["tset"]` for a `tests/` directory) is *not* suppressed — a config that names a directory that doesn't exist is the most common real trigger for this diagnostic, and it should not be silently swallowed.
 
 ## Caching
 
