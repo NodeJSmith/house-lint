@@ -73,9 +73,31 @@ def _result_for_config_error(
 
 
 def _write_result(
-    result: ScanResult, output_format: str, *, errors_to_stderr: bool, debug: bool
+    result: ScanResult,
+    output_format: str,
+    *,
+    errors_to_stderr: bool,
+    debug: bool,
+    include_is_default: bool,
+    include: tuple[str, ...],
+    explicit_paths: bool,
 ) -> None:
-    print(render_json(result) if output_format == "json" else render_text(result))
+    rendered = (
+        render_json(
+            result,
+            include_is_default=include_is_default,
+            include=include,
+            explicit_paths=explicit_paths,
+        )
+        if output_format == "json"
+        else render_text(
+            result,
+            include_is_default=include_is_default,
+            include=include,
+            explicit_paths=explicit_paths,
+        )
+    )
+    print(rendered)
     if errors_to_stderr:
         for err in result.errors:
             print(_render_error(err), file=sys.stderr)
@@ -405,6 +427,13 @@ def check(
     cli_extend_ignore = _flatten_ids(extend_ignore)
     resolved_root: Path | None = None
     resolved_config: Path | None = None
+    # Default until the try block below resolves the real config -- read back by the
+    # `_write_result` call after the try/except, which needs a value even when an exception
+    # aborts the try body before `lint_config` is reassigned (e.g. a config load that raises
+    # something other than `ConfigError`). `LintConfig()`'s own defaults (`include_is_default`
+    # True, `include` DEFAULT_INCLUDE) are the correct fallback: they are exactly what the
+    # zero-file diagnostic should assume when the real resolution never completed.
+    lint_config = LintConfig()
     try:
         # Best-effort fallback for error reporting: resolve_project() below performs
         # this same resolution and overwrites these on success, but if it raises before
@@ -477,6 +506,9 @@ def check(
         format,
         errors_to_stderr=format == "text" and code >= 3,
         debug=debug,
+        include_is_default=lint_config.include_is_default,
+        include=lint_config.include,
+        explicit_paths=bool(paths),
     )
     return code
 

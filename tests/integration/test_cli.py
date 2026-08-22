@@ -836,6 +836,64 @@ def test_json_missing_explicit_config_preserves_resolved_root_and_config(reposit
     assert result["files_scanned"] == result["files_skipped"] == 0
 
 
+def test_check_pyproject_empty_include_suppresses_zero_file_guidance(repository: Path) -> None:
+    (repository / "pyproject.toml").write_text("[tool.house-lint]\ninclude = []\n")
+
+    text_result = _run(repository, "check", "--root", str(repository), "--format", "text")
+    json_result = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    assert text_result.returncode == 0
+    assert "empty scan: no Python files selected" in text_result.stdout
+    assert "no config file found" not in text_result.stdout
+    assert "[tool.house-lint]" not in text_result.stdout
+
+    result = json.loads(json_result.stdout)
+    assert json_result.returncode == 0
+    assert result["files_scanned"] == result["files_skipped"] == 0
+    assert result["zero_file_diagnostic"] == "empty scan: no Python files selected"
+
+
+def test_check_explicit_path_with_no_python_files_suppresses_zero_file_guidance(
+    repository: Path,
+) -> None:
+    empty_dir = repository / "docs"
+    empty_dir.mkdir()
+    (empty_dir / "notes.txt").write_text("not python\n")
+
+    text_result = _run(repository, "check", str(empty_dir), "--format", "text")
+    json_result = _run(repository, "check", str(empty_dir), "--format", "json")
+
+    assert text_result.returncode == 0
+    assert "empty scan: no Python files selected" in text_result.stdout
+    assert "no config file found" not in text_result.stdout
+
+    result = json.loads(json_result.stdout)
+    assert json_result.returncode == 0
+    assert result["files_scanned"] == 0
+    assert result["zero_file_diagnostic"] == "empty scan: no Python files selected"
+
+
+def test_check_with_no_config_and_no_python_files_shows_zero_file_guidance(
+    tmp_path: Path,
+) -> None:
+    text_result = _run(tmp_path, "check", "--root", str(tmp_path), "--format", "text")
+    json_result = _run(tmp_path, "check", "--root", str(tmp_path), "--format", "json")
+
+    assert text_result.returncode == 0
+    assert (
+        "empty scan: no Python files selected; no config file found: create one with an "
+        "include list, or pass explicit paths (house-lint <path>)" in text_result.stdout
+    )
+
+    result = json.loads(json_result.stdout)
+    assert json_result.returncode == 0
+    assert result["files_scanned"] == result["files_skipped"] == 0
+    assert result["zero_file_diagnostic"] == (
+        "empty scan: no Python files selected; no config file found: create one with an "
+        "include list, or pass explicit paths (house-lint <path>)"
+    )
+
+
 def test_json_root_not_a_directory_reports_canonical_root(tmp_path: Path) -> None:
     (tmp_path / "notadir").write_text("not a directory\n")
     cwd = tmp_path / "sub"
