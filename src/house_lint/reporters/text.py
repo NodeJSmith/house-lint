@@ -2,14 +2,14 @@
 
 from pathlib import Path
 
-from house_lint.config import is_standalone_config
+from house_lint.config import PYPROJECT_CONFIG_NAME, config_table_name, is_standalone_config
 from house_lint.results import RuleList, ScanResult
 
 EMPTY_SCAN_MESSAGE = "empty scan: no Python files selected"
 """The base zero-file-scan sentence, before `zero_file_guidance`'s clause is appended.
 
 Single source of truth for callers building a `zero_file_note` (`cli.py`, and tests asserting
-zero-file output) -- previously duplicated as a bare string literal in more than one place.
+zero-file output) — previously duplicated as a bare string literal in more than one place.
 """
 
 
@@ -54,9 +54,11 @@ def zero_file_guidance(
             "; no config file found: create one with an include list, "
             "or pass explicit paths (house-lint <path>)"
         )
-    if is_standalone_config(config):
-        return f"; check the include list in {config.name}'s [house-lint] table"
-    return "; check the include list in pyproject.toml's [tool.house-lint] table"
+    standalone = is_standalone_config(config)
+    table = config_table_name(standalone)
+    if standalone:
+        return f"; check the include list in {config.name}'s [{table}] table"
+    return f"; check the include list in {PYPROJECT_CONFIG_NAME}'s [{table}] table"
 
 
 def render_text(
@@ -67,11 +69,11 @@ def render_text(
 ) -> str:
     """Render scan metadata, visible findings, and a stable final summary.
 
-    `zero_file_note` is the full "empty scan: ..." line to append, or `None` to omit it --
+    `zero_file_note` is the full "empty scan: ..." line to append, or `None` to omit it —
     precomputed by the caller (see `zero_file_guidance`) rather than derived here, so the
     reporter doesn't need `include`/`explicit_paths` just to decide what to print. It has no
-    default (unlike `shadowed`) because its two states -- "not a zero-file scan" vs. "zero-file
-    scan, guidance suppressed" -- are not equivalent, and a silently-assumed default could pick
+    default (unlike `shadowed`) because its two states — "not a zero-file scan" vs. "zero-file
+    scan, guidance suppressed" — are not equivalent, and a silently-assumed default could pick
     the wrong one. `shadowed` defaults to `()` safely instead: an omitted value just means
     "nothing shadowed," which is never a misleading assumption.
     """

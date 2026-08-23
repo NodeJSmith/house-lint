@@ -5,7 +5,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from pathspec import GitIgnoreSpec
 
@@ -23,6 +23,7 @@ from pathspec.patterns.gitignore.spec import (
 from house_lint.cache import CACHE_DIRNAME
 from house_lint.config import (
     DEFAULT_INCLUDE,
+    PYPROJECT_CONFIG_NAME,
     STANDALONE_CONFIG_NAMES,
     ConfigError,
     get_house_lint_table,
@@ -66,6 +67,15 @@ BUILTIN_EXCLUDES = (
     "venv/",
 )
 MAX_DISCOVERED_FILES = 100_000
+
+_ConfigTableGetter = Callable[[dict[str, Any]], dict[str, Any] | None]
+# Name/table-getter pairs for `_recognized_configs`, in discovery-precedence order. Module-level
+# like `BUILTIN_EXCLUDES` above: the pairing never changes per call, so it's built once rather
+# than reconstructed on every ancestor directory `_recognized_configs` checks.
+_CONFIG_CANDIDATES: tuple[tuple[str, _ConfigTableGetter], ...] = (
+    *((name, get_standalone_table) for name in STANDALONE_CONFIG_NAMES),
+    (PYPROJECT_CONFIG_NAME, get_house_lint_table),
+)
 _CONTENTS_GLOB = re.compile(r"(?<!\*\*)/\*\*(/?)\Z")
 # `LintError.kind`/`.operation` are typed `str` in `results.py` (the public, schema-versioned
 # result type), so nothing there enforces this vocabulary -- these `Literal` aliases are this
@@ -915,7 +925,7 @@ def _recognized_configs(directory: Path) -> tuple[Path, ...]:
     """
     found: list[Path] = []
     parse_error: ConfigError | None = None
-    for name in STANDALONE_CONFIG_NAMES:
+    for name, table_getter in _CONFIG_CANDIDATES:
         candidate = directory / name
         if not candidate.is_file():
             continue
@@ -924,17 +934,8 @@ def _recognized_configs(directory: Path) -> tuple[Path, ...]:
         except ConfigError as exc:
             parse_error = parse_error or exc
             continue
-        if get_standalone_table(document) is not None:
+        if table_getter(document) is not None:
             found.append(candidate)
-    pyproject = directory / "pyproject.toml"
-    if pyproject.is_file():
-        try:
-            document = load_toml(pyproject)
-        except ConfigError as exc:
-            parse_error = parse_error or exc
-            document = None
-        if document is not None and get_house_lint_table(document) is not None:
-            found.append(pyproject)
     if not found and parse_error is not None:
         raise parse_error
     return tuple(found)
@@ -957,7 +958,7 @@ def resolve_project(
             recognized = _recognized_configs(candidate)
             if recognized:
                 return ProjectResolution(candidate, recognized[0], recognized[1:])
-            if (candidate / "pyproject.toml").is_file():
+            if (candidate / PYPROJECT_CONFIG_NAME).is_file():
                 found_marker = found_marker or candidate
             if (candidate / ".git").exists():
                 found_marker = found_marker or candidate

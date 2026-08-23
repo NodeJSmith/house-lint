@@ -80,7 +80,7 @@ def _write_result(
     errors_to_stderr: bool,
     debug: bool,
     zero_file_note: str | None,
-    shadowed: tuple[Path, ...],
+    shadowed: tuple[Path, ...] = (),
 ) -> None:
     rendered = (
         render_json(
@@ -419,7 +419,7 @@ def check(
 ) -> int:
     """Scan configured roots or explicit Python paths.
 
-    `fail_on_empty` makes a zero-file scan exit 1 instead of 0 -- for CI pipelines that gate on
+    `fail_on_empty` makes a zero-file scan exit 1 instead of 0 — for CI pipelines that gate on
     the exit code and would otherwise see a zero-file scan (e.g. a typo'd `include`, or a rename
     that orphaned the configured paths) pass silently. Off by default: an empty scan is a normal,
     non-error outcome for interactive/exploratory use (a brand-new project, a directory that
@@ -436,7 +436,7 @@ def check(
     resolved_root: Path | None = None
     resolved_config: Path | None = None
     resolved_shadowed: tuple[Path, ...] = ()
-    # Default until the try block below resolves the real config -- read back by the
+    # Default until the try block below resolves the real config — read back by the
     # `_write_result` call after the try/except, which needs a value even when an exception
     # aborts the try body before `lint_config` is reassigned (e.g. a config load that raises
     # something other than `ConfigError`). `LintConfig()`'s own default (`include` DEFAULT_INCLUDE)

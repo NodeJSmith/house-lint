@@ -29,6 +29,7 @@ _BUILTIN_MAX_DIGITS = 4
 VALID_SCOPES: tuple[str, ...] = ("comments", "docstrings", "filenames")
 
 STANDALONE_CONFIG_NAMES: tuple[str, ...] = ("house-lint.toml", ".house-lint.toml")
+PYPROJECT_CONFIG_NAME = "pyproject.toml"
 
 # Single source of truth for separator/suffix vocabularies: the keys validate configured
 # values, and house_lint.rules.spec_tokens uses the values to build detection regexes.
@@ -453,6 +454,16 @@ def is_standalone_config(path: Path) -> bool:
     return path.name in STANDALONE_CONFIG_NAMES
 
 
+def config_table_name(standalone: bool) -> str:
+    """Return the bare TOML table name (no brackets) house-lint settings live under.
+
+    Single source of truth for this fact, shared by `load_config`'s error/validation messages
+    and `reporters.text.zero_file_guidance`'s user-facing guidance, so the two can never disagree
+    about which table a standalone vs. `pyproject.toml` config uses.
+    """
+    return "house-lint" if standalone else "tool.house-lint"
+
+
 def load_config(
     path: Path,
     *,
@@ -465,7 +476,7 @@ def load_config(
     standalone = is_standalone_config(path)
     document = load_toml(path)
     house = get_standalone_table(document) if standalone else get_house_lint_table(document)
-    table_name = "house-lint" if standalone else "tool.house-lint"
+    table_name = config_table_name(standalone)
     if house is None:
         raise ConfigError(f"config lacks [{table_name}]")
     _strict_keys(
