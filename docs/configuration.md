@@ -106,7 +106,7 @@ When a scan discovers zero Python files and no errors occurred, `check` exits `0
 
 The text reporter's existing `empty scan: no Python files selected` summary line grows a guidance clause naming what to check, based on which config format resolved:
 
-- No config file found: create one with an `include` list, or pass explicit paths (`house-lint <path>`)
+- No config file found: create one with an `include` list, or pass explicit paths (`house-lint check <path>`)
 - `pyproject.toml` resolved: check the `include` list in its `[tool.house-lint]` table
 - A standalone config resolved: check the `include` list in its `[house-lint]` table
 

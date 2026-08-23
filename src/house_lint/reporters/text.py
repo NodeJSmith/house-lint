@@ -52,7 +52,7 @@ def zero_file_guidance(
     if config is None:
         return (
             "; no config file found: create one with an include list, "
-            "or pass explicit paths (house-lint <path>)"
+            "or pass explicit paths (house-lint check <path>)"
         )
     standalone = is_standalone_config(config)
     table = config_table_name(standalone)

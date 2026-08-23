@@ -905,7 +905,7 @@ def test_check_with_no_config_and_no_python_files_shows_zero_file_guidance(
     assert text_result.returncode == 0
     assert (
         "empty scan: no Python files selected; no config file found: create one with an "
-        "include list, or pass explicit paths (house-lint <path>)" in text_result.stdout
+        "include list, or pass explicit paths (house-lint check <path>)" in text_result.stdout
     )
 
     result = json.loads(json_result.stdout)
@@ -913,7 +913,7 @@ def test_check_with_no_config_and_no_python_files_shows_zero_file_guidance(
     assert result["files_scanned"] == result["files_skipped"] == 0
     assert result["zero_file_diagnostic"] == (
         "empty scan: no Python files selected; no config file found: create one with an "
-        "include list, or pass explicit paths (house-lint <path>)"
+        "include list, or pass explicit paths (house-lint check <path>)"
     )
 
 
