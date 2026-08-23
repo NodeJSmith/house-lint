@@ -6,8 +6,8 @@ Usage:
     uv run python scripts/release_contributors.py v0.1.0 HEAD
     uv run python scripts/release_contributors.py              # auto: second-latest tag..latest tag
 
-Scans git log for authors who are not the repo owner or bots, and prints
-each contributor with their associated PRs.
+Scans git log for authors and `Co-authored-by:` trailers that are not the repo
+owner or bots, and prints each contributor with their associated PRs.
 """
 
 import argparse
@@ -30,6 +30,14 @@ OWNER_NAMES = frozenset(
 
 BOT_PATTERNS = re.compile(r"\[bot\]|dependabot|renovate", re.IGNORECASE)
 
+CO_AUTHOR_PATTERN = re.compile(
+    r"^co-authored-by:\s*(?P<name>.+?)\s*<(?P<email>[^<>]+)>\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+RECORD_SEP = "\x1e"
+FIELD_SEP = "\x1f"
+
 
 def git(*args: str) -> str:
     result = subprocess.run(
@@ -50,18 +58,21 @@ def get_latest_tags(count: int = 2) -> list[str]:
 
 
 def get_commits(from_ref: str, to_ref: str) -> list[dict[str, str]]:
-    sep = "§§"  # separator unlikely to appear in a commit subject
-    log_format = f"%an{sep}%ae{sep}%s"
+    log_format = f"%an{FIELD_SEP}%ae{FIELD_SEP}%s{FIELD_SEP}%b{RECORD_SEP}"
     output = git("log", f"--format={log_format}", f"{from_ref}..{to_ref}")
     if not output:
         return []
 
     commits = []
-    for line in output.splitlines():
-        parts = line.split(sep, 2)
-        if len(parts) != 3:
+    for record in output.split(RECORD_SEP):
+        record = record.strip("\n")
+        if not record:
             continue
-        commits.append({"name": parts[0], "email": parts[1], "subject": parts[2]})
+        parts = record.split(FIELD_SEP, 3)
+        if len(parts) != 4:
+            continue
+        name, email, subject, body = parts
+        commits.append({"name": name, "email": email, "subject": subject, "body": body})
     return commits
 
 
@@ -76,20 +87,25 @@ def parse_github_username(email: str) -> str | None:
     return m.group(1) if m else None
 
 
+def add_contributor(
+    contributors: dict[str, list[dict[str, str]]], name: str, email: str, subject: str
+) -> None:
+    entry = {"subject": subject, "email": email}
+    contributors.setdefault(name, []).append(entry)
+
+
 def find_external_contributors(from_ref: str, to_ref: str) -> dict[str, list[dict[str, str]]]:
     commits = get_commits(from_ref, to_ref)
     contributors: dict[str, list[dict[str, str]]] = {}
 
     for commit in commits:
-        if not is_external(commit["name"], commit["email"]):
-            continue
+        if is_external(commit["name"], commit["email"]):
+            add_contributor(contributors, commit["name"], commit["email"], commit["subject"])
 
-        name = commit["name"]
-        entry = {"subject": commit["subject"], "email": commit["email"]}
-
-        if name not in contributors:
-            contributors[name] = []
-        contributors[name].append(entry)
+        for match in CO_AUTHOR_PATTERN.finditer(commit["body"]):
+            co_name, co_email = match["name"], match["email"]
+            if is_external(co_name, co_email):
+                add_contributor(contributors, co_name, co_email, commit["subject"])
 
     return contributors
 
