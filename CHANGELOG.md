@@ -4,40 +4,31 @@ All notable changes to `house-lint` are documented here.
 
 ## [0.2.0](https://github.com/NodeJSmith/house-lint/compare/v0.1.2...v0.2.0) (2026-08-23)
 
+### Breaking Changes
 
-### ⚠ BREAKING CHANGES
+- **The default scan now covers the entire project tree, not five hardcoded directories.** Previously `house-lint check` (with no `include` set) only scanned `src`, `tests`, `scripts`, `tools`, and `examples`. It now scans everything under the project root, filtered by `.gitignore` and an expanded built-in exclude list. If you relied on the old implicit scope, set `[tool.house-lint] include` to restore it. (#37)
+- **`house-lint.toml` and `.house-lint.toml` are now recognized as config files**, checked ahead of `pyproject.toml`'s `[tool.house-lint]` table. A file with either of these names that was previously inert in your project is now read as configuration — review its contents before upgrading. (#37)
 
-* the default scan scope expands from five hardcoded directories to the entire project tree (filtered by gitignore/excludes). Projects relying on the old default without an explicit `include` will now scan additional files. house-lint.toml and .house-lint.toml, previously inert filenames, are now recognized as config sources ahead of pyproject.toml.
+### Configuration
 
-### Features
+- Add `extend-select`/`extend-ignore` (CLI flags and TOML keys) to layer additional rules on top of your existing selection, instead of `--select` replacing it wholesale. (#14)
+- Add `per-file-ignores` to silence specific rules for matching files (e.g. `HSL002` under `tests/**`) without disabling them project-wide. (#15)
+- A zero-file scan now explains what to check (no config found, or which `include` list is in effect) instead of silently reporting nothing; `--fail-on-empty` now exits with an error on a zero-file scan instead of exiting 0. (#37)
+- When more than one recognized config file exists at the winning directory, the shadowed file(s) are now named in the output. (#37)
 
-* add prek config to dogfood house-lint's own hooks ([#22](https://github.com/NodeJSmith/house-lint/issues/22)) ([6f439bf](https://github.com/NodeJSmith/house-lint/commit/6f439bf64bf7431df22ead36989ac2e3867a7123))
-* discover standalone config files and scan from project root by default ([#37](https://github.com/NodeJSmith/house-lint/issues/37)) ([005bdad](https://github.com/NodeJSmith/house-lint/commit/005bdad37efde9274d1c50b4c65dbd38e5ff6435))
-* nested gitignore, extend-select, per-file-ignores, caching ([#23](https://github.com/NodeJSmith/house-lint/issues/23)) ([42617ba](https://github.com/NodeJSmith/house-lint/commit/42617ba91f7012c67cc8de273ee9556e71c79537))
-* ship built-in HSL101 spec token families ([#28](https://github.com/NodeJSmith/house-lint/issues/28)) ([fb16213](https://github.com/NodeJSmith/house-lint/commit/fb162133f7c631a77e58f9ad69ad490f5490ffd4))
+### Discovery
 
+- Nested `.gitignore` files are now honored, matching git's own precedence — a closer `.gitignore`'s negation can override a farther one's ignore. Previously only the root `.gitignore` was read. (#13)
+- Fixed a range of gitignore-matching edge cases — directory-only negations, repeated `**` segments, symlinked ignore files, and patterns reached via explicit paths — to match real `git check-ignore` behavior. (#29)
 
-### Bug Fixes
+### Rules
 
-* replace flattened gitignore matcher with per-directory stack ([#29](https://github.com/NodeJSmith/house-lint/issues/29)) ([e9d748b](https://github.com/NodeJSmith/house-lint/commit/e9d748bb1b050ab23f0ac0d3ac126bea27409f0a))
-
+- `HSL101` now ships built-in spec token families, so it produces useful findings without any config. (#28)
 
 ### Performance Improvements
 
-* **pre-commit:** batch file checks into a single house-lint invocation ([#20](https://github.com/NodeJSmith/house-lint/issues/20)) ([775288e](https://github.com/NodeJSmith/house-lint/commit/775288e08df0155eb4fc244541aa4cd0a8226f6b))
-
-
-### Refactoring
-
-* extract per-file rule resolution out of _scan ([#33](https://github.com/NodeJSmith/house-lint/issues/33)) ([0508761](https://github.com/NodeJSmith/house-lint/commit/050876196853d83418a8f3c83fea21af8b226718))
-* **registry:** hoist lazy imports to module level ([#19](https://github.com/NodeJSmith/house-lint/issues/19)) ([fa5abe7](https://github.com/NodeJSmith/house-lint/commit/fa5abe7b65ba439de21126317842160dda04ac62))
-* resolve codebase audit findings ([#8](https://github.com/NodeJSmith/house-lint/issues/8)) ([cf49dd9](https://github.com/NodeJSmith/house-lint/commit/cf49dd902179fff5657bcb5889597714615a1052))
-
-
-### Documentation
-
-* add prior-art research briefs for linter best practices ([#10](https://github.com/NodeJSmith/house-lint/issues/10)) ([e3b9bd7](https://github.com/NodeJSmith/house-lint/commit/e3b9bd7f10850771f48e1753a4e9ce75d818d2c9))
-* resolve KI-007 as not a bug ([#31](https://github.com/NodeJSmith/house-lint/issues/31)) ([3efb3b8](https://github.com/NodeJSmith/house-lint/commit/3efb3b8ded21f3023fd8d0e0c851418032db710e))
+- Add per-file result caching (`--cache-dir`, `--no-cache`) so unchanged files skip re-analysis on the next run. (#16)
+- The pre-commit hook now batches all changed files into a single `house-lint` invocation instead of spawning one process per file. (#12)
 
 ## [0.1.2](https://github.com/NodeJSmith/house-lint/compare/v0.1.1...v0.1.2) (2026-08-11)
 
