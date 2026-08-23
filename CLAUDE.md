@@ -79,3 +79,7 @@ signature: `(source, options, *, limit=None) -> list[CandidateFinding]`.
 Conventional Commits are enforced by CI on PR titles (`feat`, `fix`, `refactor`, `docs`, `test`,
 `chore`, `perf`, `ci`; scope optional). Releases are automated via release-please, driven by
 commit type — do not hand-edit `CHANGELOG.md` or bump `version` in `pyproject.toml` manually.
+
+CodeRabbit is configured (`.coderabbit.yaml`) but `auto_review.enabled` is `false`, so it never
+reviews a PR on its own. After opening (or pushing new commits to) a PR, comment
+`@coderabbitai full review` on it to trigger a review.
