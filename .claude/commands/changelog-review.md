@@ -25,10 +25,16 @@ If no PR found, stop and tell the user. If multiple, ask which one.
 
 ## Step 3: Gather PR context
 
-For each commit that produced a changelog entry, fetch its PR body via `gh pr view <number> --json title,body` using the `(#NNN)` reference in the commit subject. Focus on:
+For each commit that produced a changelog entry:
+
+1. Read the commit's own body: `git log -1 --format=%B <sha>` on `master`, using the `<sha>` from Step 2's `git log --oneline`. This is what release-please actually parsed — per this repo's `COMMIT_MESSAGES` squash setting, it's the concatenated bodies of every commit in the PR, which is where bundled-PR item details and `BREAKING CHANGE:` footers actually live (see the rule file's note on bundled PRs).
+2. Fetch the PR description via `gh pr view <number> --json title,body` using the `(#NNN)` reference in the commit subject, as supplementary narrative context only — release-please never reads this field, so treat anything found only here as unconfirmed unless it's also in the commit body.
+
+Focus on:
 
 - What user-facing behavior changed
-- Breaking change migration details (check the commit body, not just the PR description — see the rule file's note on this repo's `COMMIT_MESSAGES` squash setting)
+- Breaking change migration details (from the commit body — step 1)
+- Bundled-item details for multi-fix commits (from the commit body — step 1)
 - Whether the change is internal-only
 
 ## Step 3.5: Check for external contributors
