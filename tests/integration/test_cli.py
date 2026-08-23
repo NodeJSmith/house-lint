@@ -756,6 +756,55 @@ def test_debug_tracebacks_survive_a_warm_cache(repository: Path) -> None:
         assert "def broken()" in completed.stderr
 
 
+def test_default_output_reports_shadowed_config_when_standalone_and_pyproject_both_exist(
+    repository: Path,
+) -> None:
+    (repository / "house-lint.toml").write_text('[house-lint]\nselect = ["HSL001"]\n')
+    (repository / "pyproject.toml").write_text('[tool.house-lint]\nselect = ["HSL001"]\n')
+
+    completed = _run(repository, "check", "--root", str(repository))
+
+    assert completed.returncode == 0
+    assert "house-lint.toml (shadows" in completed.stdout
+    assert "pyproject.toml" in completed.stdout
+
+
+def test_default_output_omits_shadow_note_when_only_one_config_source_exists(
+    repository: Path,
+) -> None:
+    (repository / "house-lint.toml").write_text('[house-lint]\nselect = ["HSL001"]\n')
+
+    completed = _run(repository, "check", "--root", str(repository))
+
+    assert completed.returncode == 0
+    assert "shadows" not in completed.stdout
+
+
+def test_json_output_reports_shadowed_config_when_standalone_and_pyproject_both_exist(
+    repository: Path,
+) -> None:
+    (repository / "house-lint.toml").write_text('[house-lint]\nselect = ["HSL001"]\n')
+    (repository / "pyproject.toml").write_text('[tool.house-lint]\nselect = ["HSL001"]\n')
+
+    completed = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    assert completed.returncode == 0
+    result = json.loads(completed.stdout)
+    assert result["shadowed_config"] == [str(repository / "pyproject.toml")]
+
+
+def test_json_output_omits_shadowed_config_key_when_only_one_config_source_exists(
+    repository: Path,
+) -> None:
+    (repository / "house-lint.toml").write_text('[house-lint]\nselect = ["HSL001"]\n')
+
+    completed = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    assert completed.returncode == 0
+    result = json.loads(completed.stdout)
+    assert "shadowed_config" not in result
+
+
 def test_invalid_check_format_writes_only_a_usage_diagnostic_to_stderr(repository: Path) -> None:
     completed = _run(repository, "check", "--root", str(repository), "--format", "xml")
 
@@ -808,6 +857,83 @@ def test_json_missing_explicit_config_preserves_resolved_root_and_config(reposit
     assert result["root"] == str(repository.resolve())
     assert result["config"] == str(missing_config.resolve())
     assert result["files_scanned"] == result["files_skipped"] == 0
+
+
+def test_check_pyproject_empty_include_suppresses_zero_file_guidance(repository: Path) -> None:
+    (repository / "pyproject.toml").write_text("[tool.house-lint]\ninclude = []\n")
+
+    text_result = _run(repository, "check", "--root", str(repository), "--format", "text")
+    json_result = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    assert text_result.returncode == 0
+    assert "empty scan: no Python files selected" in text_result.stdout
+    assert "no config file found" not in text_result.stdout
+    assert "[tool.house-lint]" not in text_result.stdout
+
+    result = json.loads(json_result.stdout)
+    assert json_result.returncode == 0
+    assert result["files_scanned"] == result["files_skipped"] == 0
+    assert result["zero_file_diagnostic"] == "empty scan: no Python files selected"
+
+
+def test_check_explicit_path_with_no_python_files_suppresses_zero_file_guidance(
+    repository: Path,
+) -> None:
+    empty_dir = repository / "docs"
+    empty_dir.mkdir()
+    (empty_dir / "notes.txt").write_text("not python\n")
+
+    text_result = _run(repository, "check", str(empty_dir), "--format", "text")
+    json_result = _run(repository, "check", str(empty_dir), "--format", "json")
+
+    assert text_result.returncode == 0
+    assert "empty scan: no Python files selected" in text_result.stdout
+    assert "no config file found" not in text_result.stdout
+
+    result = json.loads(json_result.stdout)
+    assert json_result.returncode == 0
+    assert result["files_scanned"] == 0
+    assert result["zero_file_diagnostic"] == "empty scan: no Python files selected"
+
+
+def test_check_with_no_config_and_no_python_files_shows_zero_file_guidance(
+    tmp_path: Path,
+) -> None:
+    text_result = _run(tmp_path, "check", "--root", str(tmp_path), "--format", "text")
+    json_result = _run(tmp_path, "check", "--root", str(tmp_path), "--format", "json")
+
+    assert text_result.returncode == 0
+    assert (
+        "empty scan: no Python files selected; no config file found: create one with an "
+        "include list, or pass explicit paths (house-lint check <path>)" in text_result.stdout
+    )
+
+    result = json.loads(json_result.stdout)
+    assert json_result.returncode == 0
+    assert result["files_scanned"] == result["files_skipped"] == 0
+    assert result["zero_file_diagnostic"] == (
+        "empty scan: no Python files selected; no config file found: create one with an "
+        "include list, or pass explicit paths (house-lint check <path>)"
+    )
+
+
+def test_check_fail_on_empty_exits_nonzero_on_zero_file_scan(tmp_path: Path) -> None:
+    completed = _run(tmp_path, "check", "--root", str(tmp_path), "--fail-on-empty")
+
+    assert completed.returncode == 1
+    assert "empty scan: no Python files selected" in completed.stdout
+
+
+def test_check_fail_on_empty_does_not_affect_nonempty_scan(repository: Path) -> None:
+    completed = _run(repository, "check", "--root", str(repository), "--fail-on-empty")
+
+    assert completed.returncode == 0
+
+
+def test_check_without_fail_on_empty_still_exits_zero_on_zero_file_scan(tmp_path: Path) -> None:
+    completed = _run(tmp_path, "check", "--root", str(tmp_path))
+
+    assert completed.returncode == 0
 
 
 def test_json_root_not_a_directory_reports_canonical_root(tmp_path: Path) -> None:

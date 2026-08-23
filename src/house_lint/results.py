@@ -114,6 +114,10 @@ class ScanResult:
     def is_clean(self) -> bool:
         return not self.findings and not self.errors
 
+    @property
+    def is_zero_file_scan(self) -> bool:
+        return self.files_scanned == 0 and self.is_clean
+
     def to_dict(self) -> dict[str, Any]:
         findings = sorted(
             self.findings,

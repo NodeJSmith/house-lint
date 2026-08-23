@@ -1,11 +1,11 @@
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import pytest
 
 from house_lint import discovery
-from house_lint.config import ConfigError
-from house_lint.discovery import DiscoveryError, discover_files, resolve_project
+from house_lint.config import STANDALONE_CONFIG_NAMES, ConfigError
+from house_lint.discovery import DiscoveryError, ProjectResolution, discover_files, resolve_project
 from house_lint.results import LintError
 
 PY_CONTENT = "x = 1\n"
@@ -25,6 +25,50 @@ def read_text_spy(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     return read_calls
 
 
+def test_builtin_excludes_matches_ruffs_default_exclude_list_plus_house_lint_extras() -> None:
+    # Pins `BUILTIN_EXCLUDES` to Ruff's full default exclude list (25 entries, per
+    # `ruff check --isolated --show-settings` against the locked ruff version -- `--isolated`
+    # matters because this repo's own `pyproject.toml` sets `exclude = ["design"]`, which replaces
+    # Ruff's defaults rather than extending them) plus house-lint's own extras: `__pycache__/`
+    # and `.house-lint-cache/` (from `cache.CACHE_DIRNAME`) -- 27 total. Ruff has no concept of
+    # house-lint's own cache directory, so it is not part of the Ruff-parity set; it is load-
+    # bearing for a different reason -- once the default include scans from the project root,
+    # a default scan would otherwise walk into house-lint's own `.house-lint-cache/` and
+    # enumerate its version marker, `.gitignore`, and cached `<hash>.json` entries as skipped
+    # non-Python files. A silent shrink of this tuple would widen the default scan surface
+    # without any other test catching it.
+    assert discovery.BUILTIN_EXCLUDES == (
+        ".bzr/",
+        ".direnv/",
+        ".eggs/",
+        ".git/",
+        ".git-rewrite/",
+        ".hg/",
+        ".house-lint-cache/",
+        ".ipynb_checkpoints/",
+        ".mypy_cache/",
+        ".nox/",
+        ".pants.d/",
+        ".pyenv/",
+        ".pytest_cache/",
+        ".pytype/",
+        ".ruff_cache/",
+        ".svn/",
+        ".tox/",
+        ".venv/",
+        ".vscode/",
+        "__pycache__/",
+        "__pypackages__/",
+        "_build/",
+        "buck-out/",
+        "dist/",
+        "node_modules/",
+        "site-packages/",
+        "venv/",
+    )
+    assert len(discovery.BUILTIN_EXCLUDES) == 27
+
+
 def test_full_scan_applies_builtin_gitignore_configured_excludes_and_sorting(
     tmp_path: Path,
 ) -> None:
@@ -41,19 +85,31 @@ def test_full_scan_applies_builtin_gitignore_configured_excludes_and_sorting(
     assert result.files_skipped == 3
 
 
-def test_no_path_scan_uses_all_documented_default_include_roots(tmp_path: Path) -> None:
+def test_no_path_scan_discovers_files_anywhere_under_root(tmp_path: Path) -> None:
+    # Default include is now `(".",)` -- a root scan must find Python files in non-standard
+    # directories (e.g. `packages/`), not just the previously hardcoded roots, while builtin
+    # excludes still prune vendored/tooling directories like `.venv/` and `.git/`.
     expected: list[Path] = []
-    for root_name in ("src", "tests", "scripts", "tools", "examples"):
+    for root_name in ("src", "tests", "scripts", "tools", "examples", "packages", "lib"):
         path = tmp_path / root_name / f"{root_name}.py"
         path.parent.mkdir(parents=True)
         path.write_text(PY_CONTENT)
         expected.append(path)
-    (tmp_path / "outside.py").write_text(PY_CONTENT)
+    top_level = tmp_path / "top.py"
+    top_level.write_text(PY_CONTENT)
+    expected.append(top_level)
+    for excluded_dir in (".venv", ".git", "__pycache__", "node_modules", ".house-lint-cache"):
+        excluded_path = tmp_path / excluded_dir / "excluded.py"
+        excluded_path.parent.mkdir(parents=True)
+        excluded_path.write_text(PY_CONTENT)
 
     result = discover_files(tmp_path)
 
     assert result.files == tuple(sorted(expected))
-    assert result.files_skipped == 0
+    for excluded_dir in (".venv", ".git", "__pycache__", "node_modules", ".house-lint-cache"):
+        assert not any(excluded_dir in path.parts for path in result.files), (
+            f"{excluded_dir} should be pruned by BUILTIN_EXCLUDES"
+        )
 
 
 def test_explicit_paths_are_strict_and_directories_recursive(tmp_path: Path) -> None:
@@ -1075,8 +1131,10 @@ def test_empty_full_scan_is_explicitly_clean(tmp_path: Path) -> None:
     assert result.errors == ()
 
 
-def test_missing_implicit_include_root_is_an_empty_scan(tmp_path: Path) -> None:
-    result = discover_files(tmp_path, include=("missing",))
+def test_empty_root_with_default_include_is_an_empty_scan(tmp_path: Path) -> None:
+    # With `include=(".",)` a missing root is impossible -- the root always exists -- so the
+    # empty-scan case that matters now is a root with no Python files at all.
+    result = discover_files(tmp_path)
 
     assert result.files == ()
     assert result.errors == ()
@@ -1100,6 +1158,75 @@ def test_nested_directory_symlink_reports_error_and_keeps_reachable_files(
     assert isinstance(result.errors[0], LintError)
     assert result.errors[0].kind == "traversal"
     assert result.errors[0].path == "src/linked"
+
+
+def test_a_symlinked_excluded_directory_is_pruned_without_a_traversal_error(
+    tmp_path: Path,
+) -> None:
+    # A directory this walk was never going to descend into regardless (here, house-lint's own
+    # default `.house-lint-cache/`, a BUILTIN_EXCLUDES entry) must be pruned silently, even when
+    # it happens to be a symlink -- not surface the "directory symlink is not traversed" error
+    # `test_nested_directory_symlink_reports_error_and_keeps_reachable_files` pins for a
+    # non-excluded symlinked directory. A cloned repository controls the path a project-relative
+    # `.house-lint-cache` resolves to, so a scan must succeed cleanly even when that path is a
+    # symlink pointing outside the checkout.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "kept.py").write_text(PY_CONTENT)
+    outside = tmp_path / "outside-cache"
+    outside.mkdir()
+    (tmp_path / ".house-lint-cache").symlink_to(outside, target_is_directory=True)
+
+    result = discover_files(tmp_path)
+
+    assert result.files == (tmp_path / "src" / "kept.py",)
+    assert result.errors == ()
+
+
+def test_a_symlinked_builtin_excluded_directory_is_pruned_without_a_traversal_error(
+    tmp_path: Path,
+) -> None:
+    # Unlike the CACHE_DIRNAME special-case above (dropped before either check, so it never
+    # exercised this ordering), an ordinary BUILTIN_EXCLUDES entry (here `.venv/`) used to reach
+    # `_traversable_dirs`'s symlink stat before its exclusion check, so a symlinked `.venv`,
+    # `venv`, or `node_modules` under the root-wide default scan produced a "directory symlink
+    # is not traversed" traversal error and made an otherwise-clean `check` exit 3 instead of
+    # pruning the directory like its non-symlinked counterpart.
+    (tmp_path / "a.py").write_text(PY_CONTENT)
+    outside = tmp_path / "outside-venv"
+    outside.mkdir()
+    (tmp_path / ".venv").symlink_to(outside, target_is_directory=True)
+
+    result = discover_files(tmp_path)
+
+    assert result.files == (tmp_path / "a.py",)
+    assert result.errors == ()
+
+
+def test_default_cache_directory_at_root_contributes_no_skip_count(tmp_path: Path) -> None:
+    # Unlike every other pruned directory (see
+    # `test_pruned_directory_counts_as_one_skip_not_one_per_contained_file`, which pins the
+    # general "1 skip per pruned directory" rule), house-lint's own default cache base
+    # (`root / CACHE_DIRNAME`) is created by the very run that would be counting it -- `cli.py`
+    # calls `prepare_cache_dir` after discovery has already produced its result. Two scans of the
+    # same otherwise-untouched root must report identical `files_skipped` regardless of whether
+    # an earlier run already created `.house-lint-cache/`; a mismatch here is exactly what broke
+    # `test_clean_check_is_equivalent_and_json_is_parseable` and
+    # `test_cache_hit_never_scans_the_source` in `tests/integration/test_cli.py` once the default
+    # scan became root-wide.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "kept.py").write_text(PY_CONTENT)
+
+    before = discover_files(tmp_path)
+
+    cache_base = tmp_path / ".house-lint-cache"
+    (cache_base / "0.0.0-abc123").mkdir(parents=True)
+    (cache_base / ".house-lint-version").write_text("")
+    (cache_base / "0.0.0-abc123" / "entry.json").write_text("{}")
+
+    after = discover_files(tmp_path)
+
+    assert before.files == after.files == (tmp_path / "src" / "kept.py",)
+    assert before.files_skipped == after.files_skipped == 0
 
 
 def test_walker_error_reports_failed_directory_and_keeps_reachable_files(
@@ -1276,3 +1403,141 @@ def test_without_markers_falls_back_to_the_current_working_directory(tmp_path: P
 
     assert resolution.root == cwd
     assert resolution.config is None
+
+
+def test_upward_walk_finds_standalone_house_lint_toml(tmp_path: Path) -> None:
+    config_path = tmp_path / "house-lint.toml"
+    config_path.write_text('[house-lint]\nselect = ["HSL001"]\n')
+    child = tmp_path / "nested"
+    child.mkdir()
+
+    resolution = resolve_project(cwd=child)
+
+    assert resolution == type(resolution)(tmp_path, config_path)
+
+
+def test_upward_walk_finds_standalone_dot_house_lint_toml(tmp_path: Path) -> None:
+    config_path = tmp_path / ".house-lint.toml"
+    config_path.write_text('[house-lint]\nselect = ["HSL001"]\n')
+    child = tmp_path / "nested"
+    child.mkdir()
+
+    resolution = resolve_project(cwd=child)
+
+    assert resolution == type(resolution)(tmp_path, config_path)
+
+
+def test_house_lint_toml_takes_precedence_over_pyproject_in_same_directory(
+    tmp_path: Path,
+) -> None:
+    standalone = tmp_path / "house-lint.toml"
+    standalone.write_text('[house-lint]\nselect = ["HSL001"]\n')
+    (tmp_path / "pyproject.toml").write_text('[tool.house-lint]\nselect = ["HSL002"]\n')
+
+    resolution = resolve_project(cwd=tmp_path)
+
+    assert resolution.config == standalone
+    assert resolution.shadowed == (tmp_path / "pyproject.toml",)
+
+
+def test_house_lint_toml_without_table_falls_through_to_pyproject(tmp_path: Path) -> None:
+    (tmp_path / "house-lint.toml").write_text('[not-house-lint]\nfoo = "bar"\n')
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[tool.house-lint]\nselect = ["HSL001"]\n')
+
+    resolution = resolve_project(cwd=tmp_path)
+
+    assert resolution == type(resolution)(tmp_path, pyproject)
+
+
+def test_root_without_config_finds_standalone_config_in_root_directory(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    config_path = root / "house-lint.toml"
+    config_path.write_text('[house-lint]\nselect = ["HSL001"]\n')
+
+    resolution = resolve_project(root=root)
+
+    assert resolution == type(resolution)(root, config_path)
+
+
+def test_root_without_config_finds_dot_standalone_config_in_root_directory(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    config_path = root / ".house-lint.toml"
+    config_path.write_text('[house-lint]\nselect = ["HSL001"]\n')
+
+    resolution = resolve_project(root=root)
+
+    assert resolution == type(resolution)(root, config_path)
+
+
+def test_explicit_config_path_to_standalone_house_lint_toml_resolves_correctly(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    config_path = project / "house-lint.toml"
+    config_path.write_text('[house-lint]\nselect = ["HSL001"]\n')
+
+    resolution = resolve_project(config=config_path)
+
+    assert resolution == type(resolution)(project, config_path)
+
+
+def test_malformed_lower_precedence_config_does_not_block_a_valid_winner(
+    tmp_path: Path,
+) -> None:
+    winner = tmp_path / "house-lint.toml"
+    winner.write_text('[house-lint]\nselect = ["HSL001"]\n')
+    (tmp_path / ".house-lint.toml").write_text("not valid toml {{{\n")
+
+    resolution = resolve_project(cwd=tmp_path)
+
+    assert resolution.config == winner
+    assert resolution.shadowed == ()
+
+
+def test_malformed_sole_config_at_a_directory_is_still_a_configuration_failure(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "house-lint.toml").write_text("not valid toml {{{\n")
+
+    with pytest.raises(ConfigError, match="invalid project configuration"):
+        resolve_project(cwd=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "resolve",
+    [
+        lambda root: resolve_project(cwd=root),
+        lambda root: resolve_project(root=root),
+    ],
+    ids=["upward-walk", "root-without-config"],
+)
+def test_discovery_order_matches_documented_precedence(
+    tmp_path: Path, resolve: Callable[[Path], ProjectResolution]
+) -> None:
+    """`docs/configuration.md`'s "Discovery and precedence" section claims the order
+    `house-lint.toml` -> `.house-lint.toml` -> `pyproject.toml` (with `[tool.house-lint]`), for
+    both the upward walk (item 4) and `--root` without `--config` (item 3). Pins
+    `STANDALONE_CONFIG_NAMES`' own ordering plus `_recognized_configs`' pyproject-last placement
+    together, so a future reordering of either forces this test -- and the doc it backs -- to be
+    updated in the same change. Follows the naming convention
+    `test_no_path_scan_discovers_files_anywhere_under_root` sets for pinning a doc-claimed default
+    to a test named after it.
+    """
+    assert STANDALONE_CONFIG_NAMES == ("house-lint.toml", ".house-lint.toml")
+    (tmp_path / "house-lint.toml").write_text('[house-lint]\nselect = ["HSL001"]\n')
+    (tmp_path / ".house-lint.toml").write_text('[house-lint]\nselect = ["HSL002"]\n')
+    (tmp_path / "pyproject.toml").write_text('[tool.house-lint]\nselect = ["HSL003"]\n')
+
+    resolution = resolve(tmp_path)
+
+    assert resolution.config == tmp_path / "house-lint.toml"
+    assert resolution.shadowed == (
+        tmp_path / ".house-lint.toml",
+        tmp_path / "pyproject.toml",
+    )

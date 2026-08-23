@@ -12,7 +12,7 @@ from pathspec import GitIgnoreSpec
 
 from house_lint.rule_catalog import DEFAULT_SELECT, ORDINARY_RULES
 
-DEFAULT_INCLUDE = ("src", "tests", "scripts", "tools", "examples")
+DEFAULT_INCLUDE = (".",)
 _PREFIX = re.compile(r"[A-Z][A-Z0-9_]*\Z")
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
@@ -27,6 +27,9 @@ MAX_DIGITS_BOUND = 12
 _BUILTIN_MAX_DIGITS = 4
 
 VALID_SCOPES: tuple[str, ...] = ("comments", "docstrings", "filenames")
+
+STANDALONE_CONFIG_NAMES: tuple[str, ...] = ("house-lint.toml", ".house-lint.toml")
+PYPROJECT_CONFIG_NAME = "pyproject.toml"
 
 # Single source of truth for separator/suffix vocabularies: the keys validate configured
 # values, and house_lint.rules.spec_tokens uses the values to build detection regexes.
@@ -440,6 +443,27 @@ def get_house_lint_table(document: dict[str, Any]) -> dict[str, Any] | None:
     return cast(dict[str, Any], house_lint) if isinstance(house_lint, dict) else None
 
 
+def get_standalone_table(document: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the top-level `[house-lint]` table from a standalone config file."""
+    house_lint = document.get("house-lint")
+    return cast(dict[str, Any], house_lint) if isinstance(house_lint, dict) else None
+
+
+def is_standalone_config(path: Path) -> bool:
+    """Return whether `path`'s filename identifies a standalone config file."""
+    return path.name in STANDALONE_CONFIG_NAMES
+
+
+def config_table_name(standalone: bool) -> str:
+    """Return the bare TOML table name (no brackets) house-lint settings live under.
+
+    Single source of truth for this fact, shared by `load_config`'s error/validation messages
+    and `reporters.text.zero_file_guidance`'s user-facing guidance, so the two can never disagree
+    about which table a standalone vs. `pyproject.toml` config uses.
+    """
+    return "house-lint" if standalone else "tool.house-lint"
+
+
 def load_config(
     path: Path,
     *,
@@ -449,10 +473,12 @@ def load_config(
     cli_extend_ignore: Iterable[str] | None = None,
 ) -> LintConfig:
     """Load and validate one TOML configuration file."""
+    standalone = is_standalone_config(path)
     document = load_toml(path)
-    house = get_house_lint_table(document)
+    house = get_standalone_table(document) if standalone else get_house_lint_table(document)
+    table_name = config_table_name(standalone)
     if house is None:
-        raise ConfigError("config lacks [tool.house-lint]")
+        raise ConfigError(f"config lacks [{table_name}]")
     _strict_keys(
         house,
         {
@@ -465,7 +491,7 @@ def load_config(
             "per-file-ignores",
             "rules",
         },
-        "tool.house-lint",
+        table_name,
     )
     include = _validate_include(_strings(house.get("include", list(DEFAULT_INCLUDE)), "include"))
     exclude = _validate_exclude(_strings(house.get("exclude", []), "exclude"))

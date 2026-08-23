@@ -32,10 +32,12 @@ from house_lint.config import (
 )
 from house_lint.discovery import DiscoveryError, discover_files, resolve_project
 from house_lint.reporters import (
+    EMPTY_SCAN_MESSAGE,
     render_json,
     render_rule_list_json,
     render_rule_list_text,
     render_text,
+    zero_file_guidance,
 )
 from house_lint.results import (
     Finding,
@@ -72,9 +74,28 @@ def _result_for_config_error(
 
 
 def _write_result(
-    result: ScanResult, output_format: str, *, errors_to_stderr: bool, debug: bool
+    result: ScanResult,
+    output_format: str,
+    *,
+    errors_to_stderr: bool,
+    debug: bool,
+    zero_file_note: str | None,
+    shadowed: tuple[Path, ...] = (),
 ) -> None:
-    print(render_json(result) if output_format == "json" else render_text(result))
+    rendered = (
+        render_json(
+            result,
+            zero_file_note=zero_file_note,
+            shadowed=shadowed,
+        )
+        if output_format == "json"
+        else render_text(
+            result,
+            zero_file_note=zero_file_note,
+            shadowed=shadowed,
+        )
+    )
+    print(rendered)
     if errors_to_stderr:
         for err in result.errors:
             print(_render_error(err), file=sys.stderr)
@@ -89,18 +110,20 @@ def _write_result(
 
 def _write_config_error(result: ScanResult, output_format: str) -> None:
     if output_format == "json":
-        print(render_json(result))
+        print(render_json(result, zero_file_note=None))
         return
     for err in result.errors:
         print(_render_error(err), file=sys.stderr)
 
 
-def _exit_code(result: ScanResult) -> int:
+def _exit_code(result: ScanResult, *, fail_on_empty: bool) -> int:
     if any(err.kind == "internal" for err in result.errors):
         return 4
     if result.errors:
         return 3
     if result.findings:
+        return 1
+    if fail_on_empty and result.is_zero_file_scan:
         return 1
     return 0
 
@@ -392,8 +415,16 @@ def check(
     no_cache: bool = False,
     cache_dir: Path | None = None,
     debug: bool = False,
+    fail_on_empty: bool = False,
 ) -> int:
-    """Scan configured roots or explicit Python paths."""
+    """Scan configured roots or explicit Python paths.
+
+    `fail_on_empty` makes a zero-file scan exit 1 instead of 0 — for CI pipelines that gate on
+    the exit code and would otherwise see a zero-file scan (e.g. a typo'd `include`, or a rename
+    that orphaned the configured paths) pass silently. Off by default: an empty scan is a normal,
+    non-error outcome for interactive/exploratory use (a brand-new project, a directory that
+    hasn't grown any Python files yet).
+    """
     if format not in {"text", "json"}:
         result = _result_for_config_error(ConfigError("--format must be text or json"))
         _write_config_error(result, "text")
@@ -404,6 +435,14 @@ def check(
     cli_extend_ignore = _flatten_ids(extend_ignore)
     resolved_root: Path | None = None
     resolved_config: Path | None = None
+    resolved_shadowed: tuple[Path, ...] = ()
+    # Default until the try block below resolves the real config — read back by the
+    # `_write_result` call after the try/except, which needs a value even when an exception
+    # aborts the try body before `lint_config` is reassigned (e.g. a config load that raises
+    # something other than `ConfigError`). `LintConfig()`'s own default (`include` DEFAULT_INCLUDE)
+    # is the correct fallback: it's exactly what the zero-file diagnostic should assume when the
+    # real resolution never completed.
+    lint_config = LintConfig()
     try:
         # Best-effort fallback for error reporting: resolve_project() below performs
         # this same resolution and overwrites these on success, but if it raises before
@@ -413,6 +452,7 @@ def check(
         resolution = resolve_project(root=root, config=config)
         resolved_root = resolution.root
         resolved_config = resolution.config
+        resolved_shadowed = resolution.shadowed
         lint_config = (
             default_config(
                 cli_select=cli_select,
@@ -463,12 +503,22 @@ def check(
         )
         if debug:
             traceback.print_exc(file=sys.stderr)
-    code = _exit_code(result)
+    code = _exit_code(result, fail_on_empty=fail_on_empty)
+    zero_file_note: str | None = None
+    if result.is_zero_file_scan:
+        guidance = zero_file_guidance(
+            result,
+            include=lint_config.include,
+            explicit_paths=bool(paths),
+        )
+        zero_file_note = f"{EMPTY_SCAN_MESSAGE}{guidance}"
     _write_result(
         result,
         format,
         errors_to_stderr=format == "text" and code >= 3,
         debug=debug,
+        zero_file_note=zero_file_note,
+        shadowed=resolved_shadowed,
     )
     return code
 
