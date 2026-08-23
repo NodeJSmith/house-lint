@@ -90,8 +90,8 @@ def parse_github_username(email: str) -> str | None:
 def add_contributor(
     contributors: dict[str, list[dict[str, str]]], name: str, email: str, subject: str
 ) -> None:
-    entry = {"subject": subject, "email": email}
-    contributors.setdefault(name, []).append(entry)
+    entry = {"subject": subject, "email": email, "name": name}
+    contributors.setdefault(email.lower(), []).append(entry)
 
 
 def find_external_contributors(from_ref: str, to_ref: str) -> dict[str, list[dict[str, str]]]:
@@ -120,14 +120,13 @@ def print_contributors(
         return
 
     print(f"External contributors in {from_ref}..{to_ref}:\n")
-    for name, entries in sorted(contributors.items()):
-        username = None
-        for entry in entries:
-            username = parse_github_username(entry["email"])
-            if username:
-                break
+    rows = []
+    for entries in contributors.values():
+        username = parse_github_username(entries[0]["email"])
+        display = f"@{username}" if username else entries[0]["name"]
+        rows.append((display, entries))
 
-        display = f"@{username}" if username else name
+    for display, entries in sorted(rows, key=lambda row: row[0].lower()):
         print(f"  {display}")
         for entry in entries:
             print(f"    - {entry['subject']}")
