@@ -123,7 +123,6 @@ class LintConfig:
     per_file_ignores: Mapping[str, tuple[str, ...]] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    include_is_default: bool = True
 
 
 DetectorOptions = HSL101Options | HSL102Options | HSL103Options | None
@@ -457,13 +456,13 @@ def is_standalone_config(path: Path) -> bool:
 def load_config(
     path: Path,
     *,
-    standalone: bool = False,
     cli_select: Iterable[str] | None = None,
     cli_ignore: Iterable[str] | None = None,
     cli_extend_select: Iterable[str] | None = None,
     cli_extend_ignore: Iterable[str] | None = None,
 ) -> LintConfig:
     """Load and validate one TOML configuration file."""
+    standalone = is_standalone_config(path)
     document = load_toml(path)
     house = get_standalone_table(document) if standalone else get_house_lint_table(document)
     table_name = "house-lint" if standalone else "tool.house-lint"
@@ -483,7 +482,6 @@ def load_config(
         },
         table_name,
     )
-    include_is_default = "include" not in house
     include = _validate_include(_strings(house.get("include", list(DEFAULT_INCLUDE)), "include"))
     exclude = _validate_exclude(_strings(house.get("exclude", []), "exclude"))
     # Every raw TOML value goes through `_strings` here rather than reaching
@@ -507,6 +505,4 @@ def load_config(
     # `enabled` is already sorted with the always-on rule appended (see
     # `_effective_rule_selection`); re-sorting here would only differ from `default_config`'s
     # handling of the same value if an always-on rule ID ever stopped sorting last.
-    return LintConfig(
-        include, exclude, enabled, *options, per_file_ignores, include_is_default=include_is_default
-    )
+    return LintConfig(include, exclude, enabled, *options, per_file_ignores)

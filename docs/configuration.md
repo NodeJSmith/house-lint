@@ -72,6 +72,8 @@ Applied after the base selection and `extend-select`/`extend-ignore` resolve, pe
 2. `--config` selects an exact configuration. Without `--root`, its parent is the root; with `--root`, it must be inside the root.
 3. With `--root` and no `--config`, the root directory is checked for `house-lint.toml` → `.house-lint.toml` → `pyproject.toml` (with `[tool.house-lint]`), in that order — the first recognized file is used.
 4. Without either option, the command searches upward from the current directory. At each directory level, it checks `house-lint.toml` → `.house-lint.toml` → `pyproject.toml` (with `[tool.house-lint]`), in that order, and stops at the first directory where any of the three is recognized. If none exists anywhere in the walk, it uses the nearest ancestor containing `.git` or any `pyproject.toml`; otherwise it uses the current directory.
+
+When more than one recognized config source exists at the winning directory level (e.g. both `house-lint.toml` and `pyproject.toml` with `[tool.house-lint]`), the shadowed file(s) are named in default output — appended to the `config:` line in text output, or under a `shadowed_config` key (also outside the `schema_version: 1` contract) in JSON output. This is not gated behind `--debug`.
 5. The base selection is configured `select` minus configured `ignore`, or a CLI `--select` wholesale override when given.
 6. `extend-select`/`extend-ignore` (config and CLI, unioned together) layer additively on top of that base, regardless of whether the base came from config or `--select`. `extend-ignore` removes rules from the whole base, not just from `extend-select` — `select = ["HSL001"]` with `extend-ignore = ["HSL001"]` drops HSL001 entirely, it isn't limited to canceling out `extend-select` additions.
 7. CLI `--ignore` is applied last and always wins over everything above. `HSL900` is always added.
@@ -100,13 +102,15 @@ A rate is meaningless without the distribution that produced it, which is why al
 
 ## Zero-file diagnostic
 
-When a scan discovers zero Python files and no errors occurred, `check` still exits cleanly but appends a diagnostic. The text reporter's existing `empty scan: no Python files selected` summary line grows a guidance clause naming what to check, based on which config format resolved:
+When a scan discovers zero Python files and no errors occurred, `check` exits `0` by default but appends a diagnostic. Pass `--fail-on-empty` to exit `1` instead — useful in CI, where a zero-file scan usually means a typo'd `include` or a rename that orphaned the configured paths, and a silent `0` exit would let that slip past a pipeline gating on the exit code. `--fail-on-empty` is off by default because an empty scan is a normal outcome for interactive/exploratory use — a brand-new project, or a directory that hasn't grown any Python files yet.
+
+The text reporter's existing `empty scan: no Python files selected` summary line grows a guidance clause naming what to check, based on which config format resolved:
 
 - No config file found: create one with an `include` list, or pass explicit paths (`house-lint <path>`)
 - `pyproject.toml` resolved: check the `include` list in its `[tool.house-lint]` table
 - A standalone config resolved: check the `include` list in its `[house-lint]` table
 
-The JSON reporter carries the same message under a `zero_file_diagnostic` key, present only when the scan found zero files — it has no equivalent in ordinary output.
+The JSON reporter carries the same message under a `zero_file_diagnostic` key, present only when the scan found zero files — it has no equivalent in ordinary output. This key is a presentation-layer addition layered on top of the `schema_version: 1` contract, not part of it: it can change shape or be removed without a schema version bump, unlike the versioned fields in `to_dict()`'s output.
 
 The guidance clause is suppressed in exactly two cases — the base "empty scan" message still appears in both, just without it: `include = []` explicitly configured (an intentional empty scan), and explicit paths given on the command line. A typo'd explicit `include` (e.g. `include = ["tset"]` for a `tests/` directory) is *not* suppressed — a config that names a directory that doesn't exist is the most common real trigger for this diagnostic, and it should not be silently swallowed.
 

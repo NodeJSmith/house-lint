@@ -238,23 +238,23 @@ def test_get_standalone_table_detects_only_a_valid_house_lint_table() -> None:
     assert get_standalone_table({}) is None
 
 
-def test_load_config_standalone_true_loads_from_house_lint_table(tmp_path: Path) -> None:
+def test_load_config_standalone_filename_loads_from_house_lint_table(tmp_path: Path) -> None:
     path = tmp_path / "house-lint.toml"
     path.write_text('[house-lint]\nselect = ["HSL001"]\n')
 
-    config = load_config(path, standalone=True)
+    config = load_config(path)
 
     assert config.enabled_rules == ("HSL001", "HSL900")
 
 
-def test_load_config_standalone_true_raises_when_house_lint_table_is_missing(
+def test_load_config_standalone_filename_raises_when_house_lint_table_is_missing(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "house-lint.toml"
     path.write_text('[tool.house-lint]\nselect = ["HSL001"]\n')
 
     with pytest.raises(ConfigError, match=r"\[house-lint\]"):
-        load_config(path, standalone=True)
+        load_config(path)
 
 
 @pytest.mark.parametrize("filename", ["house-lint.toml", ".house-lint.toml"])
@@ -359,41 +359,25 @@ def test_include_accepts_dot_as_a_root_relative_path(tmp_path: Path) -> None:
     assert config.include == (".",)
 
 
-def test_include_is_default_true_when_include_key_absent(tmp_path: Path) -> None:
+def test_include_defaults_to_default_include_when_key_absent(tmp_path: Path) -> None:
     path = tmp_path / "pyproject.toml"
     path.write_text("[tool.house-lint]\n")
 
     config = load_config(path)
 
-    assert config.include_is_default is True
     assert config.include == (".",)
 
 
-def test_include_is_default_false_when_include_explicitly_set(tmp_path: Path) -> None:
+def test_include_explicitly_set_to_empty_list(tmp_path: Path) -> None:
     path = tmp_path / "pyproject.toml"
-    path.write_text('[tool.house-lint]\ninclude = ["src"]\n')
+    path.write_text("[tool.house-lint]\ninclude = []\n")
 
     config = load_config(path)
 
-    assert config.include_is_default is False
+    assert config.include == ()
 
 
-def test_include_is_default_false_even_when_explicit_value_matches_the_default(
-    tmp_path: Path,
-) -> None:
-    # Presence-based detection: an explicit `include = ["."]` -- the same value as the default --
-    # still marks `include_is_default` False, since the flag tracks whether the user configured
-    # the key at all, not whether the resulting value happens to match the built-in default.
-    path = tmp_path / "pyproject.toml"
-    path.write_text('[tool.house-lint]\ninclude = ["."]\n')
-
-    config = load_config(path)
-
-    assert config.include_is_default is False
-
-
-def test_default_config_include_is_default_true() -> None:
-    assert default_config().include_is_default is True
+def test_default_config_include_matches_default_include() -> None:
     assert default_config().include == (".",)
 
 

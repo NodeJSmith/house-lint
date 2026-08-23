@@ -4,7 +4,7 @@ Durable issues discovered during orchestration that were intentionally not fixed
 
 ## KI-001: README.md and CLAUDE.md still describe the old hardcoded default scan roots
 
-Status: open
+Status: resolved — fixed during known issues walkthrough
 Run: 111
 Source: T03
 Reason not fixed now: out-of-scope
@@ -32,3 +32,31 @@ Update README.md and CLAUDE.md's default-scan-roots description to match the new
 Acceptance criteria:
 - README.md and CLAUDE.md no longer describe `src`/`tests`/`scripts`/`tools`/`examples` as the default
   scan roots.
+
+## KI-002: T04 touched results.py without declaring it in Target Files
+
+Status: open
+Run: 111
+Source: impl-review
+Reason not fixed now: out-of-scope
+Observed in: T04 (commit a6443c6)
+Affected files:
+- src/house_lint/results.py
+
+Issue:
+T04's task file declares `Target Files` as `reporters/text.py`, `reporters/json.py`, `cli.py`, and
+`tests/integration/test_reporters.py`. The executor also added a 4-line `is_zero_file_scan` property to
+`ScanResult` in `results.py` (and touched `tests/integration/test_cli.py`) to support threading the
+zero-file diagnostic through — a small, necessary addition, but not declared up front. Flagged as a
+non-blocking WARN by the implementation review's task-scope checklist item.
+
+Why deferred:
+The change itself is correct and already shipped in T04's commit; there is nothing to fix in code. The
+gap is retroactive documentation of scope, not a functional defect, so it does not warrant reopening T04.
+
+Recommended follow-up:
+None required — this is a paper trail entry only, so a future scope audit of T04 isn't surprised by the
+undeclared file touch.
+
+Acceptance criteria:
+- N/A — informational; no code change expected.

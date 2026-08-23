@@ -756,30 +756,53 @@ def test_debug_tracebacks_survive_a_warm_cache(repository: Path) -> None:
         assert "def broken()" in completed.stderr
 
 
-def test_debug_reports_shadowed_config_when_standalone_and_pyproject_both_exist(
+def test_default_output_reports_shadowed_config_when_standalone_and_pyproject_both_exist(
     repository: Path,
 ) -> None:
     (repository / "house-lint.toml").write_text('[house-lint]\nselect = ["HSL001"]\n')
     (repository / "pyproject.toml").write_text('[tool.house-lint]\nselect = ["HSL001"]\n')
 
-    debug_run = _run(repository, "check", "--root", str(repository), "--debug")
-    quiet_run = _run(repository, "check", "--root", str(repository))
-
-    assert debug_run.returncode == 0
-    assert quiet_run.returncode == 0
-    assert "debug: config" in debug_run.stderr
-    assert "house-lint.toml used; shadowed:" in debug_run.stderr
-    assert "pyproject.toml" in debug_run.stderr
-    assert "shadowed" not in quiet_run.stderr
-
-
-def test_debug_omits_shadow_line_when_only_one_config_source_exists(repository: Path) -> None:
-    (repository / "house-lint.toml").write_text('[house-lint]\nselect = ["HSL001"]\n')
-
-    completed = _run(repository, "check", "--root", str(repository), "--debug")
+    completed = _run(repository, "check", "--root", str(repository))
 
     assert completed.returncode == 0
-    assert "shadowed" not in completed.stderr
+    assert "house-lint.toml (shadows" in completed.stdout
+    assert "pyproject.toml" in completed.stdout
+
+
+def test_default_output_omits_shadow_note_when_only_one_config_source_exists(
+    repository: Path,
+) -> None:
+    (repository / "house-lint.toml").write_text('[house-lint]\nselect = ["HSL001"]\n')
+
+    completed = _run(repository, "check", "--root", str(repository))
+
+    assert completed.returncode == 0
+    assert "shadows" not in completed.stdout
+
+
+def test_json_output_reports_shadowed_config_when_standalone_and_pyproject_both_exist(
+    repository: Path,
+) -> None:
+    (repository / "house-lint.toml").write_text('[house-lint]\nselect = ["HSL001"]\n')
+    (repository / "pyproject.toml").write_text('[tool.house-lint]\nselect = ["HSL001"]\n')
+
+    completed = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    assert completed.returncode == 0
+    result = json.loads(completed.stdout)
+    assert result["shadowed_config"] == [str(repository / "pyproject.toml")]
+
+
+def test_json_output_omits_shadowed_config_key_when_only_one_config_source_exists(
+    repository: Path,
+) -> None:
+    (repository / "house-lint.toml").write_text('[house-lint]\nselect = ["HSL001"]\n')
+
+    completed = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    assert completed.returncode == 0
+    result = json.loads(completed.stdout)
+    assert "shadowed_config" not in result
 
 
 def test_invalid_check_format_writes_only_a_usage_diagnostic_to_stderr(repository: Path) -> None:
@@ -892,6 +915,25 @@ def test_check_with_no_config_and_no_python_files_shows_zero_file_guidance(
         "empty scan: no Python files selected; no config file found: create one with an "
         "include list, or pass explicit paths (house-lint <path>)"
     )
+
+
+def test_check_fail_on_empty_exits_nonzero_on_zero_file_scan(tmp_path: Path) -> None:
+    completed = _run(tmp_path, "check", "--root", str(tmp_path), "--fail-on-empty")
+
+    assert completed.returncode == 1
+    assert "empty scan: no Python files selected" in completed.stdout
+
+
+def test_check_fail_on_empty_does_not_affect_nonempty_scan(repository: Path) -> None:
+    completed = _run(repository, "check", "--root", str(repository), "--fail-on-empty")
+
+    assert completed.returncode == 0
+
+
+def test_check_without_fail_on_empty_still_exits_zero_on_zero_file_scan(tmp_path: Path) -> None:
+    completed = _run(tmp_path, "check", "--root", str(tmp_path))
+
+    assert completed.returncode == 0
 
 
 def test_json_root_not_a_directory_reports_canonical_root(tmp_path: Path) -> None:

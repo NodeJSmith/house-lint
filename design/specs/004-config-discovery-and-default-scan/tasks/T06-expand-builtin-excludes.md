@@ -63,7 +63,7 @@ Check `tests/unit/test_discovery.py` for any tests that assert the exact content
 
 ## Verify
 
-- [ ] FR#10: `BUILTIN_EXCLUDES` contains all 26 entries
-- [ ] AC#10: The list matches Ruff's actual current default exclude list (verified via `ruff check --isolated --show-settings`) plus house-lint's existing extra (`__pycache__/`)
+- [ ] FR#10: `BUILTIN_EXCLUDES` contains all 27 entries
+- [ ] AC#10: The list matches Ruff's actual current default exclude list (verified via `ruff check --isolated --show-settings`) plus house-lint's existing extras (`__pycache__/`, `.house-lint-cache/`)
 - [ ] `docs/configuration.md` reflects the expanded list
 - [ ] Existing tests pass with the expanded list

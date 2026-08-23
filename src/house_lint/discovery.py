@@ -120,7 +120,8 @@ class ProjectResolution:
     shadowed: tuple[Path, ...] = ()
     """Recognized config sources at the same directory as `config` that lost to it on
     discovery precedence (`house-lint.toml` > `.house-lint.toml` > `pyproject.toml`). Only
-    ever non-empty when `config` is not `None`. Surfaced by `--debug` (see `cli.py`)."""
+    ever non-empty when `config` is not `None`. Surfaced in default (non-debug) output — see
+    `cli.py` and `reporters/text.py`'s `shadowed_config_note`."""
 
 
 def _inside(root: Path, path: Path) -> bool:

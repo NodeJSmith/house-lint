@@ -64,5 +64,5 @@ In `tests/unit/test_discovery.py`, add tests for:
 - [ ] AC#3: `house-lint.toml` takes precedence over `pyproject.toml`
 - [ ] AC#4: `--config path/to/house-lint.toml` loads standalone format
 - [ ] AC#9: `--root` checks for standalone config files
-- [ ] FR#11: `--debug` shows which config file was used when multiple exist at the same level
-- [ ] AC#11: Debug output names used and shadowed config files
+- [ ] FR#11: default (non-debug) output shows which config file was used when multiple exist at the same level (strengthened post-implementation — see design.md FR#11)
+- [ ] AC#11: default output names used and shadowed config files

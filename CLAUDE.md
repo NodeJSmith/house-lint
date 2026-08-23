@@ -61,8 +61,10 @@ signature: `(source, options, *, limit=None) -> list[CandidateFinding]`.
   `docs/configuration.md` and `design/research/2026-08-20-gitignore-style-exclusion-inclusion/`.
 - An ignored directory is pruned rather than enumerated, so `files_skipped` counts one skip per
   pruned directory, not one per file inside it.
-- Default scan roots are `src`, `tests`, `scripts`, `tools`, `examples`, configurable via
-  `[tool.house-lint] include`.
+- When `include` is not set, the default scan scope is the entire project tree from the root,
+  filtered by `.gitignore` and the built-in excludes, rather than a fixed list of directory names.
+  Set `[tool.house-lint] include` to narrow the scan to specific root-relative files or
+  directories.
 - A scanned file is read **exactly once** per scan, by `SourceFile.load()`. The cache key is
   derived from that same buffer (`SourceFile.content_bytes` → `hash_source_content`), which is
   what stops an entry from ever describing content that was not scanned under that key. Adding a

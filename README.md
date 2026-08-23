@@ -12,7 +12,7 @@ You need Python 3.11 or later.
 uvx house-lint check
 ```
 
-You see the selected root, configuration, enabled rules, file counts, findings, and a final summary. The default scan looks for `src`, `tests`, `scripts`, `tools`, and `examples` under the project root.
+You see the selected root, configuration, enabled rules, file counts, findings, and a final summary. By default, house-lint scans the entire project tree from the root, filtered by `.gitignore` and the built-in excludes — set `include` in your config to narrow the scan to specific directories.
 
 Install it in a project when you want a pinned development dependency:
 
@@ -106,7 +106,7 @@ With no paths, `check` scans configured include roots. With paths, it scans only
 house-lint check src/service.py tests
 ```
 
-Explicit paths are strict. Missing, out-of-root, and non-Python file arguments are errors; ignored or excluded explicit Python files are counted as skipped. `--root` fixes the project boundary and only considers `<root>/pyproject.toml`. Without `--root`, discovery starts at the current directory. `--config` selects an exact configuration file; without `--root`, its parent becomes the root.
+Explicit paths are strict. Missing, out-of-root, and non-Python file arguments are errors; ignored or excluded explicit Python files are counted as skipped. `--root` fixes the project boundary; with no `--config`, the root directory is checked for `house-lint.toml` → `.house-lint.toml` → `pyproject.toml` (with `[tool.house-lint]`), in that order, and the first recognized file is used. Without `--root`, discovery starts at the current directory. `--config` selects an exact configuration file; without `--root`, its parent becomes the root.
 
 The linter loads the selected root's `.gitignore` plus every nested `.gitignore` between the root and each discovered file, combined with git's own precedence (a closer `.gitignore` can override a farther one, including via negation), plus built-in and configured excludes. It does not shell out to Git. Use `--no-gitignore` to disable `.gitignore` handling at every level.
 
