@@ -808,6 +808,12 @@ class _FileSelector:
         when disabled), and `builtin_spec`/`exclude_spec` inside `_ignored` apply
         unconditionally, matching how file-level ignoring already treats those two specs.
 
+        Exclusion is checked before the symlink stat, not after: a symlinked directory that is
+        also excluded (a symlinked `.venv/`, a gitignore'd `build/`) is dropped silently as an
+        exclusion and never reaches the symlink check, so it never emits the "directory symlink
+        is not traversed" traversal error. That error is reserved for a directory symlink this
+        walk would otherwise have descended into.
+
         `root / CACHE_DIRNAME` is dropped before any of that -- silently, without incrementing
         `files_skipped` and without a symlink stat. Every other pruned directory is either
         stable for the run's duration (a `.venv/`, a `.gitignore`d `build/`) or was already
@@ -830,6 +836,11 @@ class _FileSelector:
             if current_path == self.root and item == CACHE_DIRNAME:
                 continue
             child = current_path / item
+            if _ignored(
+                self.root, child, self.builtin_spec, self.exclude_spec, is_dir=True
+            ) or self._is_gitignore_excluded(current_path, item, is_dir=True):
+                self.files_skipped += 1
+                continue
             try:
                 is_symlink = child.is_symlink()
             except OSError as exc:
@@ -839,11 +850,6 @@ class _FileSelector:
                 self.errors.append(
                     self._error(child, "traversal", "walk", "directory symlink is not traversed")
                 )
-                continue
-            if _ignored(
-                self.root, child, self.builtin_spec, self.exclude_spec, is_dir=True
-            ) or self._is_gitignore_excluded(current_path, item, is_dir=True):
-                self.files_skipped += 1
                 continue
             kept.append(item)
         return kept

@@ -1182,6 +1182,26 @@ def test_a_symlinked_excluded_directory_is_pruned_without_a_traversal_error(
     assert result.errors == ()
 
 
+def test_a_symlinked_builtin_excluded_directory_is_pruned_without_a_traversal_error(
+    tmp_path: Path,
+) -> None:
+    # Unlike the CACHE_DIRNAME special-case above (dropped before either check, so it never
+    # exercised this ordering), an ordinary BUILTIN_EXCLUDES entry (here `.venv/`) used to reach
+    # `_traversable_dirs`'s symlink stat before its exclusion check, so a symlinked `.venv`,
+    # `venv`, or `node_modules` under the root-wide default scan produced a "directory symlink
+    # is not traversed" traversal error and made an otherwise-clean `check` exit 3 instead of
+    # pruning the directory like its non-symlinked counterpart.
+    (tmp_path / "a.py").write_text(PY_CONTENT)
+    outside = tmp_path / "outside-venv"
+    outside.mkdir()
+    (tmp_path / ".venv").symlink_to(outside, target_is_directory=True)
+
+    result = discover_files(tmp_path)
+
+    assert result.files == (tmp_path / "a.py",)
+    assert result.errors == ()
+
+
 def test_default_cache_directory_at_root_contributes_no_skip_count(tmp_path: Path) -> None:
     # Unlike every other pruned directory (see
     # `test_pruned_directory_counts_as_one_skip_not_one_per_contained_file`, which pins the
