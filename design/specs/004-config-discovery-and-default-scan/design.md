@@ -1,7 +1,7 @@
 # Design: Standalone Config Discovery & Root-Based Default Scan
 
 **Date:** 2026-08-21
-**Status:** draft
+**Status:** archived
 **Mode:** sketch
 
 ## Problem
