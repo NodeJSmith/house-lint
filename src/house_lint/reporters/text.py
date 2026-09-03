@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from house_lint.config import PYPROJECT_CONFIG_NAME, config_table_name, is_standalone_config
+from house_lint.config import config_table_name, is_standalone_config
 from house_lint.results import RuleList, ScanResult
 
 EMPTY_SCAN_MESSAGE = "empty scan: no Python files selected"
@@ -54,11 +54,11 @@ def zero_file_guidance(
             "; no config file found: create one with an include list, "
             "or pass explicit paths (house-lint check <path>)"
         )
-    standalone = is_standalone_config(config)
-    table = config_table_name(standalone)
-    if standalone:
-        return f"; check the include list in {config.name}'s [{table}] table"
-    return f"; check the include list in {PYPROJECT_CONFIG_NAME}'s [{table}] table"
+    # `config.name` in both branches: an explicit `--config custom.toml` still uses the
+    # `[tool.house-lint]` table but is not `pyproject.toml`, and guidance naming a file that
+    # isn't involved sends the reader to the wrong place.
+    table = config_table_name(is_standalone_config(config))
+    return f"; check the include list in {config.name}'s [{table}] table"
 
 
 def render_text(
