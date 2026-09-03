@@ -51,7 +51,7 @@ def _type_checking_names(tree: ast.Module) -> tuple[frozenset[str], frozenset[st
             for alias in node.names:
                 if alias.name == "typing" and alias.asname is not None:
                     module_names.add(alias.asname)
-        elif isinstance(node, ast.ImportFrom) and node.module == "typing":
+        elif isinstance(node, ast.ImportFrom) and node.module == "typing" and node.level == 0:
             for alias in node.names:
                 if alias.name == "TYPE_CHECKING" and alias.asname is not None:
                     flag_names.add(alias.asname)
