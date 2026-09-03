@@ -189,7 +189,7 @@ def _normalized_gitignore_line(line: str) -> str:
     a path component.
 
     Shared by `_build_patterns` (per-directory `.gitignore` lines) and `_patterns` (the
-    root-anchored `exclude_spec` lines) — both build a spec from raw gitignore-syntax lines and
+    root-anchored `exclude_patterns` lines) — both build patterns from raw gitignore-syntax lines and
     both need the same fix, since configured `exclude` accepts the same syntax
     `docs/configuration.md` documents as following git's semantics.
     """
@@ -234,32 +234,74 @@ def _is_anchored_pattern(text: str) -> bool:
     return "/" in core
 
 
-def _patterns(excludes: tuple[str, ...]) -> tuple[GitIgnoreSpec, GitIgnoreSpec]:
+def _patterns(excludes: tuple[str, ...]) -> tuple["IgnorePatterns", "IgnorePatterns"]:
+    """Compile the builtin excludes and the configured `exclude` list, root-anchored.
+
+    Both go through `_build_patterns` — the same trailing-whitespace trim, trailing-`/**`
+    rewrite, and per-pattern `is_dir_only`/`is_anchored` classification every `.gitignore` file
+    gets — because `docs/configuration.md` documents `exclude` as following git's semantics.
+    An earlier version handed these lines to `GitIgnoreSpec`'s aggregate matcher instead, whose
+    priority-scheme defect is the documented reason the per-directory machinery exists: the
+    aggregate reported a directory as ignored despite a `!*/` negation, so the standard
+    whitelist idiom (`["*", "!*/", "!*.py"]`) pruned every subdirectory git would descend into.
+    See the configured-exclude families in the parity suite.
+
+    A builtin pattern failing to compile is a bug in this module's own constant, not a user
+    error, so it raises. A configured pattern already parsed once at config validation; a
+    failure here means `_build_patterns`'s normalization rewrite produced something unparsable —
+    rare, and reported as a strict discovery error rather than escaping as an internal one.
+    """
+
+    def on_builtin_error(message: str) -> None:
+        raise RuntimeError(f"builtin exclude patterns failed to compile: {message}")
+
+    def on_exclude_error(message: str) -> None:
+        raise DiscoveryError(
+            LintError(
+                code="path-error",
+                kind="path",
+                path=None,
+                line=None,
+                column=None,
+                end_line=None,
+                end_column=None,
+                phase="discovery",
+                operation="combine",
+                rule_id=None,
+                message=f"configured exclude patterns failed to compile: {message}",
+            )
+        )
+
     return (
-        GitIgnoreSpec.from_lines(BUILTIN_EXCLUDES),
-        GitIgnoreSpec.from_lines(_normalized_gitignore_line(value) for value in excludes),
+        _build_patterns(BUILTIN_EXCLUDES, on_builtin_error),
+        _build_patterns(excludes, on_exclude_error),
     )
 
 
-def _ignored(root: Path, path: Path, *specs: GitIgnoreSpec, is_dir: bool) -> bool:
-    """Match `path`, relative to `root`, against each spec.
+def _ignored(root: Path, path: Path, *pattern_sets: "IgnorePatterns", is_dir: bool) -> bool:
+    """Match `path`, relative to `root`, against each root-anchored pattern set.
 
-    Scoped to the two static, root-anchored specs (`builtin_spec` and `exclude_spec`) — nested
-    `.gitignore` patterns are matched separately, directory-relative, by
-    `_FileSelector._is_gitignore_excluded`, which is not one of these `*specs` and is checked
+    Scoped to the two static, root-anchored sets (`builtin_patterns` and `exclude_patterns`) —
+    nested `.gitignore` patterns are matched separately, directory-relative, by
+    `_FileSelector._is_gitignore_excluded`, which is not one of these sets and is checked
     independently at each call site.
+
+    Each set is matched with `_match_patterns`' full per-directory semantics (last matching
+    line wins, directory-only eligibility, unanchored patterns truncated to the candidate's
+    last segment) rather than pathspec's aggregate `match_file`. The unanchored truncation
+    leans on the same ancestor-walk structure the gitignore stack uses: every intermediate
+    directory gets its own probe — via `_has_excluded_ancestor` for files and the walk's own
+    pruning for directories — so "matches a component at any depth" is applied one level at a
+    time instead of double-applied through the aggregate regex.
 
     `is_dir` selects which single form the path is matched in: git classifies a path once, as
     either a file or a directory, and then applies last-matching-line-wins within that one
-    classification. Probing both forms and OR-ing them (as an earlier version did) breaks that:
-    an ignore matching the directory form survives a negation that only matches the file form,
-    so `["cache", "!cache/"]` wrongly excluded `cache/`, and a directory-only pattern like
-    `b.py/` wrongly matched the regular file `b.py`. Callers always already know which kind of
-    path they hold, so this is a parameter rather than another `stat` call.
+    classification. A negation verdict in one set cannot resurrect a path another set ignores —
+    `any` below keeps the builtin excludes authoritative even against a configured `!` pattern,
+    matching the aggregate-era behavior.
     """
     relative = path.relative_to(root).as_posix()
-    probe = f"{relative}/" if is_dir else relative
-    return any(spec.match_file(probe) for spec in specs)
+    return any(_match_patterns(patterns, relative, is_dir=is_dir) for patterns in pattern_sets)
 
 
 class IgnorePattern(NamedTuple):
@@ -450,8 +492,8 @@ def _build_patterns(lines: tuple[str, ...], on_error: Callable[[str], None]) -> 
 @dataclass
 class _FileSelector:
     root: Path
-    builtin_spec: GitIgnoreSpec
-    exclude_spec: GitIgnoreSpec
+    builtin_patterns: IgnorePatterns
+    exclude_patterns: IgnorePatterns
     errors: list[LintError]
     use_gitignore: bool = True
     selected: dict[Path, Path] = field(default_factory=lambda: dict[Path, Path]())
@@ -494,7 +536,9 @@ class _FileSelector:
         """
         return resolved != self.root and (
             self._has_excluded_ancestor(resolved.parent)
-            or _ignored(self.root, resolved, self.builtin_spec, self.exclude_spec, is_dir=is_dir)
+            or _ignored(
+                self.root, resolved, self.builtin_patterns, self.exclude_patterns, is_dir=is_dir
+            )
             or self._is_gitignore_excluded(resolved.parent, resolved.name, is_dir=is_dir)
         )
 
@@ -631,7 +675,7 @@ class _FileSelector:
 
     def _has_excluded_ancestor(self, directory: Path) -> bool:
         """Whether any directory between root and `directory` (inclusive) is itself excluded by
-        `builtin_spec` or `exclude_spec`.
+        `builtin_patterns` or `exclude_patterns`.
 
         The gitignore side of this already exists, inside `_is_gitignore_excluded`, for exactly
         the reason spelled out there: git attributes the exclusion to the directory, so a
@@ -654,7 +698,7 @@ class _FileSelector:
         if directory in self.excluded_ancestor_cache:
             return self.excluded_ancestor_cache[directory]
         excluded = any(
-            _ignored(self.root, ancestor, self.builtin_spec, self.exclude_spec, is_dir=True)
+            _ignored(self.root, ancestor, self.builtin_patterns, self.exclude_patterns, is_dir=True)
             for ancestor in self._ancestor_chain(directory)
         )
         self.excluded_ancestor_cache[directory] = excluded
@@ -796,7 +840,7 @@ class _FileSelector:
         """Return child directory names to descend into, recording why each was dropped.
 
         Drops symlinked directories (never traversed) and directories already excluded by
-        `builtin_spec`, `exclude_spec`, or the gitignore stack accumulated from root down to
+        `builtin_patterns`, `exclude_patterns`, or the gitignore stack accumulated from root down to
         `current_path` (the parent) — deliberately *not* including the child's own, not-yet-read
         `.gitignore`. Checking a child against its own nested `.gitignore` before deciding
         whether to descend into it would let a negation inside that file "resurrect" files
@@ -805,7 +849,7 @@ class _FileSelector:
         directory here means `_own_gitignore_lines`/`_is_gitignore_excluded` are simply
         never called for it, so its nested `.gitignore` (if any) is never read at all.
         `_is_gitignore_excluded` already folds in `use_gitignore` (it short-circuits to `False`
-        when disabled), and `builtin_spec`/`exclude_spec` inside `_ignored` apply
+        when disabled), and `builtin_patterns`/`exclude_patterns` inside `_ignored` apply
         unconditionally, matching how file-level ignoring already treats those two specs.
 
         Exclusion is checked before the symlink stat, not after: a symlinked directory that is
@@ -837,7 +881,7 @@ class _FileSelector:
                 continue
             child = current_path / item
             if _ignored(
-                self.root, child, self.builtin_spec, self.exclude_spec, is_dir=True
+                self.root, child, self.builtin_patterns, self.exclude_patterns, is_dir=True
             ) or self._is_gitignore_excluded(current_path, item, is_dir=True):
                 self.files_skipped += 1
                 continue
@@ -894,12 +938,12 @@ def discover_files(
 ) -> DiscoveryResult:
     """Discover qualifying files, or raise for strict explicit path failures."""
     root = root.expanduser().resolve()
-    builtin_spec, exclude_spec = _patterns(excludes)
+    builtin_patterns, exclude_patterns = _patterns(excludes)
     requested = explicit or tuple(root / item for item in include)
     selector = _FileSelector(
         root,
-        builtin_spec,
-        exclude_spec,
+        builtin_patterns,
+        exclude_patterns,
         [],
         use_gitignore=use_gitignore,
     )

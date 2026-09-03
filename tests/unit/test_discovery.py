@@ -762,11 +762,15 @@ def test_explicit_directory_below_an_excluded_directory_cannot_be_resurrected(
     assert result.files == ()
 
 
+def _fail_build(message: str) -> None:
+    raise AssertionError(f"builtin excludes failed to compile: {message}")
+
+
 def _make_selector(root: Path, *, use_gitignore: bool = True) -> discovery._FileSelector:
     return discovery._FileSelector(
         root=root,
-        builtin_spec=discovery.GitIgnoreSpec.from_lines(discovery.BUILTIN_EXCLUDES),
-        exclude_spec=discovery.GitIgnoreSpec.from_lines(()),
+        builtin_patterns=discovery._build_patterns(discovery.BUILTIN_EXCLUDES, _fail_build),
+        exclude_patterns=(),
         errors=[],
         use_gitignore=use_gitignore,
     )
