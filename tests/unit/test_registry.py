@@ -1,4 +1,7 @@
+import pytest
+
 from house_lint import registry, rule_catalog
+from house_lint.analysis import CandidateBudgetExceeded
 from house_lint.config import HSL102Options, LintConfig, selected_detector_inputs
 from house_lint.registry import detect_candidates
 from house_lint.source import SourceFile
@@ -30,3 +33,13 @@ def test_dispatch_receives_selected_typed_options_without_lint_config(write_samp
 
 def test_detectors_cover_every_ordinary_rule() -> None:
     assert set(registry._DETECTORS) == set(rule_catalog.ORDINARY_RULES)
+
+
+def test_budget_overflow_carries_candidates_from_earlier_detectors(write_sample) -> None:
+    path = write_sample("# ======\ndef example():\n    import first\n    import second\n")
+    source = SourceFile(path, path.parent)
+
+    with pytest.raises(CandidateBudgetExceeded) as exc_info:
+        detect_candidates(source, (("HSL001", None), ("HSL002", None)), limit=2)
+
+    assert [candidate.rule_id for candidate in exc_info.value.candidates] == ["HSL001", "HSL002"]
