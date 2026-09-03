@@ -52,7 +52,9 @@ def detect(
     for line, comment in source.comments.items():
         # Probed both ways: with the leading `#` run stripped (a `# ----` divider drawn after
         # the comment marker) and with it kept (`########`, `#### x ####` — dividers drawn
-        # *with* the marker, which lstrip('#') would otherwise erase entirely).
+        # *with* the marker, which lstrip('#') would otherwise erase entirely). The full cross
+        # product is deliberate redundancy: each divider family only ever matches through one
+        # of the two probe forms, and the extra combinations cannot match anything new.
         body = comment.lstrip("#").strip()
         stripped = comment.strip()
         if any(

@@ -159,7 +159,8 @@ def statement_owner_for_line(
     owner = max(candidates, key=lambda statement: (statement.lineno, statement.col_offset))
     if isinstance(owner, (ast.Try, ast.TryStar)):
         # Innermost-statement resolution landed on the try itself, so no body statement covers
-        # this line — the only handler-span lines that can reach here are except-clause lines.
+        # this line. An except-clause line falls inside its handler's span and refines to it;
+        # the try's other header lines (`else:`, `finally:`) match no handler and keep the try.
         for handler in owner.handlers:
             if handler.lineno <= line <= (handler.end_lineno or handler.lineno):
                 return handler

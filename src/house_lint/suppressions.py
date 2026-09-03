@@ -219,6 +219,10 @@ def _statement_start_line(statement: ast.stmt) -> int:
     use the decorated start: otherwise an `ignore-next` above the decorator is rejected as
     misplaced (the decorator line defeats the blanks check), while an `ignore-file` sandwiched
     between decorator and `def` slips past the before-the-first-statement rule.
+
+    Placement-only, deliberately: the `StatementKey` an accepted `ignore-next` resolves to still
+    comes from `statement_key` (analysis.py), whose span starts at the undecorated `lineno` —
+    the same span candidates are keyed by, so ownership matching is untouched.
     """
     if (
         isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
