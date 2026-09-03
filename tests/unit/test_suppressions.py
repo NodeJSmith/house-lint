@@ -276,3 +276,19 @@ def test_misplaced_and_unconsumed_pragmas_are_diagnostics(write_sample) -> None:
 
     assert len(result.findings) == 4
     assert all(finding.rule_id == "HSL900" for finding in result.findings)
+
+
+def test_ignore_next_still_owns_across_a_form_feed_earlier_in_the_file(write_sample) -> None:
+    source = _source(
+        write_sample,
+        'text = "a\fb"\n'
+        "def load() -> None:\n"
+        "    # house-lint: ignore-next[HSL002] - lazy by design\n"
+        "    import module\n",
+    )
+    candidates = tuple(detect_lazy_imports(source, None))
+
+    result = apply_suppressions(source, candidates, {"HSL002", "HSL900"})
+
+    assert result.findings == ()
+    assert result.suppressed_count == 1

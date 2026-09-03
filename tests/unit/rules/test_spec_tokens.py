@@ -224,3 +224,14 @@ def test_builtin_task_family_detects_task_tokens_but_not_time_strings(write_samp
     findings = detect(SourceFile(path, path.parent), options)
 
     assert [finding.message for finding in findings] == ["spec token T05 in comment"]
+
+
+def test_comment_tokens_after_a_form_feed_inside_a_string(write_sample) -> None:
+    path = write_sample('text = "a\fb"\n# tracks FR1\n')
+    options = HSL101Options((TokenFamily(prefixes=("FR",), scopes=("comments",)),))
+
+    findings = detect(SourceFile(path, path.parent), options)
+
+    assert [(finding.line, finding.message) for finding in findings] == [
+        (2, "spec token FR1 in comment")
+    ]
