@@ -5,8 +5,11 @@ Use suppressions only for a known exception to the project's house style. Each p
 ```python
 value()  # house-lint: ignore[HSL001,HSL004] - generated compatibility wrapper
 
-# house-lint: ignore-next[HSL002] - avoids a circular import
-from package import value
+def build() -> object:
+    # house-lint: ignore-next[HSL002] - avoids a circular import
+    from package import value
+
+    return value
 
 # house-lint: ignore-file[HSL001,HSL102] - generated compatibility module
 ```
