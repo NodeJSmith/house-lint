@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Protocol, cast
 
-from house_lint.analysis import CandidateFinding
+from house_lint.analysis import CandidateBudgetExceeded, CandidateFinding
 from house_lint.config import (
     DetectorInput,
     DetectorOptions,
@@ -83,9 +83,15 @@ def detect_candidates(
         if rule_id not in _DETECTORS:
             continue
         detector_limit = None if limit is None else limit - len(candidates)
-        candidates.extend(_DETECTORS[rule_id](source, options, limit=detector_limit))
-        if limit is not None and len(candidates) > limit:
-            break
+        try:
+            candidates.extend(_DETECTORS[rule_id](source, options, limit=detector_limit))
+        except CandidateBudgetExceeded as exceeded:
+            # The detector's exception carries only its own partial prefix. Prepend what earlier
+            # inputs in this call already produced, so a multi-input caller recovering from the
+            # overflow loses nothing it had collected.
+            raise CandidateBudgetExceeded(
+                exceeded.path, candidates=tuple(candidates) + exceeded.candidates
+            ) from exceeded
     return candidates
 
 
