@@ -248,6 +248,53 @@ SCENARIOS = (
 )
 
 
+# Configured `[tool.house-lint] exclude` documents git semantics too, so its patterns must mean
+# exactly what the same lines would mean in a root `.gitignore`. Root-anchored rows only: an
+# exclude list has no owning subdirectory, so nested-`.gitignore` rows have no equivalent here.
+EXCLUDE_SCENARIOS = (
+    Scenario(
+        "whitelist idiom keeps nested Python files",
+        {"": ["*", "!*/", "!*.py"]},
+        ("src/a.py", "src/sub/b.py", "src/sub/deep/c.py"),
+    ),
+    Scenario(
+        "directory-form negation cancels an earlier unanchored ignore",
+        {"": ["cache", "!cache/"]},
+        ("src/a.py", "src/cache/c.py"),
+    ),
+    Scenario(
+        "negation cannot resurrect a file from an ignored child directory",
+        {"": ["gen/", "!*.py"]},
+        ("src/a.py", "src/gen/g.py"),
+    ),
+    Scenario(
+        "negation beside its own directory exclusion cannot resurrect",
+        {"": ["src/generated/", "!src/generated/foo.py"]},
+        ("src/generated/foo.py", "src/other.py"),
+    ),
+    Scenario(
+        "directory-only pattern does not match a same-named .py file",
+        {"": ["b.py/"]},
+        ("src/a.py", "src/b.py"),
+    ),
+    Scenario(
+        "contents glob allows a negation underneath",
+        {"": ["src/gen/**", "!src/gen/keep.py"]},
+        ("src/gen/keep.py", "src/gen/drop.py"),
+    ),
+    Scenario(
+        "trailing whitespace is insignificant unless backslash-escaped",
+        {"": ["a.py "]},
+        ("src/a.py", "src/b.py"),
+    ),
+    Scenario(
+        "unanchored pattern matches at any depth",
+        {"": ["a.py"]},
+        ("src/a.py", "src/sub/a.py", "src/b.py"),
+    ),
+)
+
+
 def _build(root: Path, scenario: Scenario) -> None:
     for relative in scenario.files:
         path = root / relative
@@ -349,6 +396,49 @@ def test_explicit_directory_arguments_match_git_check_ignore(
     init_repository(tmp_path)
 
     result = discover_files(tmp_path, explicit=tuple(tmp_path / item for item in scenario.include))
+    house_lint_skipped = _house_lint_skipped(result, tmp_path, scenario.files)
+
+    assert result.errors == ()
+    assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
+
+
+@pytest.mark.parametrize("scenario", EXCLUDE_SCENARIOS, ids=lambda item: item.name)
+def test_configured_excludes_match_git_check_ignore(scenario: Scenario, tmp_path: Path) -> None:
+    """The scenario's root patterns fed through `excludes` instead of a `.gitignore` file.
+
+    git still reads them from the root `.gitignore` `_build` writes; house-lint reads them from
+    the `excludes` argument with `use_gitignore=False`, so the two inputs describe the same
+    patterns through the two different front doors that both document git semantics.
+    """
+    _build(tmp_path, scenario)
+    init_repository(tmp_path)
+
+    result = discover_files(
+        tmp_path,
+        include=scenario.include,
+        excludes=tuple(scenario.ignores[""]),
+        use_gitignore=False,
+    )
+    house_lint_skipped = _house_lint_skipped(result, tmp_path, scenario.files)
+
+    assert result.errors == ()
+    assert house_lint_skipped == git_ignored(tmp_path, scenario.files)
+
+
+@pytest.mark.parametrize("scenario", EXCLUDE_SCENARIOS, ids=lambda item: item.name)
+def test_configured_excludes_match_git_for_explicit_paths(
+    scenario: Scenario, tmp_path: Path
+) -> None:
+    """The exclude table again, reaching each file directly — no walk-time pruning to help."""
+    _build(tmp_path, scenario)
+    init_repository(tmp_path)
+
+    result = discover_files(
+        tmp_path,
+        explicit=tuple(tmp_path / item for item in scenario.files),
+        excludes=tuple(scenario.ignores[""]),
+        use_gitignore=False,
+    )
     house_lint_skipped = _house_lint_skipped(result, tmp_path, scenario.files)
 
     assert result.errors == ()
