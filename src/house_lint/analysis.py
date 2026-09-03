@@ -74,7 +74,13 @@ def parsed_tree(source: SourceFile) -> ast.Module | None:
     return source.tree
 
 
-def statement_key(statement: ast.stmt) -> StatementKey:
+def statement_key(statement: ast.stmt | ast.excepthandler) -> StatementKey:
+    """Span key for an owner node.
+
+    Accepts `ast.excepthandler` alongside statements: an except clause is not an `ast.stmt`,
+    but HSL103 keys its candidates by handler so one pragma cannot silence sibling handlers of
+    the same `try` — see `exception_names.detect` and `statement_owner_for_line`'s refinement.
+    """
     return StatementKey(
         statement.lineno,
         statement.col_offset + 1,
@@ -106,7 +112,7 @@ def candidate_for_line(
     rule_id: str,
     message: str,
     line: int,
-    owner: ast.stmt | None = None,
+    owner: ast.stmt | ast.excepthandler | None = None,
 ) -> CandidateFinding:
     """Build a line candidate, retaining no-owner provenance when appropriate."""
     statement_owner = statement_key(owner) if owner is not None else None
@@ -123,11 +129,18 @@ def candidate_for_line(
     )
 
 
-def statement_owner_for_line(source: SourceFile, line: int, column: int) -> ast.stmt | None:
+def statement_owner_for_line(
+    source: SourceFile, line: int, column: int
+) -> ast.stmt | ast.excepthandler | None:
     """Return the statement a comment or docstring line is attached to.
 
     Trailing comments (code precedes them on the line) resolve to their innermost enclosing
     statement; standalone comments resolve to whichever statement starts or ends on that line.
+
+    A line inside a `try`/`try*` statement's *except clause* — the `except ... as name:` line(s),
+    which no body statement covers — refines to the `ast.excepthandler` itself. HSL103 keys its
+    candidates by handler so one suppression cannot silence sibling handlers; a trailing pragma
+    on the except line must resolve to that same key to match them.
     """
     if source.lines[line - 1][:column].strip():
         candidates = [
@@ -143,10 +156,19 @@ def statement_owner_for_line(source: SourceFile, line: int, column: int) -> ast.
         ]
     if not candidates:
         return None
-    return max(candidates, key=lambda statement: (statement.lineno, statement.col_offset))
+    owner = max(candidates, key=lambda statement: (statement.lineno, statement.col_offset))
+    if isinstance(owner, (ast.Try, ast.TryStar)):
+        # Innermost-statement resolution landed on the try itself, so no body statement covers
+        # this line — the only handler-span lines that can reach here are except-clause lines.
+        for handler in owner.handlers:
+            if handler.lineno <= line <= (handler.end_lineno or handler.lineno):
+                return handler
+    return owner
 
 
-def comment_owner_for_line(source: SourceFile, line: int, comment: str) -> ast.stmt | None:
+def comment_owner_for_line(
+    source: SourceFile, line: int, comment: str
+) -> ast.stmt | ast.excepthandler | None:
     """Return the statement syntactically attached to this comment token."""
     return statement_owner_for_line(source, line, source.lines[line - 1].index(comment))
 

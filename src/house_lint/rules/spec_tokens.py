@@ -92,7 +92,9 @@ def _content_candidates(
         )
 
 
-def _owner_for_line(source: SourceFile, line: int, scope: str, text: str) -> ast.stmt | None:
+def _owner_for_line(
+    source: SourceFile, line: int, scope: str, text: str
+) -> ast.stmt | ast.excepthandler | None:
     if scope == "comment":
         return comment_owner_for_line(source, line, text)
     return docstring_owner_for_line(source, line)

@@ -31,10 +31,12 @@ def test_detects_disallowed_multiple_and_nested_exception_bindings(write_sample)
         (14, "exception handler bound to 'e'"),
     ]
     assert all(finding.source_kind is SourceKind.STATEMENT for finding in findings)
+    # Owned by each handler's own span, not the enclosing try's -- sibling handlers must not
+    # share an owner key, or one suppression silences all of them.
     assert [(finding.owner.start_line, finding.owner.end_line) for finding in findings] == [
-        (1, 4),
-        (5, 10),
-        (12, 15),
+        (3, 4),
+        (9, 10),
+        (14, 15),
     ]
 
 
