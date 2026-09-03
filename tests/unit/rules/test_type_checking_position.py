@@ -99,3 +99,25 @@ def test_limits_materialized_candidates_when_requested(write_sample) -> None:
 
     with pytest.raises(CandidateBudgetExceeded):
         detect(SourceFile(path, path.parent), None, limit=MAX_CANDIDATES_PER_FILE)
+
+
+def test_detects_guards_through_typing_module_and_flag_aliases(write_sample) -> None:
+    path = write_sample(
+        "import typing as t\n"
+        "from typing import TYPE_CHECKING as TC\n"
+        "if t.TYPE_CHECKING:\n"
+        "    pass\n"
+        "if TC:\n"
+        "    pass\n"
+        "import os\n"
+    )
+
+    findings = detect(SourceFile(path, path.parent), None)
+
+    assert [finding.line for finding in findings] == [3, 5]
+
+
+def test_ignores_type_checking_alias_from_relative_typing_import(write_sample) -> None:
+    path = write_sample("from .typing import TYPE_CHECKING as TC\nif TC:\n    pass\nimport os\n")
+
+    assert detect(SourceFile(path, path.parent), None) == []

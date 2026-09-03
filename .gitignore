@@ -1,3 +1,4 @@
 __pycache__/
 *.py[cod]
 .house-lint-cache/
+.claude/agent-memory/

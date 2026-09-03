@@ -28,7 +28,9 @@ def detect(
                     "HSL103",
                     f"exception handler bound to '{handler.name}'",
                     handler.lineno,
-                    try_statement,
+                    # The handler, not the enclosing try: siblings must not share an owner key,
+                    # or one trailing ignore[HSL103] silences every handler of the statement.
+                    handler,
                 ),
                 source,
                 limit,

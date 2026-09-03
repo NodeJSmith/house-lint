@@ -203,11 +203,33 @@ def _next_owner(source: SourceFile, token: Token) -> StatementKey | None:
         return None
     for suite in _suites(source.tree):
         for statement in suite:
-            if statement.lineno <= line or statement.col_offset != column:
+            start = _statement_start_line(statement)
+            if start <= line or statement.col_offset != column:
                 continue
-            if _comments_or_blanks_only(source, line + 1, statement.lineno - 1):
+            if _comments_or_blanks_only(source, line + 1, start - 1):
                 return statement_key(statement)
     return None
+
+
+def _statement_start_line(statement: ast.stmt) -> int:
+    """The statement's first physical line, counting its decorators.
+
+    `FunctionDef`/`ClassDef.lineno` is the `def`/`class` line, but the statement's source begins
+    at its first decorator. Placement checks comparing against "where the statement starts" must
+    use the decorated start: otherwise an `ignore-next` above the decorator is rejected as
+    misplaced (the decorator line defeats the blanks check), while an `ignore-file` sandwiched
+    between decorator and `def` slips past the before-the-first-statement rule.
+
+    Placement-only, deliberately: the `StatementKey` an accepted `ignore-next` resolves to still
+    comes from `statement_key` (analysis.py), whose span starts at the undecorated `lineno` —
+    the same span candidates are keyed by, so ownership matching is untouched.
+    """
+    if (
+        isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and statement.decorator_list
+    ):
+        return min(decorator.lineno for decorator in statement.decorator_list)
+    return statement.lineno
 
 
 def _suites(tree: ast.Module | None) -> tuple[tuple[ast.stmt, ...], ...]:
@@ -261,7 +283,7 @@ def _is_file_prologue(source: SourceFile, token: Token) -> bool:
     for index, statement in enumerate(source.tree.body):
         if _prologue_statement(statement, is_module_docstring=index == 0):
             continue
-        return token.start[0] < statement.lineno
+        return token.start[0] < _statement_start_line(statement)
     return True
 
 

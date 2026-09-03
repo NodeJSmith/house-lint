@@ -5,8 +5,13 @@ Use suppressions only for a known exception to the project's house style. Each p
 ```python
 value()  # house-lint: ignore[HSL001,HSL004] - generated compatibility wrapper
 
-# house-lint: ignore-next[HSL002] - avoids a circular import
-from package import value
+
+def build() -> object:
+    # house-lint: ignore-next[HSL002] - avoids a circular import
+    from package import value
+
+    return value
+
 
 # house-lint: ignore-file[HSL001,HSL102] - generated compatibility module
 ```
@@ -18,6 +23,8 @@ The prefix is exactly `house-lint:`. IDs are canonical comma-separated IDs; whit
 - `ignore[...]` is trailing within an AST statement span and owns findings from that statement.
 - `ignore-next[...]` is alone on a comment-only line and owns the next statement in the same lexical suite. Blank lines and ordinary comments may intervene; a suite boundary may not.
 - `ignore-file[...]` appears before the first statement other than a module docstring or `__future__` import and owns listed findings throughout the file.
+- An `except … as name:` clause is its own owner, distinct from sibling handlers of the same `try`: a trailing `ignore[HSL103]` on one handler suppresses that handler alone.
+- A decorated `def`/`class` starts at its first decorator line. `ignore-next` goes above the decorators; a pragma between a decorator and its `def` is misplaced, and an `ignore-file` there is no longer in the file prologue.
 - A statement pragma consumes every owned finding for each listed rule. A file pragma consumes every listed rule's findings in its file.
 - File-length `HSL102` findings have no statement owner and require `ignore-file[HSL102]`.
 

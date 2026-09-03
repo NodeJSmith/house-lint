@@ -131,3 +131,22 @@ def test_limits_materialized_candidates_when_requested(write_sample) -> None:
 
     with pytest.raises(CandidateBudgetExceeded):
         detect(SourceFile(path, path.parent), None, limit=MAX_CANDIDATES_PER_FILE)
+
+
+def test_coding_cookies_and_modelines_are_not_dividers(write_sample) -> None:
+    path = write_sample(
+        "#!/usr/bin/env python\n# -*- coding: utf-8 -*-\n# -*- mode: python -*-\nvalue = 1\n"
+    )
+
+    assert detect(SourceFile(path, path.parent), None) == []
+
+
+def test_all_hash_divider_rows_are_flagged(write_sample) -> None:
+    path = write_sample("########\nvalue = 1\n#### section ####\nother = 2\n")
+
+    findings = detect(SourceFile(path, path.parent), None)
+
+    assert [(finding.line, finding.message) for finding in findings] == [
+        (1, "section-divider comment"),
+        (3, "section-divider comment"),
+    ]

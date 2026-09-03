@@ -208,3 +208,13 @@ def test_json_reporter_escapes_non_ascii_while_text_reporter_keeps_it_raw(tmp_pa
     assert "café" not in rendered_json
     assert "\\u00e9" in rendered_json
     assert "café" in render_text(result, zero_file_note=None)
+
+
+def test_zero_file_guidance_names_a_custom_config_file(tmp_path: Path) -> None:
+    config = tmp_path / "custom.toml"
+    result = ScanResult(tmp_path, config, ("HSL001", "HSL900"), 0, 0)
+
+    guidance = zero_file_guidance(result, include=DEFAULT_INCLUDE, explicit_paths=False)
+
+    assert "custom.toml's [tool.house-lint] table" in guidance
+    assert "pyproject.toml" not in guidance

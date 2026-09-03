@@ -238,8 +238,20 @@ class SourceFile:
 
     @property
     def lines(self) -> list[str]:
+        """`text` split on the tokenizer's line model: `\\n` only.
+
+        Not `str.splitlines()`, which also splits on `\\f`, `\\v`, `\\x1c`-`\\x1e`, `\\x85`,
+        `\\u2028`, and `\\u2029` — characters the tokenizer and AST do not count as line breaks.
+        Every consumer indexes this list with tokenizer/AST line numbers, so one such character
+        anywhere in the source (legal in a string literal, or as a bare `\\f` page break) would
+        shift every later index. `load()`'s universal-newline decode has already normalized
+        `\\r\\n` and `\\r`, so splitting on `\\n` matches the tokenizer exactly.
+        """
         if self._lines is None:
-            self._lines = self.text.splitlines()
+            lines = self.text.split("\n")
+            if lines and lines[-1] == "":
+                lines.pop()
+            self._lines = lines
         return self._lines
 
     @property

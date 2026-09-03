@@ -8,7 +8,7 @@ Finding messages are human-readable display text and may change. Machine consume
 | --- | --- | --- |
 | `HSL001` | Default | Flags divider comments and fixed built-in filler phrases in comments/docstrings. Ordinary string literals are excluded. |
 | `HSL002` | Default | Flags `import` and `from … import` inside function, async-function, method, and nested-function bodies. |
-| `HSL003` | Default | Flags a top-level `if TYPE_CHECKING:` or `if typing.TYPE_CHECKING:` followed later by a top-level import. |
+| `HSL003` | Default | Flags a top-level `if TYPE_CHECKING:` or `if typing.TYPE_CHECKING:` — aliased imports of either name included — followed later by a top-level import. |
 | `HSL004` | Default | Flags uppercase module constants after the first top-level class/function. Dunder names and constants referencing an earlier top-level binding are exempt. |
 | `HSL101` | Opt-in | Flags built-in and/or configured token families in comments, docstrings, and/or filename segments. Ordinary strings are excluded. |
 | `HSL102` | Opt-in | Flags a file when `len(text.splitlines())` is strictly greater than `max_lines`. |
@@ -27,7 +27,7 @@ Move imports to module scope where possible. If a circular dependency requires a
 
 ### HSL003 — TYPE_CHECKING position
 
-Put top-level type-only imports after every regular module import. Nested guards are outside this rule's scope.
+Put top-level type-only imports after every regular module import. Nested guards are outside this rule's scope. Aliased spellings count as the same guard: `import typing as t` with `if t.TYPE_CHECKING:`, and `from typing import TYPE_CHECKING as TC` with `if TC:`, are both recognized.
 
 ### HSL004 — Constants position
 

@@ -215,3 +215,19 @@ def test_nested_source_error_uses_root_relative_posix_path(tmp_path):
 
     assert source.error is not None
     assert source.error.path == "pkg/broken.py"
+
+
+def test_lines_follow_the_tokenizer_line_model_not_splitlines(write_sample):
+    # str.splitlines() splits on \f, \v, U+2028 and friends, which the tokenizer and AST
+    # do not count as line breaks -- every consumer indexes `lines` with tokenizer/AST
+    # line numbers, so the two models must agree on any legal Python source.
+    for content, expected in (
+        ('x = "a\fb"\n# after\n', ['x = "a\fb"', "# after"]),
+        ("x = 1\n\fy = 2\n# after\n", ["x = 1", "\fy = 2", "# after"]),
+        ('x = "a\u2028b"\n# after\n', ['x = "a\u2028b"', "# after"]),
+    ):
+        path = write_sample(content)
+        source = SourceFile(path, path.parent)
+
+        assert source.error is None
+        assert source.lines == expected

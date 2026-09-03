@@ -1,5 +1,6 @@
 from house_lint.analysis import CandidateFinding, SourceKind, statement_key
-from house_lint.config import HSL101Options, TokenFamily
+from house_lint.config import HSL101Options, HSL103Options, TokenFamily
+from house_lint.rules.exception_names import detect as detect_exception_names
 from house_lint.rules.lazy_imports import detect as detect_lazy_imports
 from house_lint.rules.llm_cruft import detect as detect_llm_cruft
 from house_lint.rules.spec_tokens import detect as detect_spec_tokens
@@ -276,3 +277,71 @@ def test_misplaced_and_unconsumed_pragmas_are_diagnostics(write_sample) -> None:
 
     assert len(result.findings) == 4
     assert all(finding.rule_id == "HSL900" for finding in result.findings)
+
+
+def test_ignore_next_still_owns_across_a_form_feed_earlier_in_the_file(write_sample) -> None:
+    source = _source(
+        write_sample,
+        'text = "a\fb"\n'
+        "def load() -> None:\n"
+        "    # house-lint: ignore-next[HSL002] - lazy by design\n"
+        "    import module\n",
+    )
+    candidates = tuple(detect_lazy_imports(source, None))
+
+    result = apply_suppressions(source, candidates, {"HSL002", "HSL900"})
+
+    assert result.findings == ()
+    assert result.suppressed_count == 1
+
+
+def test_trailing_ignore_on_one_handler_leaves_sibling_handlers_visible(write_sample) -> None:
+    source = _source(
+        write_sample,
+        "try:\n"
+        "    value = 1\n"
+        "except ValueError as first:\n"
+        "    pass\n"
+        "except KeyError as second:  # house-lint: ignore[HSL103] - vetted name\n"
+        "    pass\n",
+    )
+    candidates = tuple(detect_exception_names(source, HSL103Options()))
+    assert len(candidates) == 2
+
+    result = apply_suppressions(source, candidates, {"HSL103", "HSL900"})
+
+    assert [(finding.rule_id, finding.line) for finding in result.findings] == [("HSL103", 3)]
+    assert result.suppressed_count == 1
+
+
+def test_ignore_next_above_a_decorator_owns_the_decorated_statement(write_sample) -> None:
+    source = _source(
+        write_sample,
+        "# house-lint: ignore-next[HSL001] - vetted shape\n"
+        "@staticmethod\n"
+        "def load() -> None:\n"
+        "    pass\n",
+    )
+
+    result = apply_suppressions(source, (_candidate(source, "HSL001", 3),), {"HSL001", "HSL900"})
+
+    assert result.findings == ()
+    assert result.suppressed_count == 1
+
+
+def test_ignore_file_between_decorator_and_def_is_misplaced(write_sample) -> None:
+    source = _source(
+        write_sample,
+        "@staticmethod\n"
+        "# house-lint: ignore-file[HSL001] - vetted shape\n"
+        "def load() -> None:\n"
+        "    pass\n",
+    )
+
+    result = apply_suppressions(source, (_candidate(source, "HSL001", 3),), {"HSL001", "HSL900"})
+
+    assert result.suppressed_count == 0
+    assert any(
+        finding.rule_id == "HSL900" and "misplaced ignore-file" in finding.message
+        for finding in result.findings
+    )
