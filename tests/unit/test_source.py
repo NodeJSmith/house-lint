@@ -223,7 +223,7 @@ def test_lines_follow_the_tokenizer_line_model_not_splitlines(write_sample):
     # line numbers, so the two models must agree on any legal Python source.
     for content, expected in (
         ('x = "a\fb"\n# after\n', ['x = "a\fb"', "# after"]),
-        ("x = 1\n\f\n# after\n", ["x = 1", "\f", "# after"]),
+        ("x = 1\n\fy = 2\n# after\n", ["x = 1", "\fy = 2", "# after"]),
         ('x = "a\u2028b"\n# after\n', ['x = "a\u2028b"', "# after"]),
     ):
         path = write_sample(content)
