@@ -1010,8 +1010,13 @@ def resolve_project(
                 return ProjectResolution(candidate, recognized[0], recognized[1:])
             if (candidate / PYPROJECT_CONFIG_NAME).is_file():
                 found_marker = found_marker or candidate
+            # Stop at the first repo boundary crossed, after this directory's own recognized-config
+            # check above has already run -- otherwise an outer, unrelated ancestor's config could
+            # silently apply to a nested repo that has none of its own. The recognized-config check
+            # must keep running before this one on every iteration for that guarantee to hold.
             if (candidate / ".git").exists():
                 found_marker = found_marker or candidate
+                break
         resolved_root = found_marker or start
     if config is not None:
         resolved_config = config.expanduser().resolve()
