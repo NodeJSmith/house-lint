@@ -17,7 +17,7 @@ from house_lint.analysis import (
     statement_owner_for_line,
 )
 from house_lint.results import Finding
-from house_lint.rule_catalog import is_known_rule
+from house_lint.rule_catalog import ALWAYS_ON_RULE_ID, is_known_rule
 from house_lint.source import SourceFile, Token
 
 _ID = re.compile(r"HSL[0-9]{3}\Z")
@@ -165,8 +165,8 @@ def _parse_pragma(source: SourceFile, token: Token) -> tuple[_Pragma | None, str
         return None, "malformed suppression rule IDs"
     if len(set(ids)) != len(ids):
         return None, "duplicate suppression rule IDs"
-    if "HSL900" in ids:
-        return None, "HSL900 cannot be suppressed"
+    if ALWAYS_ON_RULE_ID in ids:
+        return None, f"{ALWAYS_ON_RULE_ID} cannot be suppressed"
     if sum(character.isalnum() for character in reason) < _MIN_REASON_ALNUM_CHARS:
         return None, (
             f"suppression reason must contain at least {_MIN_REASON_ALNUM_CHARS} "
@@ -330,7 +330,7 @@ def _owns(pragma: _Pragma, owner: _Owner, candidate: CandidateFinding) -> bool:
     excludes anything at runtime.
     """
     if isinstance(owner, str):
-        return candidate.rule_id != "HSL900"
+        return candidate.rule_id != ALWAYS_ON_RULE_ID
     if candidate.owner == owner:
         return True
     return (
@@ -358,7 +358,7 @@ def _conflicting_claims(claims: list[_Claim]) -> set[int]:
 def _diagnostic(source: SourceFile, token: Token, message: str) -> CandidateFinding:
     line, column = token.start
     return CandidateFinding(
-        "HSL900",
+        ALWAYS_ON_RULE_ID,
         source.relative_path,
         message,
         line,
