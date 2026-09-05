@@ -21,7 +21,7 @@ The prefix is exactly `house-lint:`. IDs are canonical comma-separated IDs; whit
 ## Ownership
 
 - `ignore[...]` is trailing within an AST statement span and owns findings from that statement.
-- `ignore-next[...]` is alone on a comment-only line and owns the next statement in the same lexical suite. Blank lines and ordinary comments may intervene; a suite boundary may not.
+- `ignore-next[...]` is alone on a comment-only line and owns the next statement in the same lexical suite. Blank lines and ordinary comments may intervene; a suite boundary may not. A finding raised on one of those intervening comment lines — a divider, a filler-phrase comment — has no statement to attach to, but `ignore-next` still owns it: place the pragma above the comment, not the statement, to suppress it. This includes the pragma's own line: if its reason text itself trips a listed rule (a filler phrase named in the reason), `ignore-next` suppresses that too, the same way a trailing `ignore`'s own reason text is already covered by sharing its statement's owner.
 - `ignore-file[...]` appears before the first statement other than a module docstring or `__future__` import and owns listed findings throughout the file.
 - An `except … as name:` clause is its own owner, distinct from sibling handlers of the same `try`: a trailing `ignore[HSL103]` on one handler suppresses that handler alone.
 - A decorated `def`/`class` starts at its first decorator line. `ignore-next` goes above the decorators; a pragma between a decorator and its `def` is misplaced, and an `ignore-file` there is no longer in the file prologue.

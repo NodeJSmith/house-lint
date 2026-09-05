@@ -158,6 +158,62 @@ def test_ignore_next_cannot_leave_its_lexical_suite(write_sample) -> None:
     assert result.suppressed_count == 0
 
 
+def test_ignore_next_suppresses_a_standalone_comment_finding_in_its_gap(write_sample) -> None:
+    source = _source(
+        write_sample,
+        "# house-lint: ignore-next[HSL001] - decorative divider\n# ------\nvalue = 1\n",
+    )
+    candidates = tuple(detect_llm_cruft(source, None))
+
+    result = apply_suppressions(source, candidates, {"HSL001", "HSL900"})
+
+    assert result.findings == ()
+    assert result.suppressed_count == 1
+
+
+def test_ignore_next_does_not_reach_a_standalone_comment_above_the_pragma(write_sample) -> None:
+    source = _source(
+        write_sample,
+        "# ------\n# house-lint: ignore-next[HSL001] - decorative divider\nvalue = 1\n",
+    )
+    candidates = tuple(detect_llm_cruft(source, None))
+
+    result = apply_suppressions(source, candidates, {"HSL001", "HSL900"})
+
+    assert [finding.rule_id for finding in result.findings] == ["HSL001", "HSL900"]
+    assert result.suppressed_count == 0
+
+
+def test_ignore_next_gap_reaches_through_a_decorator_prologue(write_sample) -> None:
+    source = _source(
+        write_sample,
+        "# house-lint: ignore-next[HSL001] - decorative divider\n"
+        "# ------\n"
+        "@decorator\n"
+        "def build() -> None:\n"
+        "    pass\n",
+    )
+    candidates = tuple(detect_llm_cruft(source, None))
+
+    result = apply_suppressions(source, candidates, {"HSL001", "HSL900"})
+
+    assert result.findings == ()
+    assert result.suppressed_count == 1
+
+
+def test_ignore_next_suppresses_filler_triggered_by_its_own_reason_text(write_sample) -> None:
+    source = _source(
+        write_sample,
+        "# house-lint: ignore-next[HSL001] - in order to keep this readable\nvalue = 1\n",
+    )
+    candidates = tuple(detect_llm_cruft(source, None))
+
+    result = apply_suppressions(source, candidates, {"HSL001", "HSL900"})
+
+    assert result.findings == ()
+    assert result.suppressed_count == 1
+
+
 def test_ignore_next_requires_a_comment_only_line(write_sample) -> None:
     source = _source(
         write_sample,

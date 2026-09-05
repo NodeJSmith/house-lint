@@ -41,7 +41,7 @@ Select `HSL101` to detect its three built-in token families (`AC`/`FR`/`NFR`/`WP
 
 ### HSL102 — File length
 
-`max_lines` defaults to `800`; the rule reports only files above that number. File-length findings have no statement owner, so only `ignore-file[HSL102]` can suppress them.
+`max_lines` defaults to `800`; the rule reports only files above that number. File-length findings have no statement owner and no line of their own, so only `ignore-file[HSL102]` can suppress them — unlike a standalone-comment finding (see [suppressions](suppressions.md#ownership)), which also lacks a statement owner but can still be reached by `ignore-next`.
 
 ### HSL103 — Exception names
 

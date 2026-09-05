@@ -10,7 +10,7 @@ from typing import Any, cast
 
 from pathspec import GitIgnoreSpec
 
-from house_lint.rule_catalog import DEFAULT_SELECT, ORDINARY_RULES
+from house_lint.rule_catalog import ALWAYS_ON_RULE_ID, DEFAULT_SELECT, ORDINARY_RULES
 
 DEFAULT_INCLUDE = (".",)
 _PREFIX = re.compile(r"[A-Z][A-Z0-9_]*\Z")
@@ -117,7 +117,7 @@ class HSL103Options:
 class LintConfig:
     include: tuple[str, ...] = DEFAULT_INCLUDE
     exclude: tuple[str, ...] = ()
-    enabled_rules: tuple[str, ...] = (*DEFAULT_SELECT, "HSL900")
+    enabled_rules: tuple[str, ...] = (*DEFAULT_SELECT, ALWAYS_ON_RULE_ID)
     hsl101: HSL101Options = HSL101Options()
     hsl102: HSL102Options = HSL102Options()
     hsl103: HSL103Options = HSL103Options()
@@ -268,7 +268,7 @@ def _effective_rule_selection(
     )
     extended = (set(selected) | set(extend_selected)) - set(extend_ignored)
     cli_ignored = _ids(list(cli_ignore or ()), "--ignore")
-    return tuple(sorted(extended - set(cli_ignored))) + ("HSL900",)
+    return tuple(sorted(extended - set(cli_ignored))) + (ALWAYS_ON_RULE_ID,)
 
 
 def _validate_include(values: tuple[str, ...]) -> tuple[str, ...]:

@@ -45,6 +45,15 @@ DEFAULT_SELECT: tuple[str, ...] = tuple(
 ORDINARY_RULES: frozenset[str] = frozenset(
     rule.id for rule in RULES.values() if rule.enablement != "always"
 )
+# Derived from RULES rather than a second hardcoded literal, so this and the RULES entry it
+# names can never drift apart.
+_always_on = tuple(rule.id for rule in RULES.values() if rule.enablement == "always")
+if len(_always_on) != 1:
+    raise RuntimeError(
+        f"expected exactly one 'always' rule in RULES, found {_always_on} — "
+        "config.py and suppressions.py assume a single always-on rule ID"
+    )
+ALWAYS_ON_RULE_ID: str = _always_on[0]
 
 
 def is_known_rule(rule_id: str) -> bool:
@@ -63,6 +72,7 @@ def rule_metadata(rule_id: str) -> RuleMetadata:
 
 
 __all__ = [
+    "ALWAYS_ON_RULE_ID",
     "DEFAULT_SELECT",
     "ORDINARY_RULES",
     "RULES",

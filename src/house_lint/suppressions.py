@@ -17,7 +17,7 @@ from house_lint.analysis import (
     statement_owner_for_line,
 )
 from house_lint.results import Finding
-from house_lint.rule_catalog import is_known_rule
+from house_lint.rule_catalog import ALWAYS_ON_RULE_ID, is_known_rule
 from house_lint.source import SourceFile, Token
 
 _ID = re.compile(r"HSL[0-9]{3}\Z")
@@ -145,7 +145,7 @@ def _collect_claims(
             owned = tuple(
                 index
                 for index, candidate in enumerate(candidates)
-                if candidate.rule_id == rule_id and _owns(target[0], candidate)
+                if candidate.rule_id == rule_id and _owns(pragma, target[0], candidate)
             )
             claims.append(_Claim(pragma, rule_id, target, owned))
     return claims
@@ -165,8 +165,8 @@ def _parse_pragma(source: SourceFile, token: Token) -> tuple[_Pragma | None, str
         return None, "malformed suppression rule IDs"
     if len(set(ids)) != len(ids):
         return None, "duplicate suppression rule IDs"
-    if "HSL900" in ids:
-        return None, "HSL900 cannot be suppressed"
+    if ALWAYS_ON_RULE_ID in ids:
+        return None, f"{ALWAYS_ON_RULE_ID} cannot be suppressed"
     if sum(character.isalnum() for character in reason) < _MIN_REASON_ALNUM_CHARS:
         return None, (
             f"suppression reason must contain at least {_MIN_REASON_ALNUM_CHARS} "
@@ -300,10 +300,45 @@ def _target(pragma: _Pragma) -> tuple[_Owner, str]:
     return pragma.owner, pragma.action
 
 
-def _owns(owner: _Owner, candidate: CandidateFinding) -> bool:
-    if owner == "file":
-        return candidate.rule_id != "HSL900"
-    return candidate.owner == owner
+def _owns(pragma: _Pragma, owner: _Owner, candidate: CandidateFinding) -> bool:
+    """Whether `pragma` claims `candidate`, given the owner its action resolved to.
+
+    `owner` narrows structurally (`isinstance`, not `owner == "file"`) so the `StatementKey`
+    branch below can read `owner.start_line` — pyright can't derive "file" as the type's only
+    string value from an equality check against `_Owner = StatementKey | str`.
+
+    A standalone comment (a divider, a filler-phrase comment) starts or ends no statement, so
+    `statement_owner_for_line` leaves it `NO_OWNER` — it has no `StatementKey` an `ignore` pragma
+    could ever match. `ignore-next` already treats such a comment as a placement-legal gap between
+    itself and the statement it owns (`_next_owner`'s `_comments_or_blanks_only` check); this
+    extends that same gap to also cover `NO_OWNER` findings raised on those in-between lines, so a
+    pragma placed above the comment can suppress the comment's own finding. The window includes
+    the pragma's own line: a physical line holds at most one comment token, so a `NO_OWNER`
+    candidate there can only be the pragma's own reason text tripping the rule it names (e.g. a
+    filler phrase in the reason) — the trailing `ignore` case already self-suppresses this for
+    free, since its pragma and the finding it causes share one statement owner; `ignore-next`'s
+    pragma line has no such owner to share, so it has to be named explicitly here instead. The
+    bare line-range comparison below is only safe because everything from the pragma's own line
+    through the gap was already verified comment-or-blank-only by `_next_owner` — it would
+    otherwise risk reaching into unrelated code. For a decorated `def`/`class`, `owner.start_line`
+    is the undecorated line (see `_statement_start_line`), so the window can extend into the
+    decorator lines themselves; that stays safe because Python's grammar allows nothing there but
+    decorator expressions, comments, and blank lines — never another statement.
+
+    `candidate.line is not None` only narrows the type for the comparison below: every `NO_OWNER`
+    candidate is built by `candidate_for_line` with a concrete `line`, so the check never actually
+    excludes anything at runtime.
+    """
+    if isinstance(owner, str):
+        return candidate.rule_id != ALWAYS_ON_RULE_ID
+    if candidate.owner == owner:
+        return True
+    return (
+        pragma.action == "ignore-next"
+        and candidate.source_kind is SourceKind.NO_OWNER
+        and candidate.line is not None
+        and pragma.token.start[0] <= candidate.line < owner.start_line
+    )
 
 
 def _conflicting_claims(claims: list[_Claim]) -> set[int]:
@@ -323,7 +358,7 @@ def _conflicting_claims(claims: list[_Claim]) -> set[int]:
 def _diagnostic(source: SourceFile, token: Token, message: str) -> CandidateFinding:
     line, column = token.start
     return CandidateFinding(
-        "HSL900",
+        ALWAYS_ON_RULE_ID,
         source.relative_path,
         message,
         line,
