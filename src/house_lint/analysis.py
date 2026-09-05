@@ -135,7 +135,13 @@ def statement_owner_for_line(
     """Return the statement a comment or docstring line is attached to.
 
     Trailing comments (code precedes them on the line) resolve to their innermost enclosing
-    statement; standalone comments resolve to whichever statement starts or ends on that line.
+    statement. A standalone comment (nothing but whitespace before it) never resolves here: a
+    statement's `lineno`/`end_lineno` names a line that carries one of its own tokens, which a
+    comment-only line by definition does not, so the standalone-comment candidate search always
+    comes up empty and this returns `None`. Callers see that as `SourceKind.NO_OWNER`
+    (`comment_owner_for_line`, `candidate_for_line`) — `suppressions.py`'s `_owns` reaches those
+    findings separately, by checking whether the finding's line falls between an `ignore-next`
+    pragma and the statement it owns, rather than through an owner returned from here.
 
     A line inside a `try`/`try*` statement's *except clause* — the `except ... as name:` line(s),
     which no body statement covers — refines to the `ast.excepthandler` itself. HSL103 keys its
