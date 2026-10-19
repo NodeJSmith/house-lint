@@ -12,6 +12,8 @@ depth: deep
 # Research Brief: Duplicate-code detection for house-lint (#39)
 
 > **Superseded recommendation (2026-10-18).** This brief's Option A (build a native detector) assumed house-lint's single-file, read-once, Python-only design was a principle. The maintainer has since clarified that those are porting-era implementation details: cross-file checks and first-class TypeScript are in scope, and wrapping a proven tool is preferred over hand-building a detector. See `followup-tool-selection.md`, which recommends wrapping jscpd 5.4.1. The PMD findings below (exact-match only on Python, and per the follow-up on TypeScript too) still hold.
+>
+> Its per-file caching of claims and facts for cross-file rules was not adopted either: spec 005 (`design/specs/005-cross-file-rules-and-duplicate-code/design.md`) caches nothing from the project phase (D11) and resolves project-rule pragmas from in-memory bytes (D14).
 
 **Initiated by**: house-lint issue #39 (`gh issue view 39 --repo NodeJSmith/house-lint`). The question is which of PMD-as-is, PMD-reconfigured, a native AST detector, another tool, or a smaller option house-lint should adopt.
 
@@ -58,7 +60,7 @@ The user reported three pain points with hassette's gate. Each is matched to evi
 - **Post-processing.** Fragments are dropped if they are generated, `dup-ignore-file`, imports/docstrings only, globbed, or under 5 lines. The rest go through a union-find over PMD's pairwise blocks, and only clusters of 3 or more occurrences are reported (lines 479-541). A cluster is suppressed only when every occurrence sits inside a `dup-ignore-start/end` range (line 541).
 - **Gate** (`--gate-new-code`). It scans the head working tree. Only if that finds violations does it scan a `git archive` of the merge-base. A head cluster counts as pre-existing if some base cluster covers its per-file occurrence counts (`new_code_violations`, lines 562-593). A PR label `lint:duplicate-code-allowed` overrides the result (#3039 / #3041).
 - **Where it runs.** CI runs a backlog step (non-blocking) and a gate step (blocking) in `.github/workflows/lint.yml:420-475`. There is also a pre-push prek hook (`prek.toml:309`).
-- **Measured on hassette `main`** (subagent run, outputs in the scratchpad `cpd-plain.txt` / `cpd-gate.txt`):
+- **Measured on hassette `main`** (subagent run, outputs `cpd-plain.txt` / `cpd-gate.txt` were not retained):
 
 | Run | Wall time | Result |
 |---|---|---|
@@ -102,7 +104,7 @@ These facts come from the architecture subagent, with paths under `src/house_lin
 Each item gives what the evidence shows and how confident the claim is.
 
 1. **CPD on Python does not normalize identifiers or literals.**
-   - *Direct evidence: probes against the pinned PMD 7.26.0*, in `/tmp/claude-1000/-home-jessica-source-house-lint/b3ee79d5-9f12-4028-b35d-95fdfb82d26b/scratchpad/cpdprobe{,2,3}/`:
+   - *Direct evidence: probes against the pinned PMD 7.26.0*, in `probe/cpdprobe{,2,3}/`:
      - An exact copy matched (6 lines, 36 tokens).
      - A copy with only numeric literals changed (`total + 5` → `total + 9`, …) produced no match at `--minimum-tokens 15`.
      - A copy with one identifier renamed (`scale` → `factor`) produced no match.

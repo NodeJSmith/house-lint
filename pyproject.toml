@@ -49,6 +49,10 @@ exclude = ["design"]
 [tool.ruff.format]
 exclude = ["design"]
 
+[tool.house-lint]
+# design/ holds research probe corpora: deliberately duplicated code and test pragmas.
+exclude = ["design"]
+
 [tool.pyright]
 include = ["src"]
 typeCheckingMode = "strict"
