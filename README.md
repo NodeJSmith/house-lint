@@ -24,7 +24,7 @@ You need Python 3.11 or later.
 uvx house-lint check
 ```
 
-With no configuration, house-lint scans the whole project tree from the current directory, skips anything your `.gitignore` files ignore, and runs the four default rules. The output lists the root, configuration, enabled rules, file counts, findings, and a summary.
+With no configuration, house-lint scans the whole project tree from the project root (the nearest directory at or above the current one with a house-lint config, or failing that, with a `pyproject.toml` or `.git`), skips anything your `.gitignore` files ignore, and runs the four default rules. The output lists the root, configuration, enabled rules, file counts, findings, and a summary.
 
 To pin it as a development dependency:
 
