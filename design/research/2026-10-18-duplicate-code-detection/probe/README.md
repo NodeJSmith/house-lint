@@ -20,6 +20,9 @@ Environment variables:
 - `PMD`: the PMD launcher. Defaults to `pmd` on `PATH`. The briefs used PMD 7.26.0.
 - `HASSETTE`: a hassette checkout. Required by the `hassette_*.sh` scripts.
 - `GATE_CLUSTERS`: hassette's PMD gate cluster listing (`cpd-plain.txt`, one cluster per block of `path:start-end` lines). Required by `hassette_nogen.sh` and `hassette_weak.sh`, and not committed.
-- `MINTOK`: minimum token count for `probe_jscpd.sh` and `probe_cpd.sh`. Defaults to 30.
+- `MINTOK`: minimum token count. Defaults to 30 for `probe_jscpd.sh` and `probe_cpd.sh`. Optional for `hassette_nogen.sh`, where unset means jscpd's default.
+- `MAXGAP`: optional `--max-gap-lines` value for `hassette_nogen.sh`.
+
+`hassette_nogen.sh` names its outputs after the knobs set (`nogen-weak-k40-gap2`, for example), so the tuning pass's runs don't overwrite each other: `MINTOK=30`, `MINTOK=40`, each with and without `MAXGAP=2`.
 
 `hassette_run.sh` must run before the other `hassette_*.sh` scripts, since it writes the file lists they reuse.

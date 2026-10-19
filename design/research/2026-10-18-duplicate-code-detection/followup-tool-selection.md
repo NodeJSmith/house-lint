@@ -373,7 +373,7 @@ Do not sell it as a Type-2 detector. The released normalization is blind and noi
 
 ### Suggested next steps
 1. `/mine-sketch` #39 with the engine items 1-7 as the backbone, settling the open decisions above. Include #52's identity question.
-2. Tuning pass on hassette. Rerun `probe/scripts/hassette_nogen.sh` at 30 and 40 tokens, with and without `--max-gap-lines 2`, and hand-classify 15 clusters from each to fix the defaults.
+2. Tuning pass on hassette. Rerun `probe/scripts/hassette_nogen.sh` with `MINTOK=30` and `MINTOK=40`, each with and without `MAXGAP=2`, and hand-classify 15 clusters from each to fix the defaults.
 3. Pin suppression behaviour with characterization tests before splitting `apply_suppressions`.
 4. Watch jscpd for the release that ships consistent identifier matching, then re-run the `renamed` probe and the hassette normalization run.
 
