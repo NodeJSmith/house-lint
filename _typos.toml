@@ -1,0 +1,3 @@
+[default.extend-words]
+# "hass" is part of the hass-hassette repository name, not a misspelling of "hash".
+hass = "hass"
