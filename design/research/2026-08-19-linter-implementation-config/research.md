@@ -35,7 +35,7 @@ house-lint uses a closed rule set registered in two parallel `MappingProxyType` 
 ### Pattern 3: Declarative pattern-matching rules (Semgrep)
 
 **Used by**: Semgrep (YAML rules with `pattern`/metavariables).
-**How it works**: Rule authors write example code snippets with metavariables (`$X`, `$FUNC(...)`) that match structurally against the parsed AST. The engine owns traversal; rule authors need no AST expertise. A tokenizer fallback ("spacegrep") handles unparseable files.
+**How it works**: Rule authors write example code snippets with metavariables (`$X`, `$FUNC(...)`) that match structurally against the parsed AST. The engine owns traversal; rule authors need no AST expertise. A tokenizer fallback ("spacegrep") handles unparsable files.
 **Strengths**: Dramatically lowers the bar for new rules; rules read almost like the code they match.
 **Weaknesses**: Less expressive for semantic analysis, type inference, or cross-file resolution.
 **Example**: https://semgrep.dev/docs/writing-rules/generic-pattern-matching
