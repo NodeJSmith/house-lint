@@ -1,8 +1,20 @@
 # house-lint
 
-> Opinionated Python house-style linter for comments, imports, module layout, and deliberately configured project conventions.
+> Lint checks that catch the habits AI coding assistants leave behind.
 
-`house-lint` packages a specific set of checks used across a handful of Python projects. It is intentionally not a general-purpose style framework, an LLM-authorship detector, or a replacement for Ruff.
+AI coding assistants write code that runs and passes review at a glance, but they leave the same habits behind:
+- filler phrases in comments ("it is important to note", "leverage")
+- imports tucked inside functions
+- constants defined halfway down the module
+- files that keep growing
+- planning-ticket IDs (`AC1`, `T05`) leaking into the code
+- the same block pasted into a third module
+
+Reviewers stop reading comments that all sound the same, and nobody notices the import buried in a function until it breaks a mock. `house-lint` flags these habits; the [rules table](#rules) shows what it checks today.
+
+It complements Ruff rather than replacing it. A check belongs here when it targets a pattern AI-assisted code produces and Ruff and the type checker don't already catch it. The rules are opinionated, and you choose which ones to enable. They started as scripts in one project and now live here, so every project gets the same checks from one versioned tool.
+
+Today every rule analyzes one Python file at a time. Next come checks that compare files across a project, starting with duplicate-code detection for Python and TypeScript ([#39](https://github.com/NodeJSmith/house-lint/issues/39)), then complexity and dead code ([#53](https://github.com/NodeJSmith/house-lint/issues/53)).
 
 ## Quick start
 
@@ -12,9 +24,9 @@ You need Python 3.11 or later.
 uvx house-lint check
 ```
 
-You see the selected root, configuration, enabled rules, file counts, findings, and a final summary. By default, house-lint scans the entire project tree from the root, filtered by `.gitignore` and the built-in excludes — set `include` in your config to narrow the scan to specific directories.
+With no configuration, house-lint scans the whole project tree from the current directory, skips anything your `.gitignore` files ignore, and runs the four default rules. The output lists the root, configuration, enabled rules, file counts, findings, and a summary.
 
-Install it in a project when you want a pinned development dependency:
+To pin it as a development dependency:
 
 ```bash
 uv add --dev house-lint
@@ -23,128 +35,96 @@ uv run house-lint check
 
 ## Rules
 
-The four default rules are `HSL001`–`HSL004`. `HSL900` always reports invalid suppressions.
-
 | ID | Default | Checks |
 | --- | --- | --- |
-| `HSL001` | On | AI-writing tells in comments and docstrings, never ordinary strings |
+| `HSL001` | On | AI-writing tells in comments and docstrings (never ordinary strings) |
 | `HSL002` | On | Imports inside function or async-function bodies |
-| `HSL003` | On | Top-level `TYPE_CHECKING` guards followed by imports |
-| `HSL004` | On | Module constants after the first class/function, except derived bindings |
-| `HSL101` | Off | Built-in and/or configured planning/spec tokens in comments, docstrings, and filenames (built-in families active with zero configuration) |
-| `HSL102` | Off | Files whose `splitlines()` count exceeds a configured limit |
-| `HSL103` | Off | Bound exception names outside the allowed policy |
-| `HSL900` | Always | Invalid, unused, conflicting, or malformed suppressions |
+| `HSL003` | On | Top-level `TYPE_CHECKING` import blocks placed before regular imports |
+| `HSL004` | On | Module constants defined after the first class or function, except derived bindings |
+| `HSL101` | Off | Planning and spec tokens (built-in families like `AC1`, `T05`, `KI-001`, plus your own such as `JIRA-123`) in comments, docstrings, and filenames |
+| `HSL102` | Off | Files longer than a configured line limit (default 800) |
+| `HSL103` | Off | Bound exception names outside an allowed policy (default `exc` or `*_exc`) |
+| `HSL900` | Always | Invalid, unused, conflicting, or malformed suppressions; cannot be disabled |
 
-List the installed rule metadata:
-
-```bash
-house-lint rules --format json
-```
-
-The command writes a schema-versioned JSON object containing all eight IDs and their enablement modes.
-
-See [the rule reference](docs/rules.md) for exact rule behavior.
+`house-lint rules --format json` prints the installed rule metadata. The [rule reference](docs/rules.md) describes exactly what each rule flags and what it leaves alone.
 
 ## Configuration
 
-Put configuration in your project `pyproject.toml`:
+Configure house-lint in `pyproject.toml` under `[tool.house-lint]`, or in a standalone `house-lint.toml` or `.house-lint.toml`:
 
 ```toml
 [tool.house-lint]
-include = ["src", "tests"]
-exclude = ["generated/"]
-select = ["HSL001", "HSL002", "HSL003", "HSL004", "HSL101", "HSL102", "HSL103"]
+include = ["src", "tests"]        # optional; default is the whole tree
+exclude = ["generated/"]          # gitignore-style patterns
+extend-select = ["HSL102", "HSL103"]
 
 [tool.house-lint.rules.HSL102]
-max_lines = 800
+max_lines = 600
 
-[tool.house-lint.rules.HSL103]
-allowed = ["exc", "*_exc"]
-
-[[tool.house-lint.rules.HSL101.tokens]]
-prefixes = ["JIRA"]
-separator = "dash"
-min_digits = 1
-suffix = "optional-lower-alpha"
-scopes = ["comments", "docstrings", "filenames"]
-case_sensitive = true
-```
-
-`HSL101` ships built-in token families (`AC`/`FR`/`NFR`/`WP`, `T`, `KI`) that are active as soon as you select it — a `tokens` array is only needed to add families on top of the built-ins. `HSL102` defaults to `800` lines and `HSL103` defaults to `exc` or `*_exc` when selected.
-
-CLI selection overrides configuration:
-
-```bash
-house-lint check --select HSL002,HSL103 --ignore HSL103
-```
-
-Each `--select` or `--ignore` occurrence accepts one comma-separated list. Selection is strict: unknown, duplicate, empty, and `HSL900` IDs are usage errors.
-
-To add or remove rules without replacing the rest of your configured selection, use `extend-select`/`extend-ignore` (in `[tool.house-lint]` or as `--extend-select`/`--extend-ignore`) instead of `select`/`ignore`:
-
-```bash
-house-lint check --extend-select HSL101
-```
-
-`extend-select`/`extend-ignore` layer additively on top of the base selection (configured `select`/`ignore`, or a CLI `--select` override) regardless of where that base came from. A final CLI `--ignore` still always wins.
-
-To silence a rule only for files matching a glob, without touching the selection everywhere else, use `[tool.house-lint.per-file-ignores]`:
-
-```toml
 [tool.house-lint.per-file-ignores]
 "tests/**" = ["HSL002"]
 ```
 
-Read [configuration](docs/configuration.md) for discovery, precedence, validation, excludes, and token-family options.
+- `select` sets the base selection and `ignore` removes rules from it. `extend-select` and `extend-ignore` add and remove on top of that base.
+- On the command line, `--select` replaces the configured base. `--extend-select` and `--extend-ignore` combine with the configured values. A CLI `--ignore` is applied last and always wins.
+- Each flag occurrence takes one comma-separated list. Selection is strict: unknown, duplicate, or empty rule IDs are usage errors.
 
-## Paths, roots, and Git ignores
-
-With no paths, `check` scans configured include roots. With paths, it scans only those explicit Python files or recursively expanded explicit directories:
-
-```bash
-house-lint check src/service.py tests
-```
-
-Explicit paths are strict. Missing, out-of-root, and non-Python file arguments are errors; ignored or excluded explicit Python files are counted as skipped. `--root` fixes the project boundary; with no `--config`, the root directory is checked for `house-lint.toml` → `.house-lint.toml` → `pyproject.toml` (with `[tool.house-lint]`), in that order, and the first recognized file is used. Without `--root`, discovery starts at the current directory. `--config` selects an exact configuration file; without `--root`, its parent becomes the root.
-
-The linter loads the selected root's `.gitignore` plus every nested `.gitignore` between the root and each discovered file, combined with git's own precedence (a closer `.gitignore` can override a farther one, including via negation), plus built-in and configured excludes. It does not shell out to Git. Use `--no-gitignore` to disable `.gitignore` handling at every level.
-
-## Caching
-
-`check` caches each file's result under `<root>/.house-lint-cache/<version>-<source fingerprint>/`, keyed by the file's content, its effective rule set for that file, and the running Python version — `ast.parse` accepts different grammar across the versions house-lint supports, so a cache shared between venvs must not replay one interpreter's parse result under another. A cache hit skips tokenization, parsing, and rule execution entirely for that file. Upgrading house-lint — or editing its rule code in a working checkout — starts from an empty cache automatically, because both the version and a fingerprint of house-lint's own sources are part of the cache path. Superseded directories are pruned rather than left to accumulate.
-
-`--no-cache` disables reading from the cache but still writes to it, keeping it warm for the next run. `--cache-dir` overrides where the cache lives (still namespaced underneath the path you give it).
-
-house-lint adds a self-ignoring `.gitignore` to its own default `.house-lint-cache/` directory so it stays invisible to `git status`. It never writes one into a directory you name with `--cache-dir` — that directory is yours.
-
-A cache failure never fails a scan, but it is never silent either: an unwritable directory, a full disk or a corrupted entry prints one `warning:` line to stderr the first time it happens in a run. Only that first failure is printed by default. A broken cache directory fails once per scanned file, so printing every one would bury the single fact worth reporting under thousands of near-identical lines; the remainder are shown under `--debug`. Findings and the exit code are unaffected.
+[Configuration](docs/configuration.md) covers config file discovery, precedence, scan scope, excludes, rule options, and `HSL101` token families.
 
 ## Suppressions
 
-Suppress a finding only with a rule ID and a meaningful reason (at least three alphanumeric characters):
+Every suppression names the rule and gives a reason of at least three alphanumeric characters:
 
 ```python
+# house-lint: ignore-file[HSL102] - generated compatibility module
+
+
 def load_plugin():
     import plugin  # house-lint: ignore[HSL002] - avoids a circular import
 
 
-# house-lint: ignore-next[HSL103] - compatibility callback signature
+# house-lint: ignore-next[HSL004] - kept beside the loader it configures
+RETRIES = 3
+
 try:
     callback()
-except OSError as error:
+except OSError as error:  # house-lint: ignore[HSL103] - compatibility callback signature
     raise
-
-# house-lint: ignore-file[HSL102] - generated compatibility module
 ```
 
-`ignore` attaches to its containing statement. A comment-only `ignore-next` attaches to the next statement in the same suite, even across ordinary comments and blank lines. A top-of-file `ignore-file` applies to the listed enabled rules throughout the file. `HSL900` cannot be suppressed.
+- `ignore` covers the statement it sits on. An `except` clause is its own statement, so its pragma goes on the `except` line.
+- `ignore-next` on its own line covers the next statement in the same block, skipping comments and blank lines.
+- `ignore-file` covers the whole file for the listed rules. It must come before the first statement other than a docstring or `__future__` import.
 
-Read [suppressions](docs/suppressions.md) before adding one; malformed, misplaced, disabled, unknown, unused, duplicate, and conflicting pragmas produce `HSL900`.
+`HSL900` flags suppressions that are malformed, misplaced, unused, duplicated, or that name an unknown or disabled rule, so stale suppressions don't pile up. See [suppressions](docs/suppressions.md).
+
+## Paths and roots
+
+```bash
+house-lint check                      # configured scope, or the whole tree
+house-lint check src/service.py tests # only these files and directories
+```
+
+- Explicit paths are strict: a missing path, a path outside the root, or a non-Python file is an error.
+- An explicit file that is ignored or excluded is counted as skipped.
+- `--root` fixes the project boundary. Without `--config`, house-lint looks in the root for `house-lint.toml`, then `.house-lint.toml`, then a `pyproject.toml` with `[tool.house-lint]`.
+- `--config` names an exact configuration file, and its directory becomes the root unless `--root` is given.
+
+house-lint applies the root `.gitignore` and every nested `.gitignore` with git's precedence rules, without shelling out to git. `--no-gitignore` turns that off.
 
 ## Pre-commit
 
-Run the installed CLI from a local pre-commit hook:
+The published hook runs house-lint on staged Python files, serially rather than in parallel batches:
+
+```yaml
+repos:
+  - repo: https://github.com/NodeJSmith/house-lint
+    rev: v0.2.0
+    hooks:
+      - id: house-lint
+```
+
+Or run an installed copy as a local hook:
 
 ```yaml
 repos:
@@ -155,50 +135,46 @@ repos:
         entry: house-lint check
         language: system
         types: [python]
-        files: \.py$
         require_serial: true
 ```
 
-The distributed `.pre-commit-hooks.yaml` exposes the same `house-lint` hook for a published repository. Both forms filter to existing `*.py` files before invocation. The CLI remains strict, so manual explicit paths still fail for missing or non-Python files. `require_serial: true` forces pre-commit to run all matched files through a single serial `house-lint check` invocation instead of splitting them across multiple concurrent invocations. The CLI already accepts multiple paths at once, so this avoids paying repeated startup cost per file.
+## Caching
 
-This repo dogfoods its own hook via `prek.toml` at the root, alongside `ruff check` and `pyright` (the checks CI runs) plus `ruff format`. Install with `prek install -t pre-commit -t pre-push`.
+`check` caches each file's result under `<root>/.house-lint-cache/`. The key covers the file's content, the rules and rule options in effect, and the Python version; [configuration](docs/configuration.md#caching) lists every input. A hit skips parsing and rule execution.
 
-## Output and exits
+The cache directory is namespaced by house-lint's version and a fingerprint of its own source, so upgrading starts from a clean cache. Old directories are pruned.
 
-Use JSON for machine consumers:
+- `--no-cache` skips reading the cache but still refreshes it.
+- `--cache-dir` moves it.
 
-```bash
-house-lint check --format json
-```
+A cache failure never fails a scan. house-lint prints one warning for the first failure in a run, and `--debug` shows the rest.
 
-JSON stdout is always one parseable schema-version-1 object. It always includes `root`, `config`, `enabled_rules`, file counts, findings, errors, and summary counts. `root` and `config` are absolute strings when available and `null` otherwise; filename and file-level findings have all location fields set to `null`.
+## Output and exit codes
 
-Finding `message` values are human-readable display text, not stable machine keys. Machine consumers should use rule IDs and locations for findings, and error `code` values for operational failures.
+`--format json` prints one schema-versioned JSON object to stdout with the root, config, enabled rules, file counts, findings, errors, and summary. Match on rule IDs, locations, and error `code` values. Finding `message` text is for people and may change.
 
 | Exit | Meaning |
 | ---: | --- |
-| 0 | Complete scan with no visible findings or errors |
-| 1 | Complete scan with lint findings, including `HSL900` |
-| 2 | CLI usage or configuration error; scanning did not start |
+| 0 | Clean scan |
+| 1 | Findings, including `HSL900` |
+| 2 | Usage or configuration error; nothing was scanned |
 | 3 | Incomplete scan: path, traversal, budget, read, decode, tokenize, or syntax error |
-| 4 | Unexpected internal error caught at the CLI boundary |
+| 4 | Unexpected internal error |
 
-Exit precedence is `4 > 3 > 2 > 1 > 0`. In JSON mode, diagnostics stay in the JSON result on stdout; `--debug` writes additional details only to stderr.
+When several apply, the highest code wins.
 
-`errors[*].code` is the stable machine-readable error taxonomy. `kind`, `phase`, and `operation` provide context and may gain new values without changing an existing error code.
-
-| Code | Meaning |
+| Error code | Meaning |
 | --- | --- |
-| `config-error` | CLI argument or configuration loading failure |
-| `path-error` | Invalid root, explicit path, or selected source path |
-| `traversal-error` | Discovery or root `.gitignore` filesystem failure |
-| `budget-error` | Discovery or candidate-count safety limit exceeded |
-| `source-too-large` | A selected source file exceeds the 10 MiB read limit |
-| `read-error` | A selected source file could not be read |
-| `decode-error` | A selected source file could not be decoded |
-| `tokenize-error` | A selected source file could not be tokenized |
-| `syntax-error` | A selected source file could not be parsed as Python |
-| `internal-error` | An unexpected failure crossed the CLI boundary |
+| `config-error` | Invalid CLI arguments, configuration, or root |
+| `path-error` | Invalid explicit path or source path |
+| `traversal-error` | Discovery or `.gitignore` filesystem failure |
+| `budget-error` | A discovery or candidate-count safety limit was exceeded |
+| `source-too-large` | A source file exceeds the 10 MiB read limit |
+| `read-error` | A source file could not be read |
+| `decode-error` | A source file could not be decoded |
+| `tokenize-error` | A source file could not be tokenized |
+| `syntax-error` | A source file could not be parsed as Python |
+| `internal-error` | An unexpected failure reached the CLI boundary |
 
 ## Development
 
@@ -208,8 +184,4 @@ uv run ruff check .
 uv run pyright
 ```
 
-See [the changelog](CHANGELOG.md) for compatibility notes.
-
-## Releases
-
-CI tests Python 3.11 through 3.14 and runs Ruff, Pyright, and a package build. [Release Please](https://github.com/googleapis/release-please) manages version bumps, changelog updates, and GitHub releases from Conventional Commits. Distributions are published to PyPI via Trusted Publishing.
+CI runs the tests on Python 3.11 through 3.14, plus Ruff, Pyright, and a package build. This repo also runs house-lint on itself through `prek.toml`. [Release Please](https://github.com/googleapis/release-please) cuts releases from Conventional Commits and publishes to PyPI. See the [changelog](CHANGELOG.md) for compatibility notes.
