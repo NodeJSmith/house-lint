@@ -52,7 +52,9 @@ from house_lint.rule_catalog import rule_ids, rule_metadata
 from house_lint.scanner import FileScanResult, open_source, scan_source
 from house_lint.source import SourceFile
 
-app = App(name="house-lint", help="Opinionated Python house-style linter.")
+app = App(
+    name="house-lint", help="Lint checks that catch the habits AI coding assistants leave behind."
+)
 
 
 def _flatten_ids(values: list[str] | None) -> tuple[str, ...] | None:
