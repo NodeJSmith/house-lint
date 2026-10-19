@@ -1387,6 +1387,20 @@ def test_upward_search_falls_back_to_nearest_project_marker(tmp_path: Path, mark
     assert resolution == type(resolution)(root, None)
 
 
+def test_upward_search_stops_at_git_boundary_ignoring_outer_ancestor_config(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text('[tool.house-lint]\nselect = ["HSL001"]\n')
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    nested = repo / "src"
+    nested.mkdir()
+
+    resolution = resolve_project(cwd=nested)
+
+    assert resolution == type(resolution)(repo, None)
+
+
 def test_invalid_ancestor_pyproject_is_a_configuration_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
