@@ -189,7 +189,7 @@ jscpd 5.4.1 ships official PyPI wheels for 8 platforms. Its Linux wheels need gl
 |---|---|---|---|
 | Projects without duplicate checking install jscpd | No | Yes | No |
 | house-lint installs on glibc < 2.34 (not a target: every machine runs ≥ 2.35) | Yes | No | Yes |
-| `uvx` usage | `uvx --with 'house-lint[duplicates]'` or `uvx 'house-lint[duplicates]'` | Plain `uvx house-lint` | Separate install step |
+| `uvx` usage | `uvx --from 'house-lint[duplicates]' house-lint check` | Plain `uvx house-lint` | Separate install step |
 | Version drift (jscpd changes meaning across releases) | Prevented by pin plus check | Prevented by pin | User-controlled; needs the same version check |
 | Missing tool when the rule is enabled | Loud error naming the extra | Can't happen | Loud error naming the install |
 

@@ -18,8 +18,12 @@ python3 -I -c 'import json,sys; print(json.dumps({"path": [sys.argv[2] + "/" + l
 cd /tmp || exit 1
 for m in mild weak; do
   R="nogen-$m$SUF"
+  rm -rf "${O:?}/$R"
   mkdir -p "$O/$R"
-  "$J" -c "$O/jscpd-paths-nogen.json" --no-gitignore --absolute --mode $m "${TUNE[@]}" --reporters json,silent --output "$O/$R" --no-tips >/dev/null 2>&1
+  if ! "$J" -c "$O/jscpd-paths-nogen.json" --no-gitignore --absolute --mode $m "${TUNE[@]}" --reporters json,silent --output "$O/$R" --no-tips >"$O/$R/jscpd.log" 2>&1; then
+    echo "jscpd failed for $R; see $O/$R/jscpd.log" >&2
+    exit 1
+  fi
   echo "== $R"
   python3 -I "$F/scripts/clusters.py" "$O/$R/jscpd-report.json" --root "$H/" | head -5
   python3 -I "$F/scripts/clusters.py" "$O/$R/jscpd-report.json" --root "$H/" --list >"$O/clusters-$R.txt"
