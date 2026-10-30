@@ -15,6 +15,13 @@ from house_lint.rule_catalog import ALWAYS_ON_RULE_ID, DEFAULT_SELECT, ORDINARY_
 DEFAULT_INCLUDE = (".",)
 _PREFIX = re.compile(r"[A-Z][A-Z0-9_]*\Z")
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+# pathspec 1.1.1 compiles a trailing `**/` so it also matches the directory before it, which would
+# take in files directly inside `src/` for `src/**/` where gitignore matches only what lies beneath.
+# `/**/*/` means the same in gitignore and compiles correctly. `**` must be a whole segment
+# (`foo**/` is already right) and an escaped trailing space is left alone. Delete this, and
+# `compile_git_ignore_spec`, once the `pathspec` floor in `pyproject.toml` reaches a release with
+# the fix.
+_TRAILING_DOUBLE_STAR_DIRECTORY = re.compile(r"(?<=[^/])(?:/\*\*)+/ *$")
 
 DEFAULT_MAX_FINDINGS_PER_FILE = 200
 MAX_FINDINGS_PER_FILE_LIMIT = 10_000
@@ -154,12 +161,19 @@ def selected_detector_inputs(
 CompiledPerFileIgnores = tuple[tuple[GitIgnoreSpec, frozenset[str]], ...]
 
 
+def compile_git_ignore_spec(lines: Iterable[str]) -> GitIgnoreSpec:
+    """Compile configured Git-ignore-style patterns, correcting the shape pathspec gets wrong."""
+    return GitIgnoreSpec.from_lines(
+        _TRAILING_DOUBLE_STAR_DIRECTORY.sub("/**/*/", line) for line in lines
+    )
+
+
 def compile_per_file_ignores(
     per_file_ignores: Mapping[str, tuple[str, ...]],
 ) -> CompiledPerFileIgnores:
     """Precompile per-file-ignores glob patterns once, for repeated per-file matching."""
     return tuple(
-        (GitIgnoreSpec.from_lines((pattern,)), frozenset(rule_ids))
+        (compile_git_ignore_spec((pattern,)), frozenset(rule_ids))
         for pattern, rule_ids in per_file_ignores.items()
     )
 

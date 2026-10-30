@@ -16,6 +16,7 @@ from house_lint.config import (
     PYPROJECT_CONFIG_NAME,
     STANDALONE_CONFIG_NAMES,
     ConfigError,
+    compile_git_ignore_spec,
     get_house_lint_table,
     get_standalone_table,
     load_toml,
@@ -474,7 +475,7 @@ def discover_files(
     root = root.expanduser().resolve()
     requested = explicit or tuple(root / item for item in include)
     selector = _FileSelector(
-        root, GitIgnoreSpec.from_lines(validate_exclude(excludes)), [], use_git=use_git
+        root, compile_git_ignore_spec(validate_exclude(excludes)), [], use_git=use_git
     )
     selector.select(requested, explicit_paths=bool(explicit))
     return selector.result()

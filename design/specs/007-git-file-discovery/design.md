@@ -239,3 +239,9 @@ The footer also names every break the decisions below accept, which their `**Rat
 - `discover_files` also calls `validate_exclude`, chosen at the ship-time challenge: `_excluded` depends on there being no negation, and a later caller might not build excludes from validated config. `cli.py` already catches `ConfigError` around the scan.
 - The listing is sorted so the file limit keeps the same files whichever order git emits.
 - `test_gitignore_parity.py` is renamed `test_exclude_parity.py`, since `exclude` is all it checks. The CI and `pyproject.toml` comments about the fuzz suite's `CI` gate are gone with the suite.
+
+## Addendum
+
+### 2026-10-30: temporary rewrite of a trailing `**/` pattern
+
+pathspec 1.1.1 lets a trailing `**/` match the directory before it, so `src/**/` dropped files directly in `src/` where git keeps them. `compile_git_ignore_spec` in `config.py` rewrites that shape to `**/*/` for both `exclude` and `per-file-ignores`, and new parity scenarios cover it. Delete the rewrite once the `pathspec` floor reaches a release with the fix; pathspec's unreleased master already matches git on these shapes. The brief at `design/research/2026-10-30-exclude-gitignore-semantics/prior-art.md` records why the matcher itself stayed.
