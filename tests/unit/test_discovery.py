@@ -591,12 +591,8 @@ def test_discovery_order_matches_documented_precedence(
 
 
 @pytest.fixture
-def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """`tmp_path` as a real repository, with every ignore source outside it disabled."""
-    for variable in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
-        monkeypatch.delenv(variable, raising=False)
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+def repo(tmp_path: Path) -> Path:
+    """`tmp_path` as a real repository; the autouse `isolated_git_environment` hides outside state."""
     _git(tmp_path, "init", "-q", ".")
     return tmp_path
 
@@ -684,6 +680,7 @@ def test_global_excludes_hide_an_untracked_file_but_not_a_tracked_one(
     home = tmp_path_factory.mktemp("home")
     (home / "ignore").write_text("*.py\n")
     (home / "config").write_text(f"[core]\nexcludesFile = {home / 'ignore'}\n")
+    # Replaces the autouse fixture's null config: this test wants a global excludes file.
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / "config"))
     tracked = _write(repo, "tracked.py", "untracked.py")[0]
     _git(repo, "add", "-f", "tracked.py")

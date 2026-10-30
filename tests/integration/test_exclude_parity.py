@@ -9,9 +9,9 @@ set of files `exclude` drops is exactly the set git ignores when the same lines 
 `.gitignore`. A scenario needs no expected-value literal — git supplies it — so adding a regression
 case costs one table entry.
 
-Skipped wholesale when git is unavailable. Git config is neutralised (`GIT_CONFIG_GLOBAL`,
-`GIT_CONFIG_SYSTEM`, `core.excludesFile`) so a developer's own global ignore rules can never
-change the outcome.
+Skipped wholesale when git is unavailable. The autouse `isolated_git_environment` fixture hides the
+developer's git settings and ignore files, so they can never change the outcome or point the
+comparison at a different repository.
 """
 
 import shutil
