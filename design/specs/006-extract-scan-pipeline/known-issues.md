@@ -4,7 +4,7 @@ Real issues found while building this feature and intentionally left unfixed.
 
 ## KI-001: A repository can ship forged cache entries that replay as its lint results
 
-Status: open
+Status: filed (#65)
 Recorded: 2026-10-30 (56)
 Source: ship-challenge
 Reason not fixed now: out-of-scope
