@@ -37,7 +37,7 @@ Everything runs through `uv run`. There is no Makefile or justfile.
 - Type check: `uv run pyright` (strict mode, `src/` only; tests are not type-checked)
 - Build: `uv build` (backend is `uv_build`; don't switch it)
 
-CI (`.github/workflows/ci.yml`) runs the tests on Python 3.11 through 3.14, and Ruff, Pyright, and the build on 3.11. `prek.toml` runs Ruff, Pyright (at pre-push), house-lint on itself, and some hygiene hooks, but not pytest or the build. Install the hooks with `prek install -t pre-commit -t pre-push`.
+CI has two workflows. `.github/workflows/ci.yml` runs the tests on Python 3.11 through 3.14 and the build on 3.11. `lint.yml` runs every prek hook at the pre-push stage. Each ends in an aggregate job, `tests-complete` and `lint-complete`, and those two plus `validate` (the PR title check) are the required checks. `prek.toml` runs Ruff, Pyright (at pre-push), house-lint on itself, and some hygiene hooks, but not pytest or the build. Install the hooks with `prek install -t pre-commit -t pre-push`.
 
 ## Layout
 
