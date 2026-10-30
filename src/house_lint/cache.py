@@ -288,7 +288,7 @@ def read_cached_result(
         # Corruption (or a foreign write) can leave bytes that are not valid UTF-8. That raises
         # here, at decode time, rather than in the parse block below — and `UnicodeDecodeError`
         # is a `ValueError`, so the `OSError` handler does not catch it either. Without this
-        # branch the exception escapes `_scan` entirely, aborting the run with an internal error
+        # branch the exception escapes `run_scan` entirely, aborting the run with an internal error
         # instead of the cache miss this function promises.
         reporter.failure(f"cache entry for {relative_path} is corrupted: {exc}")
         return None
@@ -301,8 +301,8 @@ def read_cached_result(
         files_scanned = payload["files_scanned"]
         # Dataclasses don't enforce annotations at runtime, so a corrupted-but-valid-JSON entry
         # (e.g. `"suppressed_count": "1"`) would otherwise construct successfully here and only
-        # fail later when the caller accumulates it (`suppressed_count += cached.suppressed_count`
-        # in `cli.py`), turning what should be a graceful cache miss into an internal-error exit.
+        # fail later when the caller totals it (`run_file_phase` in `pipeline.py`), turning what
+        # should be a graceful cache miss into an internal-error exit.
         # Negative values are the same class of corruption reaching the same accumulation: no
         # real scan produces one, and `"files_scanned": -5` would silently lower the run's
         # reported totals rather than degrading to a miss.

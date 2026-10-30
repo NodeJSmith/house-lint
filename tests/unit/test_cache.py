@@ -249,7 +249,7 @@ def test_read_cached_result_is_a_miss_when_a_scalar_field_has_the_wrong_type(
 ) -> None:
     """A corrupted-but-valid-JSON entry (e.g. `suppressed_count` as a string) must be treated
     as a cache miss here, not accepted and left to raise `TypeError` later when the caller
-    accumulates it (`suppressed_count += cached.suppressed_count` in `cli.py`)."""
+    totals it (`run_file_phase` in `pipeline.py`)."""
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir(parents=True)
     payload = '{"findings": [], "errors": [], "suppressed_count": "1", "files_scanned": 1}'
@@ -292,7 +292,7 @@ def test_read_cached_result_is_a_miss_when_a_count_is_negative(
 def test_read_cached_result_is_a_miss_when_the_entry_is_not_utf8(tmp_path: Path) -> None:
     """Invalid UTF-8 raises `UnicodeDecodeError` at `read_text`, before the parse block. It is a
     `ValueError`, so the `OSError` handler does not catch it either — left unhandled it escapes
-    `_scan` and aborts the run with an internal error instead of degrading to a miss."""
+    `run_scan` and aborts the run with an internal error instead of degrading to a miss."""
     cache_dir = tmp_path / "cache"
     cache_dir.mkdir(parents=True)
     (cache_dir / "content-hash-config-hash.json").write_bytes(b"\xff\xfe not utf-8")

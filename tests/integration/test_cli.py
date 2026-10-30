@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from house_lint import cli, scanner
+from house_lint import cli, pipeline, scanner
 from house_lint import source as source_module
 from house_lint.analysis import MAX_CANDIDATES_PER_FILE
 
@@ -543,7 +543,7 @@ def test_cache_hit_never_scans_the_source(
         calls.append(args)
         raise AssertionError("scan_source must not be called on a cache hit")
 
-    monkeypatch.setattr(cli, "scan_source", record_call)
+    monkeypatch.setattr(pipeline, "scan_source", record_call)
 
     second_code = cli.check(root=repository, select=["HSL002"], format="json")
     second_output = capsys.readouterr().out
@@ -564,7 +564,7 @@ def test_each_scanned_file_is_read_exactly_once(
     # written under a key describing content that was never scanned. Counting reads is what
     # guards the structure — the race is unobservable once it is gone, but a regression would
     # show up here as a count above one. The counter intercepts `source.read_regular_file_bytes`,
-    # which is the only file-reading entry point on the scan path (`cli` and `cache` no longer
+    # which is the only file-reading entry point on the scan path (`pipeline` and `cache` no longer
     # import one); a re-read added through some other API would need its own guard.
     (repository / "src" / "finding.py").write_text("def example():\n    import module\n")
     if cache_state == "warm":
@@ -1334,7 +1334,7 @@ def test_cli_boundary_internal_error_preserves_resolved_context(
     def fail_scan(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("simulated scan setup failure")
 
-    monkeypatch.setattr(cli, "_scan", fail_scan)
+    monkeypatch.setattr(cli, "run_scan", fail_scan)
 
     code = cli.check(root=repository, format="json")
     result = json.loads(capsys.readouterr().out)
