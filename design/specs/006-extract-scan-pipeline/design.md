@@ -1,7 +1,7 @@
 # Design: Extract the scan pipeline from the CLI
 
 **Date:** 2026-10-30
-**Status:** ratified
+**Status:** built
 **Mode:** sketch
 **Issues:** #56
 **Parent:** design/specs/005-cross-file-rules-and-duplicate-code/design.md
@@ -157,7 +157,7 @@ Each `SourceFile` is a loop local today (`cli.py:313`). Parent D14 has the proje
 
 - [x] Implementation and tests committed
 - [x] Docs: `CLAUDE.md` layout and option references; nothing in `docs/` or `README.md` names the old location
-- [ ] Ship-time challenge
+- [x] Ship-time challenge
 
 **Calls made during the build:**
 - `_persist_cache_entry` folded into `RunCache.store` instead of moving as its own function: its one caller is `store`, and its only work was building the `CachedFileResult`. Its rule, that an unhashable file must not trip the write breaker, is now a comment on `store`'s guard.
