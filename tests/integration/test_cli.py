@@ -1382,7 +1382,9 @@ def test_git_failure_inside_a_repository_is_an_incomplete_scan(repository: Path)
 def test_negated_exclude_is_a_configuration_error(repository: Path) -> None:
     (repository / "pyproject.toml").write_text('[tool.house-lint]\nexclude = ["!keep.py"]\n')
 
-    completed = _run(repository, "check", "--root", str(repository))
+    completed = _run(repository, "check", "--root", str(repository), "--format", "json")
 
+    result = json.loads(completed.stdout)
     assert completed.returncode == 2
-    assert "negated patterns: !keep.py" in completed.stdout + completed.stderr
+    assert [error["kind"] for error in result["errors"]] == ["config"]
+    assert "negated patterns: !keep.py" in result["errors"][0]["message"]
