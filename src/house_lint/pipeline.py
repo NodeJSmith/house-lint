@@ -52,13 +52,12 @@ class RunCache:
     """
 
     def __init__(
-        self, cache_dir: Path, *, self_ignore: bool, read_enabled: bool, debug: bool
+        self, cache_dir: Path, *, self_ignore: bool, read_enabled: bool, reporter: CacheReporter
     ) -> None:
         self.cache_dir = cache_dir
         self.self_ignore = self_ignore
         self.read_enabled = read_enabled
-        self.debug = debug
-        self.reporter = CacheReporter(debug=debug)
+        self.reporter = reporter
         # Named for what it checks, not for whether caching happens: `read_enabled` (--no-cache)
         # and a mid-run write failure also govern that. Only the default base is vetted, because
         # it is the only base whose path the scanned project itself controls.
@@ -77,24 +76,20 @@ class RunCache:
         )
 
     def lookup(self, key: CacheKey | None, *, relative_path: str) -> CachedFileResult | None:
-        """Return this file's replayable cached result, if there is one."""
+        """Return this file's cached result, if this run reads the cache and there is one.
+
+        The caller decides whether to replay it: see the `--debug` rule in `run_file_phase`.
+        """
         if key is None or not self.base_is_safe or not self.read_enabled:
             return None
         content_hash, config_hash = key
-        cached = read_cached_result(
+        return read_cached_result(
             self.cache_dir,
             content_hash,
             config_hash,
             relative_path=relative_path,
             reporter=self.reporter,
         )
-        # A cached *error* is not replayable under `--debug`: the traceback is printed by
-        # `scan_source`, which a hit skips. Re-scanning those files keeps `--debug` output
-        # independent of cache state, at the cost of re-analyzing the few files that failed —
-        # clean files still hit the cache, so the diagnostic mode stays fast.
-        if cached is not None and self.debug and cached.errors:
-            return None
-        return cached
 
     def store(
         self, key: CacheKey | None, file_result: FileScanResult, *, relative_path: str
@@ -184,13 +179,20 @@ def run_scan(
             0,
             errors=(exc.error,),
         )
+    # Built after discovery, so the constructor's symlink check only runs once discovery has
+    # succeeded and a discovery error is what gets reported.
     cache = RunCache(
         resolved_cache_dir,
         self_ignore=cache_dir is None,
         read_enabled=read_cache,
-        debug=debug,
+        reporter=CacheReporter(debug=debug),
     )
+    if discovered.files:
+        # Only when there is something to scan — so a run that discovers nothing neither creates
+        # a cache directory in the project nor reports on one it was never going to use.
+        cache.prepare()
     files = run_file_phase(discovered, root=root, config=config, cache=cache, debug=debug)
+    cache.finish()
     return ScanResult(
         root,
         config_path,
@@ -211,14 +213,11 @@ def run_file_phase(
     cache: RunCache,
     debug: bool,
 ) -> FilePhaseResult:
-    """Load, look up, scan, and store each discovered file, preparing and finishing the cache.
+    """Load, look up, scan, and store each discovered file.
 
+    `cache` arrives prepared, and the caller finishes it.
     A process-boundary failure ends the loop early, keeping every result completed before it.
     """
-    if discovered.files:
-        # Only when there is something to scan — so a run that discovers nothing neither creates
-        # a cache directory in the project nor reports on one it was never going to use.
-        cache.prepare()
     detector_inputs = selected_detector_inputs(config)
     compiled_per_file_ignores = compile_per_file_ignores(config.per_file_ignores)
     results: list[FileScanResult | CachedFileResult] = []
@@ -263,7 +262,11 @@ def run_file_phase(
         # Computed unconditionally (even under --no-cache) because `store` still writes on a miss.
         key = _cache_keys(source, config, file_enabled_rules)
         cached = cache.lookup(key, relative_path=relative)
-        if cached is not None:
+        # A cached *error* is not replayable under `--debug`: the traceback is printed by
+        # `scan_source`, which a hit skips. Re-scanning those files keeps `--debug` output
+        # independent of cache state, at the cost of re-analyzing the few files that failed —
+        # clean files still hit the cache, so the diagnostic mode stays fast.
+        if cached is not None and not (debug and cached.errors):
             results.append(cached)
             continue
         file_result = scan_source(
@@ -278,7 +281,6 @@ def run_file_phase(
             # scan outcome, so it must never be replayed from cache on a later hit.
             break
         cache.store(key, file_result, relative_path=relative)
-    cache.finish()
     return FilePhaseResult(
         tuple(finding for result in results for finding in result.findings),
         discovered.errors + tuple(err for result in results for err in result.errors),

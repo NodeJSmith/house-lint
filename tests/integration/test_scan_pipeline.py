@@ -405,6 +405,36 @@ def test_a_failed_prepare_does_not_disable_reads_or_writes_that_would_succeed(
     assert len(_entries(tmp_path)) == 2
 
 
+def test_a_symlinked_default_cache_is_not_read_or_written(
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "a.py").write_text(LAZY_IMPORT)
+    _check(capsys, tmp_path)
+    _poison_only_entry(tmp_path)
+    linked = tmp_path_factory.mktemp("outside") / "cache"
+    (tmp_path / ".house-lint-cache").rename(linked)
+    (tmp_path / ".house-lint-cache").symlink_to(linked, target_is_directory=True)
+
+    _, result, stderr = _check(capsys, tmp_path)
+
+    assert _messages_by_path(result) == {"a.py": LAZY_IMPORT_MESSAGE}
+    assert "caching disabled" in stderr
+    [entry] = _entries(tmp_path)
+    assert json.loads(entry.read_text())["findings"][0]["message"] == POISONED_MESSAGE
+
+
+def test_a_run_that_discovers_nothing_does_not_touch_the_cache(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, _, stderr = _check(capsys, tmp_path)
+
+    assert code == 0
+    assert stderr == ""
+    assert not (tmp_path / ".house-lint-cache").exists()
+
+
 def test_a_relative_cache_dir_resolves_against_the_working_directory_not_the_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
