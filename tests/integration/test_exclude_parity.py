@@ -55,6 +55,15 @@ SCENARIOS = (
     Scenario("'**/**/<name>' collapses to '**/<name>'", ("**/**/b.py",)),
     Scenario("trailing '/**' names a directory's contents", ("src/sub/**",)),
     Scenario("'/**/' in the middle", ("src/**/c.py",)),
+    Scenario("trailing '/**/' spares files directly in the directory", ("src/**/",)),
+    Scenario("repeated trailing '/**/' spares files directly in the directory", ("src/**/**/",)),
+    Scenario("trailing '/**/' below a nested anchor", ("src/sub/**/",)),
+    Scenario("trailing '/**/' followed by an insignificant space", ("src/**/ ",)),
+    Scenario(
+        "'**' fused to a literal segment before a trailing '/'",
+        ("foo**/",),
+        ("foobar/x.py", "foo/y.py", "src/foobar/z.py"),
+    ),
     Scenario(
         "a '**' fused to a literal segment does not un-anchor the pattern",
         ("foo**/**",),

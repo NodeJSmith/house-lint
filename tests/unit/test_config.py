@@ -130,6 +130,13 @@ def test_selection_keys_reject_a_non_array_value_as_a_config_error(
         load_config(config_path)
 
 
+def test_per_file_ignores_trailing_double_star_directory_spares_files_directly_inside() -> None:
+    compiled = compile_per_file_ignores({"src/**/": ("HSL002",)})
+
+    assert per_file_enabled_rules(("HSL002",), compiled, "src/a.py") == ("HSL002",)
+    assert per_file_enabled_rules(("HSL002",), compiled, "src/sub/b.py") == ()
+
+
 def test_per_file_ignores_removes_rules_only_for_matching_files(tmp_path: Path) -> None:
     config_path = tmp_path / "pyproject.toml"
     config_path.write_text(
