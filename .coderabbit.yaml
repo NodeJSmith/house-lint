@@ -11,6 +11,9 @@ reviews:
 
   request_changes_workflow: false
   high_level_summary: true
+  # The PR body becomes the squash commit body, and a BREAKING CHANGE footer runs to its end,
+  # so a summary appended to the description would land in the changelog's breaking-change note.
+  high_level_summary_in_walkthrough: true
   poem: false
 
   path_instructions:
