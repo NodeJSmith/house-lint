@@ -25,7 +25,7 @@ When a concrete rule or a ratified spec needs the engine to grow, grow the engin
 
 It's published on PyPI, but the maintainer is the only known user and every consuming project pins its version. Breaking the CLI flags, config schema, JSON output, exit codes, or suppression syntax is acceptable when you can say what the break buys; the cost is one coordinated version bump.
 - **No shims.** Don't keep old flags, config keys, or pragma spellings alive. Rename them, and update `docs/` and `README.md` in the same PR.
-- **Mark it.** Use `feat!` or `fix!`, and put the `BREAKING CHANGE:` footer in a commit message on the branch, not only in the PR body. release-please reads commits, so a footer that exists only in the PR description is silently dropped (see `.claude/rules/changelog-quality.md`).
+- **Mark it.** Use `feat!` or `fix!`, and end the PR description with the `BREAKING CHANGE:` footer. The squash commit's body is the PR description, and release-please reads that commit, so a footer that exists only in a commit message on the branch is silently dropped (see `.claude/rules/changelog-quality.md`).
 
 ## Commands
 
