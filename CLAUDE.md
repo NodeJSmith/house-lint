@@ -42,7 +42,8 @@ CI (`.github/workflows/ci.yml`) runs the tests on Python 3.11 through 3.14, and 
 ## Layout
 
 `src/house_lint/`:
-- `cli.py`: the cyclopts app, plus the `_scan` loop that runs discovery, cache reads and writes, and result aggregation
+- `cli.py`: the cyclopts app: argument parsing, config loading, the internal-error boundary, and rendering
+- `pipeline.py`: the whole run (`run_scan`): discovery, the per-file loop, cache reads and writes, and result aggregation
 - `config.py`: config discovery, validation, and per-rule option dataclasses (`HSL10xOptions`)
 - `discovery.py`: file discovery and gitignore handling
 - `source.py`: `SourceFile`, which loads, decodes, tokenizes, and parses one file
@@ -71,7 +72,7 @@ Today a rule is a detector `(source: SourceFile, options, *, limit=None) -> list
 3. `config.py`: an entry in `selected_detector_inputs`'s options dict, even for a rule with no options (`None`). A rule missing from it is silently dropped and never runs, and the registry check doesn't catch that.
 4. For a configurable rule, also add:
    - an options dataclass, a `LintConfig` field, the `DetectorOptions` union member, and `_rule_options` parsing
-   - the options in `cache.hash_effective_config` and `cli._cache_keys`, or a changed option will replay stale cached results
+   - the options in `cache.hash_effective_config` and `pipeline._cache_keys`, or a changed option will replay stale cached results
 5. `docs/rules.md` and, for options, `docs/configuration.md`. Also update the README rules table.
 6. Tests under `tests/unit/rules/`.
 

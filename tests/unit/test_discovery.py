@@ -1210,7 +1210,7 @@ def test_default_cache_directory_at_root_contributes_no_skip_count(tmp_path: Pat
     # Unlike every other pruned directory (see
     # `test_pruned_directory_counts_as_one_skip_not_one_per_contained_file`, which pins the
     # general "1 skip per pruned directory" rule), house-lint's own default cache base
-    # (`root / CACHE_DIRNAME`) is created by the very run that would be counting it -- `cli.py`
+    # (`root / CACHE_DIRNAME`) is created by the very run that would be counting it -- `pipeline.py`
     # calls `prepare_cache_dir` after discovery has already produced its result. Two scans of the
     # same otherwise-untouched root must report identical `files_skipped` regardless of whether
     # an earlier run already created `.house-lint-cache/`; a mismatch here is exactly what broke

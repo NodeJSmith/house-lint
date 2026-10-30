@@ -863,7 +863,7 @@ class _FileSelector:
         `files_skipped` and without a symlink stat. Every other pruned directory is either
         stable for the run's duration (a `.venv/`, a `.gitignore`d `build/`) or was already
         there when the run started, so counting it as "1 skip" is a meaningful signal. House-
-        lint's own default cache base is neither: `cli.py` creates it (via `prepare_cache_dir`)
+        lint's own default cache base is neither: `pipeline.py` creates it (via `prepare_cache_dir`)
         as a side effect of the very run that would be counting it, strictly after discovery has
         already produced its result for *this* run but strictly before any later run against the
         same root sees the filesystem again. Two back-to-back scans of an otherwise-untouched

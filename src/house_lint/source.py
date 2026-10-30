@@ -44,7 +44,7 @@ class SourceFile:
 
     This is the only place a scanned file's bytes are read. `content_bytes` exposes that single
     buffer so the cache key can be derived from exactly the content the detectors analyze — see
-    `cli._scan`.
+    `pipeline._cache_keys`.
     """
 
     def __init__(self, path: Path, root: Path, *, resolved_path: Path | None = None) -> None:
