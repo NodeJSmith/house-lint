@@ -1,0 +1,66 @@
+name: Lint
+
+on:
+    pull_request:
+        branches: [master]
+    push:
+        branches: [master]
+    workflow_dispatch:
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+
+jobs:
+    prek:
+        name: Prek
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+            - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+              with:
+                  persist-credentials: false
+
+            - name: Install uv and Python
+              uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8
+              with:
+                  python-version: "3.11"
+                  enable-cache: true
+
+            - name: Install dependencies
+              run: uv sync --locked
+
+            - name: Install prek
+              uses: j178/prek-action@5337cb91e0fa35a7ff31b9ca345126d8bbbcdf16 # v2
+              with:
+                  install-only: true
+
+            - name: Cache prek environments
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+              with:
+                  path: ~/.cache/prek
+                  key: prek-${{ runner.os }}-${{ hashFiles('prek.toml') }}
+
+            # The pre-push stage holds every hook except gitleaks, which scans staged files
+            # and so has nothing to scan in a clean checkout.
+            - name: Run hooks
+              run: prek run --all-files --stage pre-push --show-diff-on-failure
+
+    lint-complete:
+        needs: [prek]
+        if: always()
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        steps:
+            - name: Report result
+              run: |
+                  failed="${{ contains(needs.*.result, 'failure') }}"
+                  cancelled="${{ contains(needs.*.result, 'cancelled') }}"
+                  if [[ "$failed" == "true" || "$cancelled" == "true" ]]; then
+                      echo "One or more lint jobs failed or were cancelled"
+                      exit 1
+                  fi
+                  echo "All lint checks passed"

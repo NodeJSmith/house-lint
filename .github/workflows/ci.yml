@@ -65,3 +65,37 @@ jobs:
 
             - name: Build package
               run: uv build
+
+    build:
+        name: Build
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+            - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+              with:
+                  persist-credentials: false
+
+            - name: Install uv and Python
+              uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8
+              with:
+                  python-version: "3.11"
+                  enable-cache: true
+
+            - name: Build package
+              run: uv build
+
+    tests-complete:
+        needs: [test, build]
+        if: always()
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        steps:
+            - name: Report result
+              run: |
+                  failed="${{ contains(needs.*.result, 'failure') }}"
+                  cancelled="${{ contains(needs.*.result, 'cancelled') }}"
+                  if [[ "$failed" == "true" || "$cancelled" == "true" ]]; then
+                      echo "One or more test jobs failed or were cancelled"
+                      exit 1
+                  fi
+                  echo "All tests passed"
