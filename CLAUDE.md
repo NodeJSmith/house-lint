@@ -43,7 +43,7 @@ CI (`.github/workflows/ci.yml`) runs the tests on Python 3.11 through 3.14, and 
 
 `src/house_lint/`:
 - `cli.py`: the cyclopts app: argument parsing, config loading, the internal-error boundary, and rendering
-- `pipeline.py`: the whole run (`run_scan`): discovery, the per-file loop, cache reads and writes, and result aggregation
+- `pipeline.py`: the whole run (`run_scan`): discovery, the file phase, the per-run cache (`RunCache`), and result aggregation
 - `config.py`: config discovery, validation, and per-rule option dataclasses (`HSL10xOptions`)
 - `discovery.py`: file discovery and gitignore handling
 - `source.py`: `SourceFile`, which loads, decodes, tokenizes, and parses one file

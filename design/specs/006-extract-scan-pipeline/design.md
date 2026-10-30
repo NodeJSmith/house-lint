@@ -155,8 +155,13 @@ Each `SourceFile` is a loop local today (`cli.py:313`). Parent D14 has the proje
 
 ## Build
 
-- [ ] Implementation and tests committed
-- [ ] Docs
+- [x] Implementation and tests committed
+- [x] Docs: `CLAUDE.md` layout and option references; nothing in `docs/` or `README.md` names the old location
 - [ ] Ship-time challenge
 
 **Calls made during the build:**
+- `_persist_cache_entry` folded into `RunCache.store` instead of moving as its own function: its one caller is `store`, and its only work was building the `CachedFileResult`. Its rule, that an unhashable file must not trip the write breaker, is now a comment on `store`'s guard.
+- `_cache_keys` returns `None` rather than `(None, None)`: `lookup` and `store` then each check one value for "no key".
+- The cache location resolves before discovery and `RunCache` is built after it: this keeps today's order, so an unresolvable `--cache-dir` still outranks a discovery error, and the symlink check still runs after discovery.
+- `run_file_phase` collects each file's result and totals them at the end instead of keeping four accumulators: the three tally sites become one append each. The abort result from `open_source` now goes through the same totals; its findings and suppressed count are always empty, so the totals don't change.
+- Three pins beyond the ledger's list: a run that stops before writing doesn't prune, a run whose only write failed doesn't prune, and an unresolvable `--cache-dir` is an internal error even when discovery would also fail. Each guards an ordering or gate the loop rewrite could have changed.

@@ -2,6 +2,7 @@
 
 Everything here goes through `cli.check` and patches only code below the pipeline (`scanner` and
 `cache` internals), so a pin keeps meaning the same thing when the pipeline around it is reshaped.
+Files are scanned in sorted order, which is what puts `a.py` ahead of `b.py` in the cache pins.
 """
 
 import json
@@ -445,6 +446,7 @@ def test_a_home_relative_cache_dir_expands_to_the_home_directory(
 def test_an_unresolvable_cache_dir_is_an_internal_error_even_when_discovery_would_also_fail(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # The cache location resolves before discovery, so its failure is the one reported.
     code, result, _ = _check(
         capsys,
         tmp_path,
