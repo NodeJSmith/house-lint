@@ -110,7 +110,7 @@ house-lint check src/service.py tests # only these files and directories
 - `--root` fixes the project boundary. Without `--config`, house-lint looks in the root for `house-lint.toml`, then `.house-lint.toml`, then a `pyproject.toml` with `[tool.house-lint]`.
 - `--config` names an exact configuration file, and its directory becomes the root unless `--root` is given.
 
-Inside a git repository, house-lint takes its file list from `git ls-files`, so tracked files are scanned and untracked ignored files aren't. A git failure there stops the run with exit code 3. Outside a repository, or with `--no-gitignore`, it walks the directory and reads no ignore files. See [File selection](docs/configuration.md#file-selection).
+Inside a git repository, house-lint takes its file list from `git ls-files`, so tracked files are scanned and untracked ignored files aren't. A git failure there stops the run with exit code 3. Outside a repository, or with `--no-git`, it walks the directory and reads no ignore files. See [File selection](docs/configuration.md#file-selection).
 
 ## Pre-commit
 
@@ -158,7 +158,7 @@ A cache failure never fails a scan. house-lint prints one warning for the first 
 | 0 | Clean scan |
 | 1 | Findings, including `HSL900` |
 | 2 | Usage or configuration error; nothing was scanned |
-| 3 | Incomplete scan: path, traversal, budget, read, decode, tokenize, or syntax error |
+| 3 | Incomplete scan: path, traversal, git, budget, read, decode, tokenize, or syntax error |
 | 4 | Unexpected internal error |
 
 When several apply, the highest code wins.
@@ -167,7 +167,8 @@ When several apply, the highest code wins.
 | --- | --- |
 | `config-error` | Invalid CLI arguments, configuration, or root |
 | `path-error` | Invalid explicit path or source path |
-| `traversal-error` | Discovery filesystem failure, or a git failure inside a repository |
+| `traversal-error` | Discovery filesystem failure; the rest of the scan still ran |
+| `git-error` | git failed inside a repository; nothing was scanned |
 | `budget-error` | A discovery or candidate-count safety limit was exceeded |
 | `source-too-large` | A source file exceeds the 10 MiB read limit |
 | `read-error` | A source file could not be read |

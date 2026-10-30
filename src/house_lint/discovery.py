@@ -19,6 +19,7 @@ from house_lint.config import (
     get_house_lint_table,
     get_standalone_table,
     load_toml,
+    validate_exclude,
 )
 from house_lint.results import LintError
 
@@ -72,13 +73,13 @@ _CONFIG_CANDIDATES: tuple[tuple[str, _ConfigTableGetter], ...] = (
 _GIT_COMMAND = ("git", "-c", "core.fsmonitor=false")
 _LS_FILES_ARGS = ("ls-files", "-z", "--cached", "--others", "--exclude-standard")
 _CHECK_IGNORE_ARGS = ("check-ignore", "-q", ".")
-_GIT_FAILURE_HINT = "pass --no-gitignore to scan without git"
+_GIT_FAILURE_HINT = "pass --no-git to scan without git"
 # `LintError.kind`/`.operation` are typed `str` in `results.py` (the public, schema-versioned
 # result type), so nothing there enforces this vocabulary -- these `Literal` aliases are this
 # module's own closed set of the `kind`/`operation` values it actually passes to `_error`, so a
 # typo (e.g. `"trversal"`) is a pyright error here rather than a silently-unvalidated string.
-_ErrorKind = Literal["path", "traversal", "budget"]
-_ErrorOperation = Literal["stat", "resolve", "walk", "containment", "qualify", "discover", "git"]
+_ErrorKind = Literal["path", "traversal", "budget", "git"]
+_ErrorOperation = Literal["stat", "resolve", "walk", "containment", "qualify", "discover", "list"]
 
 
 class DiscoveryError(ValueError):
@@ -185,7 +186,7 @@ class _FileSelector:
     root: Path
     exclude_spec: GitIgnoreSpec
     errors: list[LintError]
-    use_gitignore: bool = True
+    use_git: bool = True
     selected: dict[Path, Path] = field(default_factory=lambda: dict[Path, Path]())
     limit_reached: bool = False
     excluded_dirs: dict[str, bool] = field(default_factory=lambda: dict[str, bool]())
@@ -264,9 +265,7 @@ class _FileSelector:
             self._filesystem_error(path, "stat", str(exc), explicit_paths=explicit_paths)
             return
         if is_symlink and is_dir:
-            self.errors.append(
-                self._error(path, "traversal", "walk", "directory symlink is not traversed")
-            )
+            self._record_directory_symlink(path)
             return
         if is_symlink and not explicit_paths:
             return
@@ -290,7 +289,7 @@ class _FileSelector:
 
     def _scan_directory(self, directory: Path) -> None:
         """Find the files in a requested directory: through git in a repository, else a walk."""
-        if not self.use_gitignore or not inside_repository(directory):
+        if not self.use_git or not inside_repository(directory):
             self._walk(directory)
             return
         try:
@@ -299,7 +298,7 @@ class _FileSelector:
             # this one. `check build/gen.py` lints the file, so `check build/` has to as well.
             walk_instead = not listed and git_ignores(directory)
         except GitFailure as exc:
-            raise DiscoveryError(self._error(directory, "traversal", "git", str(exc))) from exc
+            raise DiscoveryError(self._error(directory, "git", "list", str(exc))) from exc
         if walk_instead:
             self._walk(directory)
             return
@@ -338,9 +337,9 @@ class _FileSelector:
         holds entries for submodules and nested clones, which the regular-file check drops rather
         than recursing into, and tracked files already deleted from disk.
 
-        Neither source follows a symlinked directory, so the only way a path leaves the root is a
-        tracked file whose parent became a symlink after it was added. git reports that file as
-        deleted, so it is dropped the same way.
+        Neither source follows a symlinked directory, but a listing can still name a tracked file
+        whose parent became a symlink after it was added. git reports that file as deleted, so it
+        is dropped the same way.
         """
         if self._excluded(relative, is_dir=False):
             return
@@ -359,9 +358,7 @@ class _FileSelector:
             # git lists a symlink as a file, so a symlinked `.venv` only matches the directory-only
             # `.venv/` once this check has shown what it points at.
             if not self._excluded(relative, is_dir=True):
-                self.errors.append(
-                    self._error(path, "traversal", "walk", "directory symlink is not traversed")
-                )
+                self._record_directory_symlink(path)
             return
         if not stat.S_ISREG(mode) or path.suffix != ".py":
             return
@@ -417,12 +414,15 @@ class _FileSelector:
                 self.errors.append(self._error(child, "traversal", "stat", str(exc)))
                 continue
             if is_symlink:
-                self.errors.append(
-                    self._error(child, "traversal", "walk", "directory symlink is not traversed")
-                )
+                self._record_directory_symlink(child)
                 continue
             kept.append(item)
         return kept
+
+    def _record_directory_symlink(self, path: Path) -> None:
+        self.errors.append(
+            self._error(path, "traversal", "walk", "directory symlink is not traversed")
+        )
 
     def _filesystem_error(
         self, path: Path, operation: _ErrorOperation, message: str, *, explicit_paths: bool
@@ -464,13 +464,19 @@ def discover_files(
     include: tuple[str, ...] = DEFAULT_INCLUDE,
     explicit: tuple[Path, ...] = (),
     excludes: tuple[str, ...] = (),
-    use_gitignore: bool = True,
+    use_git: bool = True,
 ) -> DiscoveryResult:
-    """Discover qualifying files, or raise for strict explicit path failures."""
+    """Discover qualifying files, or raise for strict explicit path failures and git failures.
+
+    Raises `ConfigError` for a negated exclude.
+
+    `excludes` is validated here as well as at config load, because `_excluded` is only correct
+    when no pattern can be a negation.
+    """
     root = root.expanduser().resolve()
     requested = explicit or tuple(root / item for item in include)
     selector = _FileSelector(
-        root, GitIgnoreSpec.from_lines(excludes), [], use_gitignore=use_gitignore
+        root, GitIgnoreSpec.from_lines(validate_exclude(excludes)), [], use_git=use_git
     )
     selector.select(requested, explicit_paths=bool(explicit))
     return selector.result()

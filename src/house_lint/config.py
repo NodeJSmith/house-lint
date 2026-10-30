@@ -293,7 +293,7 @@ def _validate_git_ignore_patterns(values: tuple[str, ...], name: str) -> tuple[s
     return values
 
 
-def _validate_exclude(values: tuple[str, ...]) -> tuple[str, ...]:
+def validate_exclude(values: tuple[str, ...]) -> tuple[str, ...]:
     negated = [value for value in values if value.startswith("!")]
     if negated:
         raise ConfigError(f"exclude must not contain negated patterns: {', '.join(negated)}")
@@ -497,7 +497,7 @@ def load_config(
         table_name,
     )
     include = _validate_include(_strings(house.get("include", list(DEFAULT_INCLUDE)), "include"))
-    exclude = _validate_exclude(_strings(house.get("exclude", []), "exclude"))
+    exclude = validate_exclude(_strings(house.get("exclude", []), "exclude"))
     # Every raw TOML value goes through `_strings` here rather than reaching
     # `_effective_rule_selection` as-is: that function converts with `list(...)` before validating,
     # which turns `select = 5` into a `TypeError` (an internal-error exit, not the documented

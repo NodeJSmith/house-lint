@@ -1,7 +1,7 @@
 # Design: Take Discovery's File List From Git
 
 **Date:** 2026-10-30
-**Status:** ratified
+**Status:** built
 **Mode:** sketch
 **Issues:** #64
 **Prior art:** design/research/2026-10-30-git-ls-files-file-discovery/prior-art.md
@@ -10,7 +10,7 @@
 
 `src/house_lint/discovery.py` is 1,031 lines, and much of it reimplements git's ignore rules on `pathspec`. Another 749 lines of parity and fuzz tests keep that reimplementation honest. It works: the fuzz suite shows zero divergence. The case for replacing it is the cost of owning git's semantics, not a correctness bug, and #57 and #59 are about to build on discovery.
 
-The choice to replace is settled, and this ledger decides how. Inside a git repo, each directory discovery is asked to scan is listed with `git ls-files -z --cached --others --exclude-standard`. Outside a repo, or under `--no-gitignore`, discovery does a plain `os.walk` with no gitignore handling. D9 decides how what they return is filtered. Symlink handling, root containment, the file limit, built-in excludes, and configured `exclude` all stay.
+The choice to replace is settled, and this ledger decides how. Inside a git repo, each directory discovery is asked to scan is listed with `git ls-files -z --cached --others --exclude-standard`. Outside a repo, or under `--no-git`, discovery does a plain `os.walk` with no gitignore handling. D9 decides how what they return is filtered. Symlink handling, root containment, the file limit, built-in excludes, and configured `exclude` all stay.
 
 These follow from the settled choice and need no decision. Each is a behaviour change that the `BREAKING CHANGE:` footer has to name:
 
@@ -20,7 +20,7 @@ These follow from the settled choice and need no decision. Each is a behaviour c
 
 The footer also names every break the decisions below accept, which their `**Ratified:**` sentences state, as one `BREAKING CHANGE:` footer with a `####` list per `.claude/rules/changelog-quality.md`.
 
-**Homes:** the git listing and repo detection are new module-level functions in `src/house_lint/discovery.py`, called from `_FileSelector` in place of the gitignore half of `_walk`. There's no new module, because the listing is about 30 lines and only discovery calls it. The `git check-ignore` probe from D2 is a function beside the listing, called by the requested-path handling when a listing comes back empty, and its failures follow D1. D9's split makes the requested-path handling what remains of `_consider`, and the discovered-path filter a new `_FileSelector` method. `exclude` and built-in matching (D3) replace `_patterns` and `_ignored` with a compiled `GitIgnoreSpec` per set and one module-level function that checks a path and its ancestors. The `!` rejection lives in `config.py`'s `_validate_exclude` and raises `ConfigError`, as the `per-file-ignores` check beside it does. The per-directory matcher stack is deleted: `_load_gitignore_lines`, `_is_gitignore_excluded`, `_directory_gitignore_context`, `_own_matcher`, and `_own_gitignore_lines`, about 165 lines. D3 decides whether a further 280 or so go.
+**Homes:** the git listing and repo detection are new module-level functions in `src/house_lint/discovery.py`, called from `_FileSelector` in place of the gitignore half of `_walk`. There's no new module, because the listing is about 30 lines and only discovery calls it. The `git check-ignore` probe from D2 is a function beside the listing, called by the requested-path handling when a listing comes back empty, and its failures follow D1. D9's split makes the requested-path handling what remains of `_consider`, and the discovered-path filter a new `_FileSelector` method. `exclude` and built-in matching (D3) replace `_patterns` and `_ignored` with a compiled `GitIgnoreSpec` per set and one module-level function that checks a path and its ancestors. The `!` rejection lives in `config.py`'s `validate_exclude` and raises `ConfigError`, as the `per-file-ignores` check beside it does. The per-directory matcher stack is deleted: `_load_gitignore_lines`, `_is_gitignore_excluded`, `_directory_gitignore_context`, `_own_matcher`, and `_own_gitignore_lines`, about 165 lines. D3 decides whether a further 280 or so go.
 
 **Out of scope:** language-tagged discovery (#57), project-rule passes (#59), and config discovery (`resolve_project`), which keeps its own `.git` boundary rule. `pathspec` stays a dependency, because `config.py` validates patterns and `per-file-ignores` uses it.
 
@@ -50,17 +50,17 @@ The footer also names every break the decisions below accept, which their `**Rat
 | | A: Look for a `.git` entry walking up from the directory; inside one, any git failure stops the run | B: Run `git rev-parse` with `LC_ALL=C`, match "not a git repository" in stderr | C: A, plus `-c safe.directory=<dir>` on the listing call | D: Any git failure warns and walks |
 |---|---|---|---|---|
 | Dubious ownership in Docker CI | Stops, showing git's message | Stops, showing git's message | Lists normally | Walks, scanning gitignored files |
-| git not installed, inside a repo | Stops, and says `--no-gitignore` walks instead | Needs its own branch to detect | Stops | Walks |
+| git not installed, inside a repo | Stops, and says `--no-git` walks instead | Needs its own branch to detect | Stops | Walks |
 | Depends on git's message text | No | Yes | No | No |
 | git needed outside a repo | No | Yes, one probe per run | No | Yes |
 | Bypasses a git security check | No | No | Yes: `ls-files` in someone else's repo can read their config, including `core.fsmonitor` | No |
 | Machinery | About 5 lines, same marker idea as `resolve_project` | About 15 lines | A plus one argument | About 5 lines |
 | What peers do | pre-commit hard-fails; nobody uses a marker | ansible-lint matched text | ansible-lint, until it removed git | editorconfig-checker, osemgrep, Mega-Linter |
 
-**Recommendation:** A, because it decides from the filesystem and turns every other outcome into a visible error. The error carries git's stderr and names `--no-gitignore` as the way to scan without git. A failure to start git (`OSError`, including a missing binary) is the same discovery error, with the same hint. The listing call passes `-c core.fsmonitor=false`, because `ls-files` otherwise runs a command from the scanned tree's own `.git/config` (probed), which matters for a tree extracted from an untrusted archive. Non-empty stderr on exit 0 is also a recorded discovery error carrying git's text, because `ls-files` warns and exits 0 on an unreadable directory while leaving its files out; a stray git warning therefore stops the run too, and `--no-gitignore` is the way past it. A `.git` entry git itself rejects (empty directory with no repo above it, a dangling `.git` file, across a filesystem boundary) also stops the run, which is correct for something that looks like a repo and isn't.
+**Recommendation:** A, because it decides from the filesystem and turns every other outcome into a visible error. The error carries git's stderr and names `--no-git` as the way to scan without git. A failure to start git (`OSError`, including a missing binary) is the same discovery error, with the same hint. The listing call passes `-c core.fsmonitor=false`, because `ls-files` otherwise runs a command from the scanned tree's own `.git/config` (probed), which matters for a tree extracted from an untrusted archive. Non-empty stderr on exit 0 is also a recorded discovery error carrying git's text, because `ls-files` warns and exits 0 on an unreadable directory while leaving its files out; a stray git warning therefore stops the run too, and `--no-git` is the way past it. A `.git` entry git itself rejects (empty directory with no repo above it, a dangling `.git` file, across a filesystem boundary) also stops the run, which is correct for something that looks like a repo and isn't.
 **Pick B instead if** you expect a stray `.git` in ancestors to be common enough that stopping is wrong. **Pick C instead if** you run house-lint in containers with mismatched ownership often and would rather not set `safe.directory` there. **Pick D instead if** you'd rather lint too much than stop a run.
 **Reversibility:** easy
-**Ratified:** Chose A over B, C, and D, so a broken git can never quietly change what gets scanned in a repo visible on the filesystem, accepting that a stray or rejected `.git` entry or a stray git warning stops the run until `--no-gitignore` is passed, that an exported `GIT_DIR` with no `.git` entry gets the plain walk, and that an empty `.git` directory below a real repo lists through that repo.
+**Ratified:** Chose A over B, C, and D, so a broken git can never quietly change what gets scanned in a repo visible on the filesystem, accepting that a stray or rejected `.git` entry or a stray git warning stops the run until `--no-git` is passed, that an exported `GIT_DIR` with no `.git` entry gets the plain walk, and that an empty `.git` directory below a real repo lists through that repo.
 
 ### D2: What happens to a file named explicitly, including one git ignores?
 
@@ -178,16 +178,16 @@ The footer also names every break the decisions below accept, which their `**Rat
 **Reversibility:** easy
 **Ratified:** Chose A over B, to keep one git call per listing and third-party code out of findings, accepting that a full scan no longer covers submodules or nested clones, and that an empty scan caused by Python living only in submodules still points at `include`.
 
-### D8: What does `--no-gitignore` do?
+### D8: What does `--no-git` do?
 
-**Situation:** the flag exists today and turns off `.gitignore` handling at every level. After this change the plain walk already exists for trees that aren't repos.
+**Situation:** the flag exists today as `--no-gitignore` and turns off `.gitignore` handling at every level. After this change the plain walk already exists for trees that aren't repos.
 
 **Deciding factor:** one code path for "no git".
 
-**Recommendation:** make `--no-gitignore` run the same plain walk used outside a repo: no git process, no ignore files of any kind, built-in and configured excludes still applied. It's also the way past a git failure that D1 names in its error.
+**Recommendation:** make `--no-git` run the same plain walk used outside a repo: no git process, no ignore files of any kind, built-in and configured excludes still applied. It's also the way past a git failure that D1 names in its error.
 **Pick differently if** you want the flag to mean something narrower, such as listing through git but including ignored files.
 **Reversibility:** easy
-**Ratified:** Chose the plain walk over listing through git with ignored files included, so there is one code path for "no git" and a way past any git failure, accepting that the flag also turns off `.git/info/exclude` and global excludes.
+**Ratified:** Chose the plain walk over listing through git with ignored files included, so there is one code path for "no git" and a way past any git failure, accepting that the flag also turns off `.git/info/exclude` and global excludes. The flag was `--no-gitignore`; the ship-time challenge renamed it, because it no longer means "don't use a `.gitignore` file".
 
 ### D9: How are discovered files filtered?
 
@@ -226,15 +226,16 @@ The footer also names every break the decisions below accept, which their `**Rat
 
 - [x] Implementation and tests committed
 - [x] Docs
-- [ ] Ship-time challenge
+- [x] Ship-time challenge
 
 **Calls made during the build:**
 - A tracked file whose parent directory became a symlink is dropped: D9 says a discovered path needs no containment check because neither source goes through a symlinked directory, but `--cached` does list such a file, and it read a file outside the root (reproduced). Posture keeps containment and D9's ratified behaviour is unaffected. A per-directory `realpath` comparison covers it, and `git status` calls that file deleted, so it follows the "missing means dropped" step.
 - A directory symlink rechecks excludes in directory form before recording its error: git lists a symlink as a file, so a symlinked `.venv` misses the directory-only `.venv/` on D9's first string match and would otherwise become exit 3.
 - Exclude matching is a `_FileSelector` method rather than the module-level function the Summary names: it needs a per-directory verdict cache, since each `match_file` costs about 6 µs per spec.
 - Discovered paths travel as root-relative strings, with a `Path` built only after excludes: on 50,000 files in an excluded tree, `pathlib` was most of the 1.2 s, and this takes it to 0.18 s. The unexcluded case went from 2.42 s to 1.61 s.
-- A git failure is `traversal-error` with operation `git`, the kind closest to "couldn't enumerate", and doesn't add an error code.
+- A git failure gets its own `git-error` code, chosen at the ship-time challenge: `traversal-error` means a partial result, and a git failure means nothing was scanned.
 - The repository check uses `os.path.lexists`, so a dangling `.git` symlink counts as an entry git rejects, which D1 wants to stop the run. `resolve_project`'s `.exists()` is out of scope.
 - D3's known divergence is narrower than its wording: a singly escaped trailing space agrees with git. The one that differs is a doubled backslash before a trailing space. The docs say that, and `test_exclude_parity.py` pins it.
+- `discover_files` also calls `validate_exclude`, chosen at the ship-time challenge: `_excluded` depends on there being no negation, and a later caller might not build excludes from validated config. `cli.py` already catches `ConfigError` around the scan.
 - The listing is sorted so the file limit keeps the same files whichever order git emits.
 - `test_gitignore_parity.py` is renamed `test_exclude_parity.py`, since `exclude` is all it checks. The CI and `pyproject.toml` comments about the fuzz suite's `CI` gate are gone with the suite.

@@ -89,9 +89,9 @@ Inside a git repository, house-lint asks git which files exist. For each directo
 - Ignore files above the scan root count, so a scan rooted in a subdirectory follows the repository's rules.
 - Submodules and nested clones aren't scanned unless you name one directly. Each is another project, with its own lint config.
 
-"Inside a repository" means a `.git` entry exists at the directory or somewhere above it. Git itself can't answer that question: it exits 128 for "not a repository" and for a `safe.directory` refusal alike, and treating a refusal as "not a repository" would quietly lint gitignored files. So inside a repository, any git failure stops the run with exit code 3 and git's message: git missing, a refusal, a `.git` entry git rejects, or a warning on stderr. Passing `--no-gitignore` scans without git.
+"Inside a repository" means a `.git` entry exists at the directory or somewhere above it. Git itself can't answer that question: it exits 128 for "not a repository" and for a `safe.directory` refusal alike, and treating a refusal as "not a repository" would quietly lint gitignored files. So inside a repository, any git failure stops the run with exit code 3, a `git-error`, and git's message: git missing, a refusal, a `.git` entry git rejects, or a warning on stderr. Passing `--no-git` scans without git.
 
-Outside a repository, or with `--no-gitignore`, house-lint walks the directory and reads no ignore files of any kind. A `.gitignore` in a tree that isn't a repository has no effect, and `--no-gitignore` also turns off `.git/info/exclude` and global excludes.
+Outside a repository, or with `--no-git`, house-lint walks the directory and reads no ignore files of any kind. A `.gitignore` in a tree that isn't a repository has no effect, and `--no-git` also turns off `.git/info/exclude` and global excludes.
 
 Built-in and configured excludes apply on top in every case. Built-in excludes are `.bzr/`, `.direnv/`, `.eggs/`, `.git/`, `.git-rewrite/`, `.hg/`, `.house-lint-cache/`, `.ipynb_checkpoints/`, `.mypy_cache/`, `.nox/`, `.pants.d/`, `.pyenv/`, `.pytest_cache/`, `.pytype/`, `.ruff_cache/`, `.svn/`, `.tox/`, `.venv/`, `.vscode/`, `__pycache__/`, `__pypackages__/`, `_build/`, `buck-out/`, `dist/`, `node_modules/`, `site-packages/`, and `venv/`. A tracked file under one of these stays out, and so does one under a configured `exclude`.
 

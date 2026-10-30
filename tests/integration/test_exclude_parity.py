@@ -104,7 +104,7 @@ def _dropped(result: DiscoveryResult, root: Path, files: tuple[str, ...]) -> set
 def test_excludes_match_git_on_a_full_scan(scenario: Scenario, tmp_path: Path) -> None:
     _build(tmp_path, scenario)
 
-    result = discover_files(tmp_path, excludes=scenario.patterns, use_gitignore=False)
+    result = discover_files(tmp_path, excludes=scenario.patterns, use_git=False)
 
     assert result.errors == ()
     assert _dropped(result, tmp_path, scenario.files) == git_ignored(tmp_path, scenario.files)
@@ -119,7 +119,7 @@ def test_excludes_match_git_for_named_files(scenario: Scenario, tmp_path: Path) 
         tmp_path,
         explicit=tuple(tmp_path / item for item in scenario.files),
         excludes=scenario.patterns,
-        use_gitignore=False,
+        use_git=False,
     )
 
     assert result.errors == ()
@@ -133,7 +133,7 @@ def test_doubled_backslash_before_trailing_space_is_the_known_divergence(tmp_pat
     pattern = "pkg\\\\ "
     _build(tmp_path, Scenario("divergence", (pattern,), files))
 
-    result = discover_files(tmp_path, excludes=(pattern,), use_gitignore=False)
+    result = discover_files(tmp_path, excludes=(pattern,), use_git=False)
 
     assert git_ignored(tmp_path, files) == set(files)
     assert _dropped(result, tmp_path, files) == set()

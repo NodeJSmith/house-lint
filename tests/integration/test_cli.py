@@ -1372,10 +1372,10 @@ def test_git_failure_inside_a_repository_is_an_incomplete_scan(repository: Path)
     assert completed.returncode == 3
     result = json.loads(completed.stdout)
     assert result["files_scanned"] == 0
-    assert [error["operation"] for error in result["errors"]] == ["git"]
-    assert "--no-gitignore" in result["errors"][0]["message"]
+    assert [error["code"] for error in result["errors"]] == ["git-error"]
+    assert "--no-git" in result["errors"][0]["message"]
 
-    bypassed = _run(repository, "check", "--root", str(repository), "--no-gitignore")
+    bypassed = _run(repository, "check", "--root", str(repository), "--no-git")
     assert bypassed.returncode == 0
 
 

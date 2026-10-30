@@ -636,8 +636,8 @@ def _raises_git_error(root: Path) -> LintError:
     with pytest.raises(DiscoveryError) as raised:
         discover_files(root)
     error = raised.value.error
-    assert (error.kind, error.phase, error.operation) == ("traversal", "discovery", "git")
-    assert "--no-gitignore" in error.message
+    assert (error.code, error.kind, error.phase) == ("git-error", "git", "discovery")
+    assert "--no-git" in error.message
     return error
 
 
@@ -856,6 +856,11 @@ def test_excluded_directory_requested_directly_starts_no_git_process(
     assert result.files == ()
 
 
+def test_negated_exclude_is_rejected_for_a_caller_that_skipped_config(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="negated patterns"):
+        discover_files(tmp_path, excludes=("!keep.py",))
+
+
 def test_requested_path_matches_excludes_at_its_resolved_location(tmp_path: Path) -> None:
     kept = _write(tmp_path, "tests/a.py")[0]
     (tmp_path / "src").mkdir()
@@ -884,7 +889,7 @@ def test_nested_clone_named_directly_is_listed(repo: Path) -> None:
     assert discover_files(repo, explicit=(repo / "nested",)).files == (inner,)
 
 
-def test_no_gitignore_walks_a_repository_without_git_but_keeps_excludes(
+def test_no_git_walks_a_repository_without_git_but_keeps_excludes(
     repo: Path, no_subprocess: None
 ) -> None:
     (repo / ".gitignore").write_text("ignored.py\n")
@@ -892,16 +897,16 @@ def test_no_gitignore_walks_a_repository_without_git_but_keeps_excludes(
     expected = _write(repo, "ignored.py", "info.py")
     _write(repo, "excluded/a.py", ".venv/b.py")
 
-    result = discover_files(repo, excludes=("excluded/",), use_gitignore=False)
+    result = discover_files(repo, excludes=("excluded/",), use_git=False)
 
     assert result.files == expected
 
 
-def test_no_gitignore_gets_past_a_rejected_git_directory(tmp_path: Path) -> None:
+def test_no_git_gets_past_a_rejected_git_directory(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
     kept = _write(tmp_path, "a.py")[0]
 
-    assert discover_files(tmp_path, use_gitignore=False).files == (kept,)
+    assert discover_files(tmp_path, use_git=False).files == (kept,)
 
 
 def test_excluded_paths_produce_no_error_when_a_symlink_lives_inside_them(repo: Path) -> None:
@@ -978,7 +983,7 @@ def test_symlinks_behave_the_same_through_git_and_a_walk(repo: Path) -> None:
     (repo / "dangling.py").symlink_to(repo / "missing.py")
 
     listed = discover_files(repo)
-    walked = discover_files(repo, use_gitignore=False)
+    walked = discover_files(repo, use_git=False)
 
     assert listed.files == walked.files == (kept, target)
     assert listed.errors == walked.errors
@@ -991,7 +996,7 @@ def test_directory_only_exclude_does_not_match_a_same_named_python_file(repo: Pa
     kept = _write(repo, "src/b.py")[0]
 
     assert discover_files(repo, excludes=("b.py/",)).files == (kept,)
-    assert discover_files(repo, excludes=("b.py/",), use_gitignore=False).files == (kept,)
+    assert discover_files(repo, excludes=("b.py/",), use_git=False).files == (kept,)
 
 
 def test_a_duplicate_listing_of_an_unmerged_file_selects_it_once(
@@ -1019,3 +1024,35 @@ def test_file_limit_applies_to_a_listing(repo: Path, monkeypatch: pytest.MonkeyP
 
     assert result.files == (first, second)
     assert [error.kind for error in result.errors] == ["budget"]
+
+
+def test_file_limit_keeps_the_same_files_whichever_order_git_emits(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # git prints untracked files before tracked ones, so only the sort keeps `a_tracked.py`.
+    first = _write(repo, "a_tracked.py", "z_tracked.py", "m_untracked.py")[0]
+    _git(repo, "add", "a_tracked.py", "z_tracked.py")
+    monkeypatch.setattr(discovery, "MAX_DISCOVERED_FILES", 1)
+
+    assert discover_files(repo).files == (first,)
+
+
+def test_exported_git_dir_with_no_git_entry_gets_the_plain_walk(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = tmp_path_factory.mktemp("other")
+    _git(other, "init", "-q", ".")
+    tree = tmp_path_factory.mktemp("tree")
+    (tree / ".gitignore").write_text("hidden.py\n")
+    hidden = _write(tree, "hidden.py")[0]
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+
+    assert discover_files(tree).files == (hidden,)
+
+
+def test_empty_git_directory_below_a_repository_lists_through_that_repository(repo: Path) -> None:
+    (repo / ".gitignore").write_text("sub/hidden.py\n")
+    shown = _write(repo, "sub/shown.py", "sub/hidden.py")[0]
+    (repo / "sub" / ".git").mkdir()
+
+    assert discover_files(repo / "sub").files == (shown,)

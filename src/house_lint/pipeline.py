@@ -149,7 +149,7 @@ def run_scan(
     root: Path,
     config_path: Path | None,
     config: LintConfig,
-    use_gitignore: bool,
+    use_git: bool,
     read_cache: bool,
     cache_dir: Path | None,
     debug: bool,
@@ -168,7 +168,7 @@ def run_scan(
             include=config.include,
             explicit=paths,
             excludes=config.exclude,
-            use_gitignore=use_gitignore,
+            use_git=use_git,
         )
     except DiscoveryError as exc:
         return ScanResult(
