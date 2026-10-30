@@ -2,6 +2,33 @@
 
 All notable changes to `house-lint` are documented here.
 
+## [0.3.0](https://github.com/NodeJSmith/house-lint/compare/v0.2.0...v0.3.0) (2026-10-30)
+
+### Breaking Changes
+
+- **Config discovery now stops at the nearest `.git` directory.** Previously, a nested repo with no config of its own inherited a recognized config from an ancestor directory outside the repo, which also moved the scan root up to that ancestor. A nested repo now uses its own root and the default rules. If you relied on inheriting, add a config file to the nested repo or pass `--config`. (#51)
+- **Some suppression pragmas are now reported by HSL900.** An `ignore-file` or `ignore-next` placed between a decorator and its `def`/`class` is now misplaced; move it above the whole decorated statement. An `ignore[HSL103]` on a `try:` line is now an unused suppression; put it on each `except` line instead. (#48)
+
+### Rules
+
+- `HSL001` no longer flags coding cookies and emacs modelines (`# -*- coding: utf-8 -*-`). It now flags all-hash rows (`########`) and hash-flanked titles (`#### x ####`), so you may see new findings. (#48)
+- `HSL003` now recognizes aliased guards (`import typing as t; if t.TYPE_CHECKING:` and `from typing import TYPE_CHECKING as TC`), so you may see new findings. (#48)
+
+### Suppressions
+
+- `ignore-next` can now suppress findings on standalone comment lines such as dividers. Previously the pragma was reported as unused, and only `ignore-file` worked. (#50)
+- `ignore-next` above a decorated `def` or `class` now applies to it instead of being reported as misplaced. (#48)
+- `ignore[HSL103]` on one `except` clause now silences only that handler, not every handler of the same `try`. (#48)
+
+### Discovery
+
+- Configured `exclude` patterns now follow git's semantics. The whitelist idiom `exclude = ["*", "!*/", "!*.py"]` no longer skips every subdirectory. (#48)
+
+### Bug Fixes
+
+- A form feed or U+2028 in a source file no longer shifts line numbers. This could abort an `HSL101` run, break valid `ignore-next` pragmas, and misread docstring lines. (#48)
+- Zero-file guidance now names the actual `--config` file instead of always saying `pyproject.toml`. (#48)
+
 ## [0.2.0](https://github.com/NodeJSmith/house-lint/compare/v0.1.2...v0.2.0) (2026-08-23)
 
 ### Breaking Changes
