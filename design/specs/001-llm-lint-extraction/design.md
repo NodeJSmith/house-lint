@@ -634,3 +634,9 @@ The implementation changes only this new repository. Local acceptance reads Hass
 ## Open Questions
 
 No open questions remain. The design intentionally keeps atomic per-file parse gating for v0.1: malformed files return an incomplete-scan error and do not receive partial rule execution.
+
+## Addendum
+
+### 2026-10-30: discovery now shells out to git
+
+The "do not shell out to Git" constraint in Key Constraints and the discovery section no longer holds. Inside a repository, discovery takes its file list from `git ls-files`. See `design/specs/007-git-file-discovery/design.md`.

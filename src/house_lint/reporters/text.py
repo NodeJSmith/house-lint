@@ -82,7 +82,7 @@ def render_text(
         f"root: {data['root'] or '<none>'}",
         f"config: {data['config'] or '<none>'}{shadowed_config_note(shadowed)}",
         f"enabled rules: {', '.join(data['enabled_rules']) or '<none>'}",
-        f"files: scanned {data['files_scanned']}, skipped {data['files_skipped']}",
+        f"files: scanned {data['files_scanned']}",
     ]
     if zero_file_note is not None:
         lines.append(zero_file_note)

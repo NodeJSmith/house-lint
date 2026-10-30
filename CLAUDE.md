@@ -45,7 +45,7 @@ CI has two workflows. `.github/workflows/ci.yml` runs the tests on Python 3.11 t
 - `cli.py`: the cyclopts app: argument parsing, config loading, the internal-error boundary, and rendering
 - `pipeline.py`: the whole run (`run_scan`): discovery, the file phase, the per-run cache (`RunCache`), and result aggregation
 - `config.py`: config discovery, validation, and per-rule option dataclasses (`HSL10xOptions`)
-- `discovery.py`: file discovery and gitignore handling
+- `discovery.py`: file discovery through `git ls-files` or a plain walk, and configured excludes
 - `source.py`: `SourceFile`, which loads, decodes, tokenizes, and parses one file
 - `scanner.py`: loading one file, running its detectors, and applying suppressions
 - `registry.py`: rule dispatch
@@ -58,7 +58,7 @@ CI has two workflows. `.github/workflows/ci.yml` runs the tests on Python 3.11 t
 
 Tests:
 - `tests/unit/`, with `tests/unit/rules/` mirroring `src/house_lint/rules/`.
-- `tests/integration/`: CLI, reporters, the pre-commit hook, and gitignore parity and fuzz suites.
+- `tests/integration/`: CLI, reporters, the pre-commit hook, and the `exclude` parity suite.
 - `tests/conftest.py` provides `write_sample(content) -> Path`, which dedents content and writes it to `tmp_path/sample.py`. Use it in rule tests instead of ad hoc file writes.
 
 `design/` holds research briefs (`design/research/`), sketch ledgers and specs (`design/specs/`), and audits. Check there for prior decisions before re-deciding something.
@@ -83,9 +83,9 @@ IDs: `HSL001`-`HSL0xx` are on by default, `HSL1xx` are opt-in, and `HSL900` is r
 ## Gotchas
 
 - **HSL900 can't be disabled or suppressed.** It validates the `ignore`, `ignore-next`, and `ignore-file` pragmas that silence every other rule, including flagging unused ones.
-- **Discovery reimplements git's ignore rules on `pathspec`.** It never shells out to git. It reads the root `.gitignore` and every nested one, and uses a per-directory matcher stack where the walker supplies `is_dir`. Any change to pattern handling needs a case in `tests/integration/test_gitignore_parity.py`. That suite compares discovery against real `git check-ignore`, and a case costs one `Scenario` entry with no expected values. See `docs/configuration.md` and `design/research/2026-08-20-gitignore-style-exclusion-inclusion/`.
-- **Ignored directories are pruned, not enumerated**, so `files_skipped` counts one skip per pruned directory.
-- **Default scope is the whole tree** from the root, minus gitignored paths and built-in excludes. `include` narrows it to literal root-relative paths.
+- **Inside a repo, git supplies the file list.** Discovery runs `git ls-files` per requested directory, and any git failure there stops the run. Outside a repo, or with `--no-gitignore`, it does a plain walk that reads no ignore files. A `.git` entry at or above the directory decides which, because git's exit code can't tell "not a repo" from a `safe.directory` refusal. See `docs/configuration.md` and `design/specs/007-git-file-discovery/design.md`.
+- **Configured `exclude` is the one verdict house-lint makes itself**, through `pathspec`, without negation. A change to pattern handling needs a case in `tests/integration/test_exclude_parity.py`, which compares it against real `git check-ignore`. A case costs one `Scenario` entry with no expected values.
+- **Default scope is the whole tree** from the root, minus what git ignores and built-in excludes. `include` narrows it to literal root-relative paths.
 - **Each scanned file is read exactly once**, by `SourceFile.load()`. The cache key comes from that same buffer (`content_bytes` → `cache.hash_source_content`), so a cache entry can never describe content other than what was scanned. A second read of a scanned path lets the file change between the read that was parsed and the read that was hashed, so a cache entry could describe the wrong content. `test_each_scanned_file_is_read_exactly_once` catches it, and you should not weaken that test. A rule that reads files outside `SourceFile.load()`, such as an external tool given paths, must either not be cached or hash what it reads.
 - **The cache is per-file and namespaced** by `<version>-<hash of house-lint's own sources>`, so editing rule code invalidates it without a version bump. Its key includes the Python version. house-lint writes a self-ignoring `.gitignore` only into its default cache directory, never into a user-supplied `--cache-dir`.
 

@@ -139,7 +139,6 @@ def test_scan_result_serializes_schema_v1_with_nulls_and_sorted_values(tmp_path)
         config=None,
         enabled_rules=("HSL002", "HSL001"),
         files_scanned=2,
-        files_skipped=1,
         findings=(
             Finding("HSL002", "b.py", 2, 5, 2, 10, "later"),
             Finding("HSL101", "a.py", None, None, None, None, "filename"),
@@ -156,12 +155,11 @@ def test_scan_result_serializes_schema_v1_with_nulls_and_sorted_values(tmp_path)
     )
 
     assert result.to_dict() == {
-        "schema_version": 1,
+        "schema_version": 2,
         "root": str(tmp_path),
         "config": None,
         "enabled_rules": ["HSL001", "HSL002"],
         "files_scanned": 2,
-        "files_skipped": 1,
         "findings": [
             {
                 "rule_id": "HSL101",

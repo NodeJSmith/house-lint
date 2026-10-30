@@ -389,6 +389,19 @@ def test_exclude_rejects_invalid_git_pattern(tmp_path: Path) -> None:
         load_config(path)
 
 
+def test_exclude_rejects_negated_patterns_naming_them(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text('[tool.house-lint]\nexclude = ["*", "!*.py"]\n')
+    with pytest.raises(ConfigError, match=r"negated patterns: !\*\.py"):
+        load_config(path)
+
+
+def test_exclude_accepts_an_escaped_leading_bang(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text('[tool.house-lint]\nexclude = ["\\\\!literal.py"]\n')
+    assert load_config(path).exclude == ("\\!literal.py",)
+
+
 def test_exclude_rejects_parent_traversal(tmp_path: Path) -> None:
     path = tmp_path / "pyproject.toml"
     path.write_text('[tool.house-lint]\nexclude = ["../generated/"]\n')

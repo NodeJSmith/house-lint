@@ -47,7 +47,7 @@ def _render_error(err: LintError) -> str:
 def _result_for_config_error(
     exc: ConfigError, *, root: Path | None = None, config: Path | None = None
 ) -> ScanResult:
-    return ScanResult(root, config, (), 0, 0, errors=(error("config", "config", "load", str(exc)),))
+    return ScanResult(root, config, (), 0, errors=(error("config", "config", "load", str(exc)),))
 
 
 def _write_result(
@@ -205,7 +205,6 @@ def check(
             resolved_root,
             resolved_config,
             (),
-            0,
             0,
             errors=(internal_error("cli", "scan"),),
         )

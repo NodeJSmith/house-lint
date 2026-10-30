@@ -176,7 +176,6 @@ def run_scan(
             config_path,
             config.enabled_rules,
             0,
-            0,
             errors=(exc.error,),
         )
     # Built after discovery, so the constructor's symlink check only runs once discovery has
@@ -198,7 +197,6 @@ def run_scan(
         config_path,
         config.enabled_rules,
         totals.files_scanned,
-        discovered.files_skipped,
         totals.findings,
         totals.suppressed_count,
         totals.errors,

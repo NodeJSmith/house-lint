@@ -294,6 +294,9 @@ def _validate_git_ignore_patterns(values: tuple[str, ...], name: str) -> tuple[s
 
 
 def _validate_exclude(values: tuple[str, ...]) -> tuple[str, ...]:
+    negated = [value for value in values if value.startswith("!")]
+    if negated:
+        raise ConfigError(f"exclude must not contain negated patterns: {', '.join(negated)}")
     return _validate_git_ignore_patterns(values, "exclude")
 
 

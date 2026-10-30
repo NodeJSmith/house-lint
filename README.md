@@ -24,7 +24,7 @@ You need Python 3.11 or later.
 uvx house-lint check
 ```
 
-With no configuration, house-lint scans the whole project tree from the project root (the nearest directory at or above the current one with a house-lint config, or failing that, with a `pyproject.toml` or `.git`), skips anything your `.gitignore` files ignore, and runs the four default rules. The output lists the root, configuration, enabled rules, file counts, findings, and a summary.
+With no configuration, house-lint scans the whole project tree from the project root (the nearest directory at or above the current one with a house-lint config, or failing that, with a `pyproject.toml` or `.git`), skips anything git ignores, and runs the four default rules. The output lists the root, configuration, enabled rules, file counts, findings, and a summary.
 
 To pin it as a development dependency:
 
@@ -55,7 +55,7 @@ Configure house-lint in `pyproject.toml` under `[tool.house-lint]`, or in a stan
 ```toml
 [tool.house-lint]
 include = ["src", "tests"]        # optional; default is the whole tree
-exclude = ["generated/"]          # gitignore-style patterns
+exclude = ["generated/"]          # gitignore-style patterns, no negation
 extend-select = ["HSL102", "HSL103"]
 
 [tool.house-lint.rules.HSL102]
@@ -106,11 +106,11 @@ house-lint check src/service.py tests # only these files and directories
 ```
 
 - Explicit paths are strict: a missing path, a path outside the root, or a non-Python file is an error.
-- An explicit file that is ignored or excluded is counted as skipped.
+- An explicit file that matches a built-in or configured exclude is skipped. An explicit file that is only gitignored is linted.
 - `--root` fixes the project boundary. Without `--config`, house-lint looks in the root for `house-lint.toml`, then `.house-lint.toml`, then a `pyproject.toml` with `[tool.house-lint]`.
 - `--config` names an exact configuration file, and its directory becomes the root unless `--root` is given.
 
-house-lint applies the root `.gitignore` and every nested `.gitignore` with git's precedence rules, without shelling out to git. `--no-gitignore` turns that off.
+Inside a git repository, house-lint takes its file list from `git ls-files`, so tracked files are scanned and untracked ignored files aren't. A git failure there stops the run with exit code 3. Outside a repository, or with `--no-gitignore`, it walks the directory and reads no ignore files. See [File selection](docs/configuration.md#file-selection).
 
 ## Pre-commit
 
@@ -151,7 +151,7 @@ A cache failure never fails a scan. house-lint prints one warning for the first 
 
 ## Output and exit codes
 
-`--format json` prints one schema-versioned JSON object to stdout with the root, config, enabled rules, file counts, findings, errors, and summary. Match on rule IDs, locations, and error `code` values. Finding `message` text is for people and may change.
+`--format json` prints one schema-versioned JSON object to stdout (`schema_version` 2) with the root, config, enabled rules, file counts, findings, errors, and summary. Match on rule IDs, locations, and error `code` values. Finding `message` text is for people and may change.
 
 | Exit | Meaning |
 | ---: | --- |
@@ -167,7 +167,7 @@ When several apply, the highest code wins.
 | --- | --- |
 | `config-error` | Invalid CLI arguments, configuration, or root |
 | `path-error` | Invalid explicit path or source path |
-| `traversal-error` | Discovery or `.gitignore` filesystem failure |
+| `traversal-error` | Discovery filesystem failure, or a git failure inside a repository |
 | `budget-error` | A discovery or candidate-count safety limit was exceeded |
 | `source-too-large` | A source file exceeds the 10 MiB read limit |
 | `read-error` | A source file could not be read |

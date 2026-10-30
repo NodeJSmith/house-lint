@@ -27,7 +27,6 @@ def test_reporters_render_deterministic_text_and_complete_json(tmp_path: Path) -
         None,
         ("HSL002", "HSL900"),
         1,
-        0,
         (
             Finding("HSL101", "T01_example.py", None, None, None, None, "filename finding"),
             Finding("HSL002", "src/app.py", 12, 5, 12, 20, "import inside function body"),
@@ -67,7 +66,7 @@ def test_rule_list_reporters_include_stable_enablement() -> None:
 
 
 def test_text_reporter_appends_zero_file_note_when_given(tmp_path: Path) -> None:
-    result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0, 0)
+    result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0)
     note = _zero_file_note(result)
 
     lines = render_text(result, zero_file_note=note).splitlines()
@@ -76,7 +75,7 @@ def test_text_reporter_appends_zero_file_note_when_given(tmp_path: Path) -> None
 
 
 def test_text_reporter_omits_zero_file_line_when_note_is_none(tmp_path: Path) -> None:
-    result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0, 0)
+    result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0)
 
     lines = render_text(result, zero_file_note=None).splitlines()
 
@@ -87,7 +86,7 @@ def test_zero_file_guidance_references_pyproject_when_that_config_was_used(
     tmp_path: Path,
 ) -> None:
     config = tmp_path / "pyproject.toml"
-    result = ScanResult(tmp_path, config, ("HSL001", "HSL900"), 0, 0)
+    result = ScanResult(tmp_path, config, ("HSL001", "HSL900"), 0)
 
     guidance = zero_file_guidance(result, include=DEFAULT_INCLUDE, explicit_paths=False)
 
@@ -98,7 +97,7 @@ def test_zero_file_guidance_references_standalone_config_when_that_config_was_us
     tmp_path: Path,
 ) -> None:
     config = tmp_path / "house-lint.toml"
-    result = ScanResult(tmp_path, config, ("HSL001", "HSL900"), 0, 0)
+    result = ScanResult(tmp_path, config, ("HSL001", "HSL900"), 0)
 
     guidance = zero_file_guidance(result, include=DEFAULT_INCLUDE, explicit_paths=False)
 
@@ -106,13 +105,13 @@ def test_zero_file_guidance_references_standalone_config_when_that_config_was_us
 
 
 def test_zero_file_guidance_suppressed_for_intentional_empty_include(tmp_path: Path) -> None:
-    result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0, 0)
+    result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0)
 
     assert zero_file_guidance(result, include=(), explicit_paths=False) == ""
 
 
 def test_zero_file_guidance_suppressed_for_explicit_cli_paths(tmp_path: Path) -> None:
-    result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0, 0)
+    result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0)
 
     assert zero_file_guidance(result, include=DEFAULT_INCLUDE, explicit_paths=True) == ""
 
@@ -120,7 +119,7 @@ def test_zero_file_guidance_suppressed_for_explicit_cli_paths(tmp_path: Path) ->
 def test_zero_file_guidance_not_suppressed_for_typo_d_nonempty_include(tmp_path: Path) -> None:
     """A typo'd explicit `include` (non-default, non-empty) is the most common real trigger
     (FR#8) and must still surface guidance, not just the base message."""
-    result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0, 0)
+    result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0)
 
     guidance = zero_file_guidance(result, include=("test",), explicit_paths=False)
 
@@ -149,7 +148,7 @@ def test_shadowed_config_note_joins_multiple_shadowed_paths(tmp_path: Path) -> N
 
 def test_json_reporter_includes_shadowed_config_key(tmp_path: Path) -> None:
     config = tmp_path / "house-lint.toml"
-    result = ScanResult(tmp_path, config, ("HSL002",), 1, 0)
+    result = ScanResult(tmp_path, config, ("HSL002",), 1)
     shadowed = (tmp_path / "pyproject.toml",)
 
     data = json.loads(render_json(result, zero_file_note=None, shadowed=shadowed))
@@ -159,7 +158,7 @@ def test_json_reporter_includes_shadowed_config_key(tmp_path: Path) -> None:
 
 def test_json_reporter_omits_shadowed_config_key_when_nothing_shadowed(tmp_path: Path) -> None:
     config = tmp_path / "house-lint.toml"
-    result = ScanResult(tmp_path, config, ("HSL002",), 1, 0)
+    result = ScanResult(tmp_path, config, ("HSL002",), 1)
 
     data = json.loads(render_json(result, zero_file_note=None, shadowed=()))
 
@@ -167,7 +166,7 @@ def test_json_reporter_omits_shadowed_config_key_when_nothing_shadowed(tmp_path:
 
 
 def test_json_reporter_includes_zero_file_diagnostic(tmp_path: Path) -> None:
-    result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0, 0)
+    result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0)
     note = _zero_file_note(result)
 
     data = json.loads(render_json(result, zero_file_note=note))
@@ -178,7 +177,7 @@ def test_json_reporter_includes_zero_file_diagnostic(tmp_path: Path) -> None:
 
 
 def test_json_reporter_zero_file_diagnostic_unadorned_when_suppressed(tmp_path: Path) -> None:
-    result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0, 0)
+    result = ScanResult(tmp_path, None, ("HSL001", "HSL900"), 0)
     note = _zero_file_note(result, explicit_paths=True)
 
     data = json.loads(render_json(result, zero_file_note=note))
@@ -187,7 +186,7 @@ def test_json_reporter_zero_file_diagnostic_unadorned_when_suppressed(tmp_path: 
 
 
 def test_json_reporter_omits_zero_file_diagnostic_when_files_were_scanned(tmp_path: Path) -> None:
-    result = ScanResult(tmp_path, None, ("HSL002",), 1, 0)
+    result = ScanResult(tmp_path, None, ("HSL002",), 1)
 
     data = json.loads(render_json(result, zero_file_note=None))
 
@@ -200,7 +199,6 @@ def test_json_reporter_escapes_non_ascii_while_text_reporter_keeps_it_raw(tmp_pa
         None,
         ("HSL002",),
         1,
-        0,
         (Finding("HSL002", "src/café.py", None, None, None, None, "café finding"),),
     )
 
@@ -212,7 +210,7 @@ def test_json_reporter_escapes_non_ascii_while_text_reporter_keeps_it_raw(tmp_pa
 
 def test_zero_file_guidance_names_a_custom_config_file(tmp_path: Path) -> None:
     config = tmp_path / "custom.toml"
-    result = ScanResult(tmp_path, config, ("HSL001", "HSL900"), 0, 0)
+    result = ScanResult(tmp_path, config, ("HSL001", "HSL900"), 0)
 
     guidance = zero_file_guidance(result, include=DEFAULT_INCLUDE, explicit_paths=False)
 

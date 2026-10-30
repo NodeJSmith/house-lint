@@ -1,13 +1,8 @@
-"""Shared harness for the two differential tests that compare discovery against real git.
-
-`test_gitignore_parity.py` (curated table) and `test_gitignore_fuzz.py` (randomized) both need a
-throwaway repository and a way to ask `git check-ignore` what it would skip. Those two suites
-exist to catch house-lint drifting from git; keeping one copy of the harness stops the harness
-itself from drifting between them — the same failure mode one level up.
+"""Harness for `test_exclude_parity.py`, which compares configured `exclude` against real git.
 
 Not a `conftest.py`: these are plain helpers called from module-level functions, not fixtures
 injected into test signatures. `tests/integration/` has no `__init__.py`, so pytest's default
-prepend import mode puts it on `sys.path` and both modules can import this one by name.
+prepend import mode puts it on `sys.path` and the test module can import this one by name.
 """
 
 import os
@@ -32,9 +27,9 @@ def git_env() -> dict[str, str]:
     """Neutralise every ignore source outside the repository under test.
 
     Dropping the repository-pointing variables matters as much as the config ones: passing
-    `cwd=root` is not enough on its own, since any of the three override it. These suites exist
-    to catch house-lint drifting from git, so a harness that can silently compare against
-    somebody else's repository defeats the only thing they are for.
+    `cwd=root` is not enough on its own, since any of the three override it. The parity suite
+    exists to catch `exclude` drifting from git, so a harness that can silently compare against
+    somebody else's repository defeats the only thing it is for.
     """
     inherited = {
         key: value for key, value in os.environ.items() if key not in _REPOSITORY_POINTING_VARIABLES

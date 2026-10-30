@@ -10,7 +10,7 @@ from house_lint.source import MAX_SOURCE_BYTES, SourceFile
 
 def assert_not_clean(root: Path, source: SourceFile) -> None:
     assert source.error is not None
-    result = ScanResult(root, None, (), 0, 0, errors=(source.error,))
+    result = ScanResult(root, None, (), 0, errors=(source.error,))
 
     assert not result.is_clean
     assert result.to_dict()["summary"]["error_count"] == 1

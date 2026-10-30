@@ -97,7 +97,7 @@ def test_clean_check_is_equivalent_and_json_is_parseable(repository: Path) -> No
         f"root: {repository.resolve()}",
         "config: <none>",
         "enabled rules: HSL001, HSL002, HSL003, HSL004, HSL900",
-        "files: scanned 1, skipped 0",
+        "files: scanned 1",
         "summary: 0 findings, 0 errors, 0 suppressed",
     ]
 
@@ -718,7 +718,7 @@ def test_json_parser_usage_error_has_a_schema_result(repository: Path) -> None:
     assert completed.stderr == ""
     assert result["root"] is None
     assert result["config"] is None
-    assert result["files_scanned"] == result["files_skipped"] == 0
+    assert result["files_scanned"] == 0
     assert result["findings"] == []
     assert result["errors"][0]["kind"] == "config"
 
@@ -833,7 +833,7 @@ def test_json_config_error_preserves_resolved_root_and_config(repository: Path) 
     assert completed.stderr == ""
     assert result["root"] == str(repository.resolve())
     assert result["config"] == str(bad_config.resolve())
-    assert result["files_scanned"] == result["files_skipped"] == 0
+    assert result["files_scanned"] == 0
     assert result["findings"] == []
     assert result["errors"][0]["kind"] == "config"
 
@@ -856,7 +856,7 @@ def test_json_missing_explicit_config_preserves_resolved_root_and_config(reposit
     assert completed.returncode == 2
     assert result["root"] == str(repository.resolve())
     assert result["config"] == str(missing_config.resolve())
-    assert result["files_scanned"] == result["files_skipped"] == 0
+    assert result["files_scanned"] == 0
 
 
 def test_check_pyproject_empty_include_suppresses_zero_file_guidance(repository: Path) -> None:
@@ -872,7 +872,7 @@ def test_check_pyproject_empty_include_suppresses_zero_file_guidance(repository:
 
     result = json.loads(json_result.stdout)
     assert json_result.returncode == 0
-    assert result["files_scanned"] == result["files_skipped"] == 0
+    assert result["files_scanned"] == 0
     assert result["zero_file_diagnostic"] == "empty scan: no Python files selected"
 
 
@@ -910,7 +910,7 @@ def test_check_with_no_config_and_no_python_files_shows_zero_file_guidance(
 
     result = json.loads(json_result.stdout)
     assert json_result.returncode == 0
-    assert result["files_scanned"] == result["files_skipped"] == 0
+    assert result["files_scanned"] == 0
     assert result["zero_file_diagnostic"] == (
         "empty scan: no Python files selected; no config file found: create one with an "
         "include list, or pass explicit paths (house-lint check <path>)"
@@ -1362,3 +1362,27 @@ def test_root_resolution_runtime_error_is_caught_as_internal_error(
     assert code == 4
     assert result["errors"][0]["kind"] == "internal"
     assert result["root"] is None
+
+
+def test_git_failure_inside_a_repository_is_an_incomplete_scan(repository: Path) -> None:
+    (repository / ".git").mkdir()
+
+    completed = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    assert completed.returncode == 3
+    result = json.loads(completed.stdout)
+    assert result["files_scanned"] == 0
+    assert [error["operation"] for error in result["errors"]] == ["git"]
+    assert "--no-gitignore" in result["errors"][0]["message"]
+
+    bypassed = _run(repository, "check", "--root", str(repository), "--no-gitignore")
+    assert bypassed.returncode == 0
+
+
+def test_negated_exclude_is_a_configuration_error(repository: Path) -> None:
+    (repository / "pyproject.toml").write_text('[tool.house-lint]\nexclude = ["!keep.py"]\n')
+
+    completed = _run(repository, "check", "--root", str(repository))
+
+    assert completed.returncode == 2
+    assert "negated patterns: !keep.py" in completed.stdout + completed.stderr

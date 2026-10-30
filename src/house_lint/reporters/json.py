@@ -12,13 +12,13 @@ def render_json(
     zero_file_note: str | None,
     shadowed: tuple[Path, ...] = (),
 ) -> str:
-    """Render a schema-v1 check result as one deterministic JSON line.
+    """Render a schema-v2 check result as one deterministic JSON line.
 
     `zero_file_note` (see `house_lint.reporters.text.zero_file_guidance`), when not `None`,
     is added under a `zero_file_diagnostic` key mirroring the text reporter's "empty scan"
     message. When config resolution shadowed another config source, adds a `shadowed_config` key
     listing the shadowed paths. Both keys are presentation-layer additions on top of
-    `ScanResult.to_dict()`, not part of its `schema_version: 1` contract — each is absent
+    `ScanResult.to_dict()`, not part of its `schema_version: 2` contract — each is absent
     whenever its triggering condition does not hold, which is every other call site's shape
     today.
     """
