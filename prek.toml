@@ -8,11 +8,11 @@
 [[repos]]
 repo = "builtin"
 hooks = [
-    { id = "trailing-whitespace", stages = ["pre-commit"] },
-    { id = "end-of-file-fixer", stages = ["pre-commit"] },
-    { id = "mixed-line-ending", stages = ["pre-commit"] },
-    { id = "check-case-conflict", stages = ["pre-commit"] },
-    { id = "check-shebang-scripts-are-executable", stages = ["pre-commit"] },
+    { id = "trailing-whitespace" },
+    { id = "end-of-file-fixer" },
+    { id = "mixed-line-ending" },
+    { id = "check-case-conflict" },
+    { id = "check-shebang-scripts-are-executable" },
 ]
 
 # Hooks not yet reimplemented as builtins
@@ -20,8 +20,8 @@ hooks = [
 repo = "https://github.com/pre-commit/pre-commit-hooks"
 rev = "v6.0.0"
 hooks = [
-    { id = "check-builtin-literals", stages = ["pre-commit"] },
-    { id = "debug-statements", stages = ["pre-commit"] },
+    { id = "check-builtin-literals" },
+    { id = "debug-statements" },
 ]
 
 # ---------------------------------------------------------------------------
@@ -32,6 +32,15 @@ repo = "https://github.com/crate-ci/typos"
 rev = "v1.46.3"
 hooks = [
     { id = "typos", args = ["--force-exclude"], stages = ["pre-commit", "pre-push"] },
+]
+
+[[repos]]
+repo = "https://github.com/gitleaks/gitleaks"
+rev = "v8.30.1"
+hooks = [
+    # The upstream hook runs `gitleaks git --staged`, which scans only the index. At pre-push
+    # or in CI's clean checkout nothing is staged, so it would pass having scanned nothing.
+    { id = "gitleaks", stages = ["pre-commit"] },
 ]
 
 # ---------------------------------------------------------------------------
@@ -57,12 +66,11 @@ stages = ["pre-commit", "pre-push"]
 repo = "local"
 
 [[repos.hooks]]
-id = "no-type-ignore"
+id = "no-mypy-ignore"
 name = 'Ban "type: ignore" comments (use pyright suppressions instead)'
 language = "pygrep"
 types = ["python"]
 entry = "# type: ignore"
-stages = ["pre-commit"]
 
 [[repos.hooks]]
 id = "no-future-annotations"
@@ -70,7 +78,6 @@ name = "Ban from __future__ import annotations (breaks runtime type inspection)"
 language = "pygrep"
 types = ["python"]
 entry = "^from __future__ import annotations"
-stages = ["pre-commit"]
 
 # ---------------------------------------------------------------------------
 # Local hooks — project checks (shelled through `uv run` for CI parity;
@@ -90,7 +97,6 @@ language = "system"
 entry = "env -u VIRTUAL_ENV uv run ruff check --fix ."
 files = '(\.py$|^pyproject\.toml$)'
 pass_filenames = false
-stages = ["pre-commit"]
 
 [[repos.hooks]]
 id = "ruff-format"
@@ -99,7 +105,6 @@ language = "system"
 entry = "env -u VIRTUAL_ENV uv run ruff format ."
 files = '(\.py$|^pyproject\.toml$)'
 pass_filenames = false
-stages = ["pre-commit"]
 
 [[repos.hooks]]
 id = "pyright"
@@ -121,4 +126,3 @@ entry = "env -u VIRTUAL_ENV uv run house-lint check"
 types = ["python"]
 files = '\.py$'
 require_serial = true
-stages = ["pre-commit"]
