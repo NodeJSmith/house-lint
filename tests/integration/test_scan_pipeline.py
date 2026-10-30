@@ -38,6 +38,13 @@ def _messages_by_path(result: dict[str, Any]) -> dict[str, str]:
     return {finding["path"]: finding["message"] for finding in result["findings"]}
 
 
+def _error_identities(result: dict[str, Any]) -> list[tuple[str, str | None, str, str]]:
+    return [
+        (error["kind"], error["path"], error["phase"], error["operation"])
+        for error in result["errors"]
+    ]
+
+
 def _poison_only_entry(root: Path) -> None:
     """Rewrite the one cache entry, so a run can show whether it read that entry back."""
     [entry] = _entries(root)
@@ -296,9 +303,10 @@ def test_a_run_that_stops_early_still_prunes_when_it_wrote_an_entry(
     foreign = _add_foreign_namespace(tmp_path)
     _fail_detectors_for(monkeypatch, "b.py")
 
-    code, _, _ = _check(capsys, tmp_path)
+    code, result, _ = _check(capsys, tmp_path)
 
     assert code == 4
+    assert _error_identities(result) == [("internal", "b.py", "analysis", "rule-dispatch")]
     assert not foreign.exists()
 
 
@@ -309,9 +317,10 @@ def test_a_run_that_stops_before_writing_does_not_prune(
     foreign = _add_foreign_namespace(tmp_path)
     _fail_detectors_for(monkeypatch, "a.py")
 
-    code, _, _ = _check(capsys, tmp_path)
+    code, result, _ = _check(capsys, tmp_path)
 
     assert code == 4
+    assert _error_identities(result) == [("internal", "a.py", "analysis", "rule-dispatch")]
     assert foreign.exists()
 
 
@@ -321,9 +330,10 @@ def test_a_stop_result_is_never_written_to_the_cache(
     (tmp_path / "a.py").write_text(LAZY_IMPORT)
     _fail_detectors_for(monkeypatch, "a.py")
 
-    code, _, _ = _check(capsys, tmp_path)
+    code, result, _ = _check(capsys, tmp_path)
 
     assert code == 4
+    assert _error_identities(result) == [("internal", "a.py", "analysis", "rule-dispatch")]
     assert _entries(tmp_path) == []
 
 
