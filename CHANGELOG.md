@@ -2,6 +2,20 @@
 
 All notable changes to `house-lint` are documented here.
 
+## [0.3.0](https://github.com/NodeJSmith/house-lint/compare/v0.2.0...v0.3.0) (2026-10-30)
+
+
+### chore
+
+* release 0.3.0 ([#63](https://github.com/NodeJSmith/house-lint/issues/63)) ([4cf238d](https://github.com/NodeJSmith/house-lint/commit/4cf238d5f0cb7e094acf1a577566d0fed4ef4121))
+
+
+### Bug Fixes
+
+* correct line model, exclude matching, and suppression scope ([#48](https://github.com/NodeJSmith/house-lint/issues/48)) ([ab2dbf0](https://github.com/NodeJSmith/house-lint/commit/ab2dbf0ee9a16d633522899f5f5dfa8ecf10d292))
+* let ignore-next suppress standalone-comment findings ([#50](https://github.com/NodeJSmith/house-lint/issues/50)) ([e2885bd](https://github.com/NodeJSmith/house-lint/commit/e2885bdfa3d0e01ebbcb31b09d51da91695fe803))
+* stop upward config discovery at the .git boundary ([#51](https://github.com/NodeJSmith/house-lint/issues/51)) ([9d3c8ee](https://github.com/NodeJSmith/house-lint/commit/9d3c8eefa1eca7b9e2fbda9ea84fbe2db5e08de6))
+
 ## [0.2.0](https://github.com/NodeJSmith/house-lint/compare/v0.1.2...v0.2.0) (2026-08-23)
 
 ### Breaking Changes
