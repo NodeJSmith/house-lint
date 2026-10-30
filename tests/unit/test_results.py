@@ -127,7 +127,7 @@ def test_public_dtos_reject_invalid_locations(factory, message):
 
 
 def test_scan_result_normalizes_relative_root_and_config_paths():
-    result = ScanResult(Path("project"), Path("project/pyproject.toml"), (), 0, 0)
+    result = ScanResult(Path("project"), Path("project/pyproject.toml"), (), 0)
 
     assert result.root == Path("project").absolute()
     assert result.config == Path("project/pyproject.toml").absolute()
@@ -215,7 +215,7 @@ def test_scan_result_serializes_schema_v1_with_nulls_and_sorted_values(tmp_path)
 
 
 def test_clean_scan_result_is_only_clean_without_findings_or_errors(tmp_path):
-    result = ScanResult(tmp_path, None, (), 0, 0)
+    result = ScanResult(tmp_path, None, (), 0)
 
     assert result.is_clean
 
