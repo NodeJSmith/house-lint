@@ -130,6 +130,13 @@ def test_selection_keys_reject_a_non_array_value_as_a_config_error(
         load_config(config_path)
 
 
+def test_per_file_ignores_trailing_double_star_directory_spares_files_directly_inside() -> None:
+    compiled = compile_per_file_ignores({"src/**/": ("HSL002",)})
+
+    assert per_file_enabled_rules(("HSL002",), compiled, "src/a.py") == ("HSL002",)
+    assert per_file_enabled_rules(("HSL002",), compiled, "src/sub/b.py") == ()
+
+
 def test_per_file_ignores_removes_rules_only_for_matching_files(tmp_path: Path) -> None:
     config_path = tmp_path / "pyproject.toml"
     config_path.write_text(
@@ -387,6 +394,19 @@ def test_exclude_rejects_invalid_git_pattern(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="invalid Git-ignore"):
         load_config(path)
+
+
+def test_exclude_rejects_negated_patterns_naming_them(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text('[tool.house-lint]\nexclude = ["*", "!*.py"]\n')
+    with pytest.raises(ConfigError, match=r"negated patterns: !\*\.py"):
+        load_config(path)
+
+
+def test_exclude_accepts_an_escaped_leading_bang(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text('[tool.house-lint]\nexclude = ["\\\\!literal.py"]\n')
+    assert load_config(path).exclude == ("\\!literal.py",)
 
 
 def test_exclude_rejects_parent_traversal(tmp_path: Path) -> None:

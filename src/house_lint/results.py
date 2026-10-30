@@ -99,7 +99,6 @@ class ScanResult:
     config: Path | None
     enabled_rules: tuple[str, ...]
     files_scanned: int
-    files_skipped: int
     findings: tuple[Finding, ...] = ()
     suppressed_count: int = 0
     errors: tuple[LintError, ...] = ()
@@ -133,12 +132,11 @@ class ScanResult:
             self.errors, key=lambda item: (item.path or "", item.line or 0, item.kind, item.message)
         )
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "root": str(self.root) if self.root is not None else None,
             "config": str(self.config) if self.config is not None else None,
             "enabled_rules": sorted(self.enabled_rules),
             "files_scanned": self.files_scanned,
-            "files_skipped": self.files_skipped,
             "findings": [finding.to_dict() for finding in findings],
             "errors": [err.to_dict() for err in errors],
             "summary": {

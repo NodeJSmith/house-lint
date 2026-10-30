@@ -47,7 +47,7 @@ def _render_error(err: LintError) -> str:
 def _result_for_config_error(
     exc: ConfigError, *, root: Path | None = None, config: Path | None = None
 ) -> ScanResult:
-    return ScanResult(root, config, (), 0, 0, errors=(error("config", "config", "load", str(exc)),))
+    return ScanResult(root, config, (), 0, errors=(error("config", "config", "load", str(exc)),))
 
 
 def _write_result(
@@ -126,7 +126,7 @@ def check(
     ignore: list[str] | None = None,
     extend_select: list[str] | None = None,
     extend_ignore: list[str] | None = None,
-    no_gitignore: bool = False,
+    no_git: bool = False,
     no_cache: bool = False,
     cache_dir: Path | None = None,
     debug: bool = False,
@@ -189,7 +189,7 @@ def check(
             root=resolution.root,
             config_path=resolution.config,
             config=lint_config,
-            use_gitignore=not no_gitignore,
+            use_git=not no_git,
             read_cache=not no_cache,
             cache_dir=cache_dir,
             debug=debug,
@@ -205,7 +205,6 @@ def check(
             resolved_root,
             resolved_config,
             (),
-            0,
             0,
             errors=(internal_error("cli", "scan"),),
         )

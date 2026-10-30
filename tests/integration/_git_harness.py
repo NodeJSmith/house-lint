@@ -1,16 +1,11 @@
-"""Shared harness for the two differential tests that compare discovery against real git.
-
-`test_gitignore_parity.py` (curated table) and `test_gitignore_fuzz.py` (randomized) both need a
-throwaway repository and a way to ask `git check-ignore` what it would skip. Those two suites
-exist to catch house-lint drifting from git; keeping one copy of the harness stops the harness
-itself from drifting between them — the same failure mode one level up.
+"""Harness for `test_exclude_parity.py`, which compares configured `exclude` against real git.
 
 Not a `conftest.py`: these are plain helpers called from module-level functions, not fixtures
 injected into test signatures. `tests/integration/` has no `__init__.py`, so pytest's default
-prepend import mode puts it on `sys.path` and both modules can import this one by name.
+prepend import mode puts it on `sys.path` and the test module can import this one by name. Git's
+environment is hidden by the autouse `isolated_git_environment` fixture, so call these from tests.
 """
 
-import os
 import subprocess
 from pathlib import Path
 
@@ -20,30 +15,6 @@ import pytest
 # otherwise be bounded only by CI's job-level timeout, which kills the whole matrix leg without
 # saying which test stalled.
 GIT_TIMEOUT_SECONDS = 30
-
-
-# Variables that override `cwd` when locating the repository. An inherited value would point
-# `git init` and `git check-ignore` at a different repository than the one built for the
-# scenario, so the comparison would measure the wrong tree and still exit 0.
-_REPOSITORY_POINTING_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")
-
-
-def git_env() -> dict[str, str]:
-    """Neutralise every ignore source outside the repository under test.
-
-    Dropping the repository-pointing variables matters as much as the config ones: passing
-    `cwd=root` is not enough on its own, since any of the three override it. These suites exist
-    to catch house-lint drifting from git, so a harness that can silently compare against
-    somebody else's repository defeats the only thing they are for.
-    """
-    inherited = {
-        key: value for key, value in os.environ.items() if key not in _REPOSITORY_POINTING_VARIABLES
-    }
-    return inherited | {
-        "GIT_CONFIG_GLOBAL": os.devnull,
-        "GIT_CONFIG_SYSTEM": os.devnull,
-        "HOME": os.devnull,
-    }
 
 
 def init_repository(root: Path) -> None:
@@ -58,7 +29,6 @@ def init_repository(root: Path) -> None:
             check=False,
             capture_output=True,
             text=True,
-            env=git_env(),
             timeout=GIT_TIMEOUT_SECONDS,
         )
         if completed.returncode != 0:
@@ -80,7 +50,6 @@ def git_ignored(root: Path, relatives: tuple[str, ...]) -> set[str]:
         input="\0".join(relatives),
         capture_output=True,
         text=True,
-        env=git_env(),
         check=False,
         timeout=GIT_TIMEOUT_SECONDS,
     )
