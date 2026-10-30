@@ -27,8 +27,8 @@ If no PR found, stop and tell the user. If multiple, ask which one.
 
 For each commit that produced a changelog entry:
 
-1. Read the commit's own body: `git log -1 --format=%B <sha>` on `master`, using the `<sha>` from Step 2's `git log --oneline`. This is what release-please actually parsed — per this repo's `COMMIT_MESSAGES` squash setting, it's the concatenated bodies of every commit in the PR, which is where bundled-PR item details and `BREAKING CHANGE:` footers actually live (see the rule file's note on bundled PRs).
-2. Fetch the PR description via `gh pr view <number> --json title,body` using the `(#NNN)` reference in the commit subject, as supplementary narrative context only — release-please never reads this field, so treat anything found only here as unconfirmed unless it's also in the commit body.
+1. Read the commit's own body: `git log -1 --format=%B <sha>` on `master`, using the `<sha>` from Step 2's `git log --oneline`. This is what release-please actually parsed — per this repo's `PR_BODY` squash setting, it's the PR description as it stood at merge, which is where bundled-PR item details and `BREAKING CHANGE:` footers live (see the rule file's note on bundled PRs).
+2. Fetch the PR via `gh pr view <number> --json title,body` using the `(#NNN)` reference in the commit subject, as supplementary context only — the PR description may have been edited since merge, so treat anything found only here as unconfirmed unless it's also in the commit body.
 
 Focus on:
 

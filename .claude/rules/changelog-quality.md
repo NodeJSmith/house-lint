@@ -32,16 +32,16 @@ The global Claudefiles commit convention types rule/skill/agent-prompt changes a
 
 release-please parses each commit that lands on `master` as a conventional commit: the subject line becomes the changelog bullet, and a `BREAKING CHANGE:` footer in the commit body becomes the breaking-change note.
 
-For a squash-merged PR, what GitHub actually puts in that commit depends on this repo's settings (`gh api repos/NodeJSmith/house-lint --jq '{squash_merge_commit_title, squash_merge_commit_message}'`):
+A squash-merged PR's commit comes from two repo settings (`gh api repos/NodeJSmith/house-lint --jq '{squash_merge_commit_title, squash_merge_commit_message}'`):
 
-- **Subject** (`squash_merge_commit_title: COMMIT_OR_PR_TITLE`): a single-commit PR gets that commit's own title; a multi-commit PR gets the PR title. Either way, GitHub's merge box lets you edit it before confirming.
-- **Body** (`squash_merge_commit_message: COMMIT_MESSAGES`): the squash commit body defaults to the *concatenated bodies of every commit in the PR* — **not** the PR description.
+- **Subject** (`squash_merge_commit_title: PR_TITLE`): always the PR title, however many commits the PR has.
+- **Body** (`squash_merge_commit_message: PR_BODY`): the PR description. The branch's commit messages are discarded.
 
-That second point is the one that trips people up: a `BREAKING CHANGE:` footer written only in the PR body does not carry through by default. It has to live in an actual commit message on the branch, or you have to paste it into GitHub's squash-merge message box by hand before confirming the merge.
+That second point is the one that trips people up: a `BREAKING CHANGE:` footer written only in a commit message on the branch never reaches release-please. It has to be in the PR description when the PR merges.
 
 ## PR titles are changelog entries
 
-For a multi-commit PR (the common case), the PR title becomes the squash commit subject, which is the one-line changelog entry users read. Write it as a **user-facing description**, not a developer-facing one.
+The PR title becomes the squash commit subject, which is the one-line changelog entry users read. Write it as a **user-facing description**, not a developer-facing one.
 
 Good — tells a user what changed for them:
 - `feat: add HSL103 opt-in rule for docstring placement`
@@ -57,22 +57,24 @@ Bad — internal jargon, implementation details, or vague bundling:
 
 1. Imperative mood, lowercase: `add X`, `fix Y`, not `Added X` or `Adds Y`.
 2. Describe the user-visible outcome. What can the user now do, or what broke that's now fixed?
-3. No bundle PRs in the title. If a PR bundles N fixes, the title should describe the theme; individual items belong in commit bodies, since that's what release-please actually reads.
+3. No bundle PRs in the title. If a PR bundles N fixes, the title should describe the theme; individual items belong in the PR body, since that's what release-please actually reads.
 4. No internal-only entries. A purely internal PR (CI, test infra, `.claude/` tooling) uses `chore:`, `ci:`, or `test:` — all excluded from the changelog.
 
-## Breaking changes MUST have a footer — in a commit, not just the PR body
+## Breaking changes MUST have a footer in the PR body
 
-When a PR contains a breaking change (`feat!:`, `fix!:`, `refactor!:`), a `BREAKING CHANGE:` footer must exist in the commit body that release-please will actually see. Given this repo's `COMMIT_MESSAGES` squash setting (above), that means: write the footer into the commit message on the branch, or, when confirming the squash-merge, edit the commit message box on GitHub to include it. Don't just write it in the PR description and assume it flows through.
+When a PR contains a breaking change (`feat!:`, `fix!:`, `refactor!:`), the PR description must end with a `BREAKING CHANGE:` footer. Put it after everything else, including the attribution lines: a footer runs on until the end of the commit body, so text below it can land in the changelog note.
 
 The footer must explain:
 1. What changed
 2. What user code is affected
 3. What the user needs to do
 
-### Example commit message
+### Example PR description
+
+For a PR titled `feat!: rename ignore-file pragma to house-lint-ignore-file`:
 
 ```
-feat!: rename ignore-file pragma to house-lint-ignore-file
+The pragma family now shares a `house-lint-` prefix.
 
 BREAKING CHANGE: The `ignore-file` pragma is renamed to `house-lint-ignore-file`.
 Suppression files using the old spelling must be updated or HSL900 will flag
