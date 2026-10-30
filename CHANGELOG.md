@@ -4,17 +4,30 @@ All notable changes to `house-lint` are documented here.
 
 ## [0.3.0](https://github.com/NodeJSmith/house-lint/compare/v0.2.0...v0.3.0) (2026-10-30)
 
+### Breaking Changes
 
-### chore
+- **Config discovery now stops at the nearest `.git` directory.** Previously, a nested repo with no config of its own inherited a recognized config from an ancestor directory outside the repo, which also moved the scan root up to that ancestor. A nested repo now uses its own root and the default rules. If you relied on inheriting, add a config file to the nested repo or pass `--config`. (#51)
+- **Some suppression pragmas are now reported by HSL900.** An `ignore-file` or `ignore-next` placed between a decorator and its `def`/`class` is now misplaced; move it above the whole decorated statement. An `ignore[HSL103]` on a `try:` line is now an unused suppression; put it on each `except` line instead. (#48)
 
-* release 0.3.0 ([#63](https://github.com/NodeJSmith/house-lint/issues/63)) ([4cf238d](https://github.com/NodeJSmith/house-lint/commit/4cf238d5f0cb7e094acf1a577566d0fed4ef4121))
+### Rules
 
+- `HSL001` no longer flags coding cookies and emacs modelines (`# -*- coding: utf-8 -*-`). It now flags all-hash rows (`########`) and hash-flanked titles (`#### x ####`), so you may see new findings. (#48)
+- `HSL003` now recognizes aliased guards (`import typing as t; if t.TYPE_CHECKING:` and `from typing import TYPE_CHECKING as TC`), so you may see new findings. (#48)
+
+### Suppressions
+
+- `ignore-next` can now suppress findings on standalone comment lines such as dividers. Previously the pragma was reported as unused, and only `ignore-file` worked. (#50)
+- `ignore-next` above a decorated `def` or `class` now applies to it instead of being reported as misplaced. (#48)
+- `ignore[HSL103]` on one `except` clause now silences only that handler, not every handler of the same `try`. (#48)
+
+### Discovery
+
+- Configured `exclude` patterns now follow git's semantics. The whitelist idiom `exclude = ["*", "!*/", "!*.py"]` no longer skips every subdirectory. (#48)
 
 ### Bug Fixes
 
-* correct line model, exclude matching, and suppression scope ([#48](https://github.com/NodeJSmith/house-lint/issues/48)) ([ab2dbf0](https://github.com/NodeJSmith/house-lint/commit/ab2dbf0ee9a16d633522899f5f5dfa8ecf10d292))
-* let ignore-next suppress standalone-comment findings ([#50](https://github.com/NodeJSmith/house-lint/issues/50)) ([e2885bd](https://github.com/NodeJSmith/house-lint/commit/e2885bdfa3d0e01ebbcb31b09d51da91695fe803))
-* stop upward config discovery at the .git boundary ([#51](https://github.com/NodeJSmith/house-lint/issues/51)) ([9d3c8ee](https://github.com/NodeJSmith/house-lint/commit/9d3c8eefa1eca7b9e2fbda9ea84fbe2db5e08de6))
+- A form feed or U+2028 in a source file no longer shifts line numbers. This could abort an `HSL101` run, break valid `ignore-next` pragmas, and misread docstring lines. (#48)
+- Zero-file guidance now names the actual `--config` file instead of always saying `pyproject.toml`. (#48)
 
 ## [0.2.0](https://github.com/NodeJSmith/house-lint/compare/v0.1.2...v0.2.0) (2026-08-23)
 
