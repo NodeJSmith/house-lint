@@ -221,8 +221,10 @@ class _FileSelector:
             return self.excluded_dirs[relative]
         parent = relative.rpartition("/")[0]
         probe = f"{relative}/" if is_dir else relative
-        excluded = (bool(parent) and self._excluded(parent, is_dir=True)) or _matches_exclude(
-            self.exclude_spec, probe
+        excluded = (
+            (bool(parent) and self._excluded(parent, is_dir=True))
+            or _BUILTIN_SPEC.match_file(probe)
+            or self.exclude_spec.match_file(probe)
         )
         if is_dir:
             self.excluded_dirs[relative] = excluded
@@ -452,10 +454,6 @@ class _FileSelector:
             rule_id=None,
             message=message,
         )
-
-
-def _matches_exclude(exclude_spec: GitIgnoreSpec, probe: str) -> bool:
-    return _BUILTIN_SPEC.match_file(probe) or exclude_spec.match_file(probe)
 
 
 def discover_files(
