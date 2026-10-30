@@ -191,17 +191,17 @@ def run_scan(
         # Only when there is something to scan — so a run that discovers nothing neither creates
         # a cache directory in the project nor reports on one it was never going to use.
         cache.prepare()
-    files = run_file_phase(discovered, root=root, config=config, cache=cache, debug=debug)
+    totals = run_file_phase(discovered, root=root, config=config, cache=cache, debug=debug)
     cache.finish()
     return ScanResult(
         root,
         config_path,
         config.enabled_rules,
-        files.files_scanned,
+        totals.files_scanned,
         discovered.files_skipped,
-        files.findings,
-        files.suppressed_count,
-        files.errors,
+        totals.findings,
+        totals.suppressed_count,
+        totals.errors,
     )
 
 
