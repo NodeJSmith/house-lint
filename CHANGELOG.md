@@ -2,6 +2,44 @@
 
 All notable changes to `house-lint` are documented here.
 
+## [0.4.0](https://github.com/NodeJSmith/house-lint/compare/v0.3.0...v0.4.0) (2026-10-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* Discovery takes its file list from git, which changes which files are scanned, along with several flags and output fields.
+    #### What gets scanned
+    - A tracked file matching an ignore pattern is now scanned. Add it to
+    `exclude` to keep it out.
+    - A tree that isn't a git repository no longer honours `.gitignore`. Use
+    `exclude` there.
+    - A scan rooted below the repository root now honours ignore files above
+    it and `.git/info/exclude`.
+    - An untracked file hidden by your global git ignore is no longer
+    scanned on that machine.
+    - Submodules and nested clones are no longer scanned unless named
+    directly.
+    - A named file or directory that is only gitignored is now linted,
+    including one listed in `include`. Excludes still apply.
+    #### Failures
+    - A git failure inside a repository now stops the run with exit code 3
+    and a new `git-error` code, including a missing git binary, a
+    `safe.directory` refusal, a `.git` entry git rejects, or any git warning
+    on stderr. Pass `--no-git` to scan without git.
+    #### Renamed and removed
+    - `--no-gitignore` is renamed to `--no-git`. It also turns off
+    `.git/info/exclude` and global excludes. Update any scripts or hooks
+    that pass it.
+    - `!` patterns in `exclude` are now a config error. Remove them, or
+    narrow the broader pattern instead.
+    - `files_skipped` is removed from the JSON output and the text summary,
+    and the `check` output's `schema_version` is now 2. The `rules` output
+    stays at 1. Update any script that reads the key or checks the version.
+
+### Features
+
+* take the scanned file list from git ([#71](https://github.com/NodeJSmith/house-lint/issues/71)) ([7adabff](https://github.com/NodeJSmith/house-lint/commit/7adabffc0597ff97082d5f5d7362456a831645a9))
+
 ## [0.3.0](https://github.com/NodeJSmith/house-lint/compare/v0.2.0...v0.3.0) (2026-10-30)
 
 ### Breaking Changes
