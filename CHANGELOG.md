@@ -2,6 +2,28 @@
 
 All notable changes to `house-lint` are documented here.
 
+## [0.4.0](https://github.com/NodeJSmith/house-lint/compare/v0.3.0...v0.4.0) (2026-11-02)
+
+### Breaking Changes
+
+Inside a git repository, house-lint now gets its file list from `git ls-files` instead of applying ignore rules itself. This changes which files are scanned, along with several flags and output fields. (#71)
+
+#### What gets scanned
+
+- **Tracked files that match an ignore pattern are now scanned.** Git only ignores untracked files. Add the file to `exclude` to keep it out.
+- **A tree that isn't a git repository no longer honours `.gitignore`.** Use `exclude` there.
+- **A scan rooted below the repository root now honours ignore files above it and `.git/info/exclude`.** Files they hide are no longer scanned.
+- **Your global git ignore file now applies.** An untracked file it hides is no longer scanned on that machine, so a local run can differ from CI.
+- **Submodules and nested clones are no longer scanned unless named directly.** Pass the path on the command line or list it in `include` to scan one.
+- **A gitignored file or directory that you name is now linted,** whether on the command line or in `include`. Built-in and configured excludes still apply, so use `exclude` to keep it out.
+
+#### Flags, config, and output
+
+- **`--no-gitignore` is renamed to `--no-git`.** It also turns off `.git/info/exclude` and global excludes. Update any scripts or hooks that pass it.
+- **A git failure inside a repository now stops the run** with exit code 3 and a new `git-error` code. This covers a missing git binary, a `safe.directory` refusal, a `.git` entry git rejects, and any git warning on stderr. Pass `--no-git` to scan without git.
+- **`!` patterns in `exclude` are now a config error.** This includes the whitelist idiom `exclude = ["*", "!*/", "!*.py"]`. Remove them, or narrow the broader pattern instead.
+- **`files_skipped` is removed from the JSON output and the text summary, and the `check` output's `schema_version` is now 2.** The `rules` output stays at 1. Update any script that reads the key or checks the version.
+
 ## [0.3.0](https://github.com/NodeJSmith/house-lint/compare/v0.2.0...v0.3.0) (2026-10-30)
 
 ### Breaking Changes
