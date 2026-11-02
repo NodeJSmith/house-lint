@@ -8,8 +8,7 @@ from house_lint.analysis import (
     SourceKind,
     StatementKey,
 )
-from house_lint.config import BUILTIN_TASK, HSL101Options, TokenFamily
-from house_lint.rules.spec_tokens import detect
+from house_lint.rules.spec_tokens import BUILTIN_TASK, HSL101Options, TokenFamily, detect
 from house_lint.source import SourceFile
 
 

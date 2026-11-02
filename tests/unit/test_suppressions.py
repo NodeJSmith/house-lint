@@ -1,8 +1,9 @@
 from house_lint.analysis import CandidateFinding, SourceKind, statement_key
-from house_lint.config import HSL101Options, HSL103Options, TokenFamily
+from house_lint.rules.exception_names import HSL103Options
 from house_lint.rules.exception_names import detect as detect_exception_names
 from house_lint.rules.lazy_imports import detect as detect_lazy_imports
 from house_lint.rules.llm_cruft import detect as detect_llm_cruft
+from house_lint.rules.spec_tokens import HSL101Options, TokenFamily
 from house_lint.rules.spec_tokens import detect as detect_spec_tokens
 from house_lint.source import SourceFile
 from house_lint.suppressions import apply_suppressions

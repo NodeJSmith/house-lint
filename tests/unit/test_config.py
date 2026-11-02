@@ -1,15 +1,11 @@
+import re
 from pathlib import Path
 
 import pytest
 
 from house_lint.config import (
-    BUILTIN_KNOWN_ISSUES,
-    BUILTIN_SPEC,
-    BUILTIN_TASK,
-    BUILTIN_TOKEN_FAMILIES,
-    MAX_TOKEN_FAMILIES,
     ConfigError,
-    TokenFamily,
+    LintConfig,
     compile_per_file_ignores,
     default_config,
     get_house_lint_table,
@@ -17,6 +13,18 @@ from house_lint.config import (
     is_standalone_config,
     load_config,
     per_file_enabled_rules,
+)
+from house_lint.rule_catalog import FILE_RULES
+from house_lint.rules.exception_names import HSL103Options
+from house_lint.rules.file_length import HSL102Options
+from house_lint.rules.spec_tokens import (
+    BUILTIN_KNOWN_ISSUES,
+    BUILTIN_SPEC,
+    BUILTIN_TASK,
+    BUILTIN_TOKEN_FAMILIES,
+    MAX_TOKEN_FAMILIES,
+    HSL101Options,
+    TokenFamily,
 )
 
 
@@ -98,7 +106,7 @@ def test_default_config_extend_select_layers_on_top_of_default_select() -> None:
 def test_default_config_extend_select_hsl101_succeeds_with_builtin_tokens() -> None:
     config = default_config(cli_extend_select=("HSL101",))
 
-    assert config.hsl101.tokens == BUILTIN_TOKEN_FAMILIES
+    assert config.rule_options["HSL101"].tokens == BUILTIN_TOKEN_FAMILIES
 
 
 def test_extend_select_and_extend_ignore_reject_duplicate_and_always_on_ids(
@@ -226,7 +234,7 @@ def test_default_config_uses_the_shared_selection_precedence() -> None:
 def test_default_config_cli_hsl101_without_tokens_succeeds_with_builtin_tokens() -> None:
     config = default_config(cli_select=("HSL101",))
 
-    assert config.hsl101.tokens == BUILTIN_TOKEN_FAMILIES
+    assert config.rule_options["HSL101"].tokens == BUILTIN_TOKEN_FAMILIES
 
 
 def test_get_house_lint_table_detects_only_a_valid_house_lint_table() -> None:
@@ -309,7 +317,7 @@ def test_hsl101_succeeds_with_builtin_tokens_whether_or_not_selected(tmp_path: P
 
     path.write_text('[tool.house-lint]\nselect = ["HSL101"]\n[tool.house-lint.rules.HSL101]\n')
     config = load_config(path)
-    assert config.hsl101.tokens == BUILTIN_TOKEN_FAMILIES
+    assert config.rule_options["HSL101"].tokens == BUILTIN_TOKEN_FAMILIES
 
 
 def test_invalid_disabled_rule_table_is_still_rejected(tmp_path: Path) -> None:
@@ -344,6 +352,117 @@ def test_rule_tables_and_token_families_reject_unknown_keys(tmp_path: Path, tabl
 
     with pytest.raises(ConfigError, match="unknown"):
         load_config(path)
+
+
+@pytest.mark.parametrize("rule_id", ["HSL001", "HSL900", "HSL999"])
+def test_rules_table_rejects_rules_that_take_no_options(tmp_path: Path, rule_id: str) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text(f"[tool.house-lint.rules.{rule_id}]\n")
+
+    with pytest.raises(ConfigError, match=f"rules contains unknown keys: {rule_id}"):
+        load_config(path)
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "body", "message"),
+    [
+        ("HSL102", "max_lines = false", "Expected `int`"),
+        ("HSL102", 'max_lines = "800"', "Expected `int`"),
+        ("HSL102", "max_lines = 800.0", "Expected `int`"),
+        ("HSL102", "max_lines = 0", ">= 1"),
+        ("HSL102", "max_lines = 10000001", "<= 10000000"),
+        ("HSL103", "allowed = []", "length >= 1"),
+        ("HSL103", 'allowed = "exc"', "Expected `array`"),
+        ("HSL103", "allowed = [1]", "Expected `str`"),
+        ("HSL103", 'allowed = ["exc", "exc"]', "no duplicates"),
+        ("HSL103", 'allowed = ["not an identifier"]', "must be an identifier"),
+        ("HSL103", 'allowed = ["pre*"]', "must be an identifier"),
+        ("HSL103", 'allowed = ["*a*"]', "must be an identifier"),
+        ("HSL103", 'allowed = ["*"]', "must be an identifier"),
+        ("HSL103", 'allowed = ["exc\\n"]', "must be an identifier"),
+        ("HSL101", "max_findings_per_file = 0", ">= 1"),
+        ("HSL101", "max_findings_per_file = 10001", "<= 10000"),
+        ("HSL101", "tokens = []", "length >= 1"),
+    ],
+)
+def test_rule_options_are_validated_with_the_rule_named(
+    tmp_path: Path, rule_id: str, body: str, message: str
+) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text(f"[tool.house-lint.rules.{rule_id}]\n{body}\n")
+
+    with pytest.raises(ConfigError, match=f"rules.{rule_id}: .*{re.escape(message)}"):
+        load_config(path)
+
+
+def test_rule_table_that_is_not_a_table_is_a_config_error(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text("[tool.house-lint.rules]\nHSL102 = 5\n")
+
+    with pytest.raises(ConfigError, match="rules.HSL102: Expected `object`"):
+        load_config(path)
+
+
+@pytest.mark.parametrize(
+    ("family", "message"),
+    [
+        ('scopes = ["comments"]', "missing required field `prefixes`"),
+        ('prefixes = ["AC"]', "missing required field `scopes`"),
+        ('prefixes = []\nscopes = ["comments"]', "length >= 1"),
+        ('prefixes = ["AC", "AC"]\nscopes = ["comments"]', "prefixes must be unique"),
+        ('prefixes = ["ac"]\nscopes = ["comments"]', "matching regex"),
+        ('prefixes = ["AC\\n"]\nscopes = ["comments"]', "matching regex"),
+        ('prefixes = ["ABCDEFGHIJKLM"]\nscopes = ["comments"]', "length <= 12"),
+        ('prefixes = ["AC"]\nscopes = []', "length >= 1"),
+        ('prefixes = ["AC"]\nscopes = ["comments", "comments"]', "scopes must be unique"),
+        ('prefixes = ["AC"]\nscopes = ["strings"]', "scopes must be unique"),
+        ('prefixes = ["AC"]\nscopes = ["comments"]\nmin_digits = 0', ">= 1"),
+        ('prefixes = ["AC"]\nscopes = ["comments"]\nmin_digits = 13', "<= 12"),
+        ('prefixes = ["AC"]\nscopes = ["comments"]\nmax_digits = 13', "<= 12"),
+        (
+            'prefixes = ["AC"]\nscopes = ["comments"]\nmin_digits = 3\nmax_digits = 2',
+            "max_digits must not be less than min_digits",
+        ),
+        ('prefixes = ["AC"]\nscopes = ["comments"]\ncase_sensitive = 1', "Expected `bool`"),
+        ('prefixes = ["AC"]\nscopes = ["comments"]\nnot_followed_by_time = 0', "Expected `bool`"),
+    ],
+)
+def test_token_family_constraints_are_config_errors(
+    tmp_path: Path, family: str, message: str
+) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text(f"[[tool.house-lint.rules.HSL101.tokens]]\n{family}\n")
+
+    with pytest.raises(ConfigError, match=f"rules.HSL101: .*{re.escape(message)}"):
+        load_config(path)
+
+
+def test_rule_options_hold_a_value_for_every_file_rule() -> None:
+    assert set(LintConfig().rule_options) == set(FILE_RULES)
+
+
+def test_an_empty_config_resolves_to_the_same_options_as_the_defaults(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text("[tool.house-lint]\n")
+
+    assert load_config(path).rule_options == LintConfig().rule_options
+
+
+def test_rule_options_defaults_keep_their_values() -> None:
+    assert HSL101Options().tokens == BUILTIN_TOKEN_FAMILIES
+    assert HSL101Options().max_findings_per_file == 200
+    assert HSL102Options().max_lines == 800
+    assert HSL103Options().allowed == ("exc", "*_exc")
+
+
+def test_a_configured_rule_table_replaces_only_its_own_options(tmp_path: Path) -> None:
+    path = tmp_path / "pyproject.toml"
+    path.write_text("[tool.house-lint.rules.HSL102]\nmax_lines = 5\n")
+
+    options = load_config(path).rule_options
+
+    assert options["HSL102"] == HSL102Options(max_lines=5)
+    assert options["HSL103"] == HSL103Options()
 
 
 def test_include_rejects_glob_metacharacters(tmp_path: Path) -> None:
@@ -433,8 +552,8 @@ def test_token_family_is_typed_and_validated(tmp_path: Path) -> None:
         'prefixes = ["AC"]\nscopes = ["comments"]\nseparator = "hash-optional"\n'
     )
     config = load_config(path)
-    assert config.hsl101.tokens[3].prefixes == ("AC",)
-    assert config.hsl101.tokens[3].separator == "hash-optional"
+    assert config.rule_options["HSL101"].tokens[3].prefixes == ("AC",)
+    assert config.rule_options["HSL101"].tokens[3].separator == "hash-optional"
 
 
 @pytest.mark.parametrize(
@@ -469,7 +588,7 @@ def test_hsl101_selected_with_no_user_tokens_produces_builtin_families(tmp_path:
 
     config = load_config(path)
 
-    assert config.hsl101.tokens == BUILTIN_TOKEN_FAMILIES
+    assert config.rule_options["HSL101"].tokens == BUILTIN_TOKEN_FAMILIES
 
 
 def test_hsl101_user_tokens_union_with_builtins(tmp_path: Path) -> None:
@@ -482,10 +601,10 @@ def test_hsl101_user_tokens_union_with_builtins(tmp_path: Path) -> None:
 
     config = load_config(path)
 
-    assert config.hsl101.tokens[:3] == BUILTIN_TOKEN_FAMILIES
-    assert config.hsl101.tokens[3].prefixes == ("JIRA",)
-    assert config.hsl101.tokens[3].separator == "dash"
-    assert len(config.hsl101.tokens) == 4
+    assert config.rule_options["HSL101"].tokens[:3] == BUILTIN_TOKEN_FAMILIES
+    assert config.rule_options["HSL101"].tokens[3].prefixes == ("JIRA",)
+    assert config.rule_options["HSL101"].tokens[3].separator == "dash"
+    assert len(config.rule_options["HSL101"].tokens) == 4
 
 
 def test_hsl101_tokens_exceeding_max_after_builtin_merge_raises_config_error(
@@ -500,7 +619,7 @@ def test_hsl101_tokens_exceeding_max_after_builtin_merge_raises_config_error(
     )
     path.write_text(f'[tool.house-lint]\nselect = ["HSL101"]\n{user_families}')
 
-    with pytest.raises(ConfigError, match="must not exceed"):
+    with pytest.raises(ConfigError, match="rules.HSL101: .*must not exceed"):
         load_config(path)
 
 
@@ -512,7 +631,7 @@ def test_token_family_separator_rejects_unknown_value(tmp_path: Path) -> None:
         'prefixes = ["AC"]\nscopes = ["comments"]\nseparator = "invalid"\n'
     )
 
-    with pytest.raises(ConfigError, match="separator is invalid"):
+    with pytest.raises(ConfigError, match="separator must be one of"):
         load_config(path)
 
 
@@ -524,7 +643,7 @@ def test_token_family_separator_rejects_malformed_array(tmp_path: Path) -> None:
         'prefixes = ["AC"]\nscopes = ["comments"]\nseparator = []\n'
     )
 
-    with pytest.raises(ConfigError, match="separator is invalid"):
+    with pytest.raises(ConfigError, match=r"Expected `str`.*\.separator"):
         load_config(path)
 
 
@@ -536,7 +655,7 @@ def test_token_family_suffix_rejects_unknown_value(tmp_path: Path) -> None:
         'prefixes = ["AC"]\nscopes = ["comments"]\nsuffix = "invalid"\n'
     )
 
-    with pytest.raises(ConfigError, match="suffix is invalid"):
+    with pytest.raises(ConfigError, match="suffix must be one of"):
         load_config(path)
 
 
@@ -548,5 +667,5 @@ def test_token_family_suffix_rejects_malformed_array(tmp_path: Path) -> None:
         'prefixes = ["AC"]\nscopes = ["comments"]\nsuffix = []\n'
     )
 
-    with pytest.raises(ConfigError, match="suffix is invalid"):
+    with pytest.raises(ConfigError, match=r"Expected `str`.*\.suffix"):
         load_config(path)

@@ -1,9 +1,13 @@
 import os
 import textwrap
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+
+from house_lint import config
+from house_lint.rule_catalog import FileRule
 
 
 @pytest.fixture
@@ -14,6 +18,25 @@ def write_sample(tmp_path: Path) -> Callable[[str], Path]:
         return target
 
     return _write
+
+
+@pytest.fixture
+def fail_detectors_for(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
+    """Make every file rule raise when it reaches one root-relative path."""
+
+    def wrap(rule: FileRule, path: str) -> FileRule:
+        def detect(source, options, **kwargs):
+            if source.relative_path == path:
+                raise RuntimeError("simulated failure")
+            return rule.detect(source, options, **kwargs)
+
+        return replace(rule, detect=detect)
+
+    def install(path: str) -> None:
+        rules = {rule_id: wrap(rule, path) for rule_id, rule in config.FILE_RULES.items()}
+        monkeypatch.setattr(config, "FILE_RULES", rules)
+
+    return install
 
 
 @pytest.fixture(autouse=True)

@@ -301,7 +301,7 @@ def _cache_keys(
     if content_hash is None:
         return None
     config_hash = hash_effective_config(
-        file_enabled_rules, config.hsl101, config.hsl102, config.hsl103, filename=source.path.name
+        file_enabled_rules, config.rule_options, filename=source.path.name
     )
     return content_hash, config_hash
 
