@@ -102,7 +102,8 @@ def test_hash_effective_config_covers_the_options_of_a_rule_that_is_not_enabled(
 def test_hash_effective_config_is_stable_across_processes_for_a_set_valued_option() -> None:
     program = """
 from house_lint.cache import hash_effective_config
-print(hash_effective_config((), {"X": frozenset("abcdefgh")}, filename="a.py", python_version=(3, 12)))
+options = {"X": frozenset("abcdefgh")}
+print(hash_effective_config((), options, filename="a.py", python_version=(3, 12)))
 """
 
     def hash_with_seed(seed: int) -> str:

@@ -455,7 +455,7 @@ def test_rule_options_defaults_keep_their_values() -> None:
     assert HSL103Options().allowed == ("exc", "*_exc")
 
 
-def test_a_configured_rule_table_replaces_only_that_rule_s_options(tmp_path: Path) -> None:
+def test_a_configured_rule_table_replaces_only_its_own_options(tmp_path: Path) -> None:
     path = tmp_path / "pyproject.toml"
     path.write_text("[tool.house-lint.rules.HSL102]\nmax_lines = 5\n")
 

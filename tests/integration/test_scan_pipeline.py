@@ -1,7 +1,7 @@
 """Whole-run pins for what a scan reports and what it does to the cache.
 
-Everything here goes through `cli.check` and patches only code below the pipeline (the rule table
-and `cache` internals), so a pin keeps meaning the same thing when the pipeline around it is reshaped.
+Everything here goes through `cli.check` and patches only code below the pipeline (the rule
+table and `cache` internals), so a pin keeps meaning the same thing when the pipeline around it is reshaped.
 Files are scanned in sorted order, which is what puts `a.py` ahead of `b.py` in the cache pins.
 """
 
