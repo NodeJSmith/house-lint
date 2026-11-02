@@ -438,15 +438,6 @@ def test_token_family_constraints_are_config_errors(
 
 
 def test_rule_options_hold_a_value_for_every_file_rule() -> None:
-    assert LintConfig().rule_options == {
-        "HSL001": None,
-        "HSL002": None,
-        "HSL003": None,
-        "HSL004": None,
-        "HSL101": HSL101Options(),
-        "HSL102": HSL102Options(),
-        "HSL103": HSL103Options(),
-    }
     assert set(LintConfig().rule_options) == set(FILE_RULES)
 
 

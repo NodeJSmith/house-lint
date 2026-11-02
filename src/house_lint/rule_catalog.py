@@ -3,10 +3,10 @@
 Adding a rule takes its module under `rules/` and one row here.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Generic, Literal, Protocol, TypeVar
 
 import msgspec
 
@@ -22,10 +22,13 @@ from house_lint.rules import (
 )
 from house_lint.rules.exception_names import HSL103Options
 from house_lint.rules.file_length import HSL102Options
+from house_lint.rules.options import RuleOptions
 from house_lint.rules.spec_tokens import HSL101Options
 from house_lint.source import SourceFile
 
 OptionsT = TypeVar("OptionsT")
+ConfigurableOptionsT = TypeVar("ConfigurableOptionsT", bound=RuleOptions)
+Enablement = Literal["default", "opt-in", "always"]
 OptionsT_contra = TypeVar("OptionsT_contra", contravariant=True)
 
 
@@ -42,7 +45,7 @@ class Rule:
     id: str
     name: str
     description: str
-    enablement: str
+    enablement: Enablement
 
 
 @dataclass(frozen=True)
@@ -54,7 +57,7 @@ class FileRule(Rule, Generic[OptionsT]):
 
 
 def file_rule(
-    rule_id: str, name: str, description: str, enablement: str, detect: Detector[None]
+    rule_id: str, name: str, description: str, enablement: Enablement, detect: Detector[None]
 ) -> FileRule[Any]:
     """Build the row for a file rule with no options."""
     return FileRule(rule_id, name, description, enablement, detect)
@@ -64,11 +67,11 @@ def configurable_rule(
     rule_id: str,
     name: str,
     description: str,
-    enablement: str,
-    detect: Detector[OptionsT],
-    options_type: type[OptionsT],
+    enablement: Enablement,
+    detect: Detector[ConfigurableOptionsT],
+    options_type: type[ConfigurableOptionsT],
     *,
-    parse: Callable[[Any], OptionsT] | None = None,
+    parse: Callable[[Any], ConfigurableOptionsT] | None = None,
 ) -> FileRule[Any]:
     """Build the row for a file rule with options.
 
@@ -87,57 +90,62 @@ def configurable_rule(
     )
 
 
-FILE_RULES: Mapping[str, FileRule[Any]] = MappingProxyType(
-    {
-        rule.id: rule
-        for rule in (
-            file_rule(
-                "HSL001", "AI-writing cruft", "AI-writing tells", "default", llm_cruft.detect
-            ),
-            file_rule(
-                "HSL002", "Lazy imports", "Imports inside functions", "default", lazy_imports.detect
-            ),
-            file_rule(
-                "HSL003",
-                "TYPE_CHECKING position",
-                "TYPE_CHECKING blocks followed by imports",
-                "default",
-                type_checking_position.detect,
-            ),
-            file_rule(
-                "HSL004",
-                "Constants position",
-                "Constants after definitions",
-                "default",
-                constants_position.detect,
-            ),
-            configurable_rule(
-                "HSL101",
-                "Spec tokens",
-                "Built-in and configured spec tokens",
-                "opt-in",
-                spec_tokens.detect,
-                HSL101Options,
-                parse=spec_tokens.parse_options,
-            ),
-            configurable_rule(
-                "HSL102",
-                "File length",
-                "Files exceeding the line limit",
-                "opt-in",
-                file_length.detect,
-                HSL102Options,
-            ),
-            configurable_rule(
-                "HSL103",
-                "Exception names",
-                "Exception binding names",
-                "opt-in",
-                exception_names.detect,
-                HSL103Options,
-            ),
-        )
-    }
+def rules_by_id(rows: Iterable[FileRule[Any]]) -> Mapping[str, FileRule[Any]]:
+    """Key the table's rows by ID. A repeated ID would otherwise replace the earlier rule."""
+    by_id: dict[str, FileRule[Any]] = {}
+    for row in rows:
+        if row.id in by_id:
+            raise RuntimeError(f"rule table has more than one row for {row.id}")
+        by_id[row.id] = row
+    return MappingProxyType(by_id)
+
+
+FILE_RULES: Mapping[str, FileRule[Any]] = rules_by_id(
+    (
+        file_rule("HSL001", "AI-writing cruft", "AI-writing tells", "default", llm_cruft.detect),
+        file_rule(
+            "HSL002", "Lazy imports", "Imports inside functions", "default", lazy_imports.detect
+        ),
+        file_rule(
+            "HSL003",
+            "TYPE_CHECKING position",
+            "TYPE_CHECKING blocks followed by imports",
+            "default",
+            type_checking_position.detect,
+        ),
+        file_rule(
+            "HSL004",
+            "Constants position",
+            "Constants after definitions",
+            "default",
+            constants_position.detect,
+        ),
+        configurable_rule(
+            "HSL101",
+            "Spec tokens",
+            "Built-in and configured spec tokens",
+            "opt-in",
+            spec_tokens.detect,
+            HSL101Options,
+            parse=spec_tokens.parse_options,
+        ),
+        configurable_rule(
+            "HSL102",
+            "File length",
+            "Files exceeding the line limit",
+            "opt-in",
+            file_length.detect,
+            HSL102Options,
+        ),
+        configurable_rule(
+            "HSL103",
+            "Exception names",
+            "Exception binding names",
+            "opt-in",
+            exception_names.detect,
+            HSL103Options,
+        ),
+    )
 )
 
 RULES: Mapping[str, Rule] = MappingProxyType(
@@ -195,4 +203,5 @@ __all__ = [
     "is_known_rule",
     "rule_ids",
     "rule_metadata",
+    "rules_by_id",
 ]

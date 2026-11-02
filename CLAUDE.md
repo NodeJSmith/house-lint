@@ -69,7 +69,7 @@ Today a rule is a detector `(source: SourceFile, options, *, limit=None) -> list
 1. `rules/<name>.py`: the detector. A rule with options also declares its options type there, a frozen `RuleOptions` subclass whose fields, defaults, and `Annotated` constraints are the config schema. Cross-field checks go in `__post_init__`, raising `ValueError`.
 2. `rule_catalog.py`: one row, `file_rule(...)` or `configurable_rule(...)`. This is the single source of truth for ID, display info, default or opt-in tier, detector, and options. Parsing, dispatch, and the cache key all derive from it. A row whose detector and options type disagree fails Pyright. Pass `parse=` only when a rule's config needs more than converting its table to its options type, as HSL101's merge with the built-in families does.
 3. `docs/rules.md` and, for options, `docs/configuration.md`. Also update the README rules table.
-4. Tests under `tests/unit/rules/`.
+4. Tests under `tests/unit/rules/`, plus the pins that list rules: `test_rule_catalog_has_fixed_metadata_and_derived_selections` and `test_console_and_module_have_equivalent_rule_listing`, and for a default-tier rule, the tests that pin the default selection.
 
 If a step here doesn't match the code, the code wins; fix this list in the same PR.
 

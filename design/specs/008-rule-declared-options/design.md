@@ -1,7 +1,7 @@
 # Design: One rule declaration, with typed options
 
 **Date:** 2026-11-02
-**Status:** ratified
+**Status:** built
 **Mode:** sketch
 **Issues:** #58
 **Parent:** design/specs/005-cross-file-rules-and-duplicate-code/design.md
@@ -153,7 +153,7 @@ This change gives each rule one declaration, moves each option type into its rul
 
 - [x] Implementation and tests committed
 - [x] Docs
-- [ ] Ship-time challenge
+- [x] Ship-time challenge
 
 **Calls made during the build:**
 - The stored row holds `parse_options` rather than the options type: `configurable_rule(...)` names the type in each row and turns it into the default parser, after which nothing reads the type again, so storing both would leave a dead field and two optional fields to keep in sync. `parse_options` is `None` for HSL001-004, where D1 sketched an options type of `None`.
@@ -161,4 +161,5 @@ This change gives each rule one declaration, moves each option type into its rul
 - `FILE_RULES` is the written table and `RULES` adds HSL900 to it, where D1 derives `FILE_RULES` from `RULES`. Filtering by `isinstance` yields `FileRule[Unknown]`, which Pyright strict rejects without a cast. Consumers see the same two mappings.
 - The base class is `RuleOptions` in `rules/options.py`, a leaf module, because the catalog imports the rule modules and they need the base. Subclasses repeat `frozen=True` because Pyright doesn't inherit it through msgspec's dataclass transform and reports a subclass that omits it. `forbid_unknown_fields` is inherited at runtime, and tests pin it.
 - Failure-injection tests patch `config.FILE_RULES` (the `fail_detectors_for` fixture and two subprocess preludes), since `scanner.detect_candidates` is gone and rows hold direct function references.
+- Ship-time challenge changes: `configurable_rule` binds its options type to `RuleOptions`, `enablement` is a `Literal`, `rules_by_id` raises on a repeated ID, the cache key serializes with `order="deterministic"` so a set-valued option stays stable across processes, the family cap lives only in `parse_options`, and msgspec is capped at `<0.23`.
 - No `BREAKING CHANGE:` footer: 99 configs run through the old and new code gave identical accept/reject verdicts and resolved values, so no config that loads today stops loading. Only error wording changed.

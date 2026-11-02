@@ -188,7 +188,7 @@ def hash_effective_config(
         "python_version": list(
             python_version if python_version is not None else sys.version_info[:2]
         ),
-        "rule_options": msgspec.to_builtins(dict(rule_options)),
+        "rule_options": msgspec.to_builtins(dict(rule_options), order="deterministic"),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 

@@ -113,9 +113,7 @@ class HSL101Options(RuleOptions, frozen=True):
     the built-ins, and `parse_options` does the merge, so a directly built value means exactly the
     families it names."""
 
-    tokens: Annotated[
-        tuple[TokenFamily, ...], Meta(min_length=1, max_length=MAX_TOKEN_FAMILIES)
-    ] = BUILTIN_TOKEN_FAMILIES
+    tokens: Annotated[tuple[TokenFamily, ...], Meta(min_length=1)] = BUILTIN_TOKEN_FAMILIES
     max_findings_per_file: Annotated[int, Meta(ge=1, le=MAX_FINDINGS_PER_FILE_LIMIT)] = (
         DEFAULT_MAX_FINDINGS_PER_FILE
     )

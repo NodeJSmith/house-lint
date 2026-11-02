@@ -485,3 +485,19 @@ def test_an_unresolvable_cache_dir_is_an_internal_error_even_when_discovery_woul
 
     assert code == 4
     assert [(error["kind"], error["phase"]) for error in result["errors"]] == [("internal", "cli")]
+
+
+def test_changing_a_rule_option_does_not_replay_the_cached_result(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "sample.py").write_text("first = 1\nsecond = 2\n")
+    config = tmp_path / "pyproject.toml"
+
+    def findings_with_max_lines(max_lines: int) -> list[str]:
+        config.write_text(f"[tool.house-lint.rules.HSL102]\nmax_lines = {max_lines}\n")
+        cli.check(root=tmp_path, select=["HSL102"], format="json")
+        return [finding["rule_id"] for finding in json.loads(capsys.readouterr().out)["findings"]]
+
+    assert findings_with_max_lines(800) == []
+    assert _entries(tmp_path)
+    assert findings_with_max_lines(1) == ["HSL102"]

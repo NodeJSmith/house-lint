@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -96,6 +97,21 @@ def test_hash_effective_config_changes_with_any_option_value() -> None:
 
 def test_hash_effective_config_covers_the_options_of_a_rule_that_is_not_enabled() -> None:
     assert _hash(("HSL001",), HSL102=HSL102Options(max_lines=100)) != _hash(("HSL001",))
+
+
+def test_hash_effective_config_is_stable_across_processes_for_a_set_valued_option() -> None:
+    program = """
+from house_lint.cache import hash_effective_config
+print(hash_effective_config((), {"X": frozenset("abcdefgh")}, filename="a.py", python_version=(3, 12)))
+"""
+
+    def hash_with_seed(seed: int) -> str:
+        env = {**os.environ, "PYTHONHASHSEED": str(seed)}
+        return subprocess.run(
+            [sys.executable, "-c", program], env=env, capture_output=True, text=True, check=True
+        ).stdout
+
+    assert len({hash_with_seed(seed) for seed in range(1, 6)}) == 1
 
 
 def test_hash_effective_config_changes_with_python_version() -> None:
