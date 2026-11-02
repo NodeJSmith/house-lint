@@ -31,7 +31,6 @@ import msgspec
 from house_lint import __version__
 from house_lint.results import Finding, LintError
 from house_lint.rules.options import RuleOptions
-from house_lint.source import MAX_SOURCE_BYTES
 
 CACHE_DIRNAME = ".house-lint-cache"
 _VERSION_DIR_MARKER = ".house-lint-version"
@@ -137,20 +136,14 @@ def versioned_cache_dir(base: Path) -> Path:
     return base / f"{__version__}-{code_identity()}"
 
 
-def hash_source_content(content: bytes | None) -> str | None:
-    """Hash already-read source bytes for cache-key purposes, or None if they can't be cached.
+def hash_source_content(content: bytes) -> str:
+    """Hash already-read source bytes for cache-key purposes.
 
     Takes the buffer rather than a path on purpose: the caller passes the very bytes the scan
-    analyzes (`SourceFile.content_bytes`), so an entry can only ever be keyed by the content its
-    findings were derived from. Re-reading the path here instead would reintroduce a window in
-    which the key and the findings describe different content.
-
-    None means "don't cache this file this run", not a failure: an unreadable or non-regular
-    file has no bytes, and an oversized one is not worth an entry — `SourceFile` still reports a
-    proper `LintError` for both.
+    analyzes (`LoadedFile.content`), so an entry can only ever be keyed by the content its findings
+    were derived from. Re-reading the path here instead would reintroduce a window in which the key
+    and the findings describe different content.
     """
-    if content is None or len(content) > MAX_SOURCE_BYTES:
-        return None
     return hashlib.sha256(content).hexdigest()
 
 
@@ -170,12 +163,12 @@ def hash_effective_config(
     option can't be left out of the key.
 
     `filename` (the file's own basename, e.g. `path.name`) is always folded in. A rule can read the
-    name as well as the content, and a file's language follows from its suffix, so two files with
-    identical content but different names must not share an entry. A way to choose a file's
-    language other than its suffix would have to join this hash.
+    name as well as the content, and a file's language follows from its name (see
+    `language.language_for`), so two files with identical content but different names must not
+    share an entry.
 
     `python_version` (major, minor) defaults to the running interpreter's `sys.version_info[:2]`
-    and is always folded into the hash. `SourceFile._analyze` parses source with `ast.parse`,
+    and is always folded into the hash. `python_source.parse_python` parses with `ast.parse`,
     whose accepted grammar differs across the Python versions this project supports (e.g. `type
     Alias = int` is a `SyntaxError` before 3.12) — without this, a cache shared across venvs of
     different Python versions could replay a stale `SyntaxError` (or a stale success) that no

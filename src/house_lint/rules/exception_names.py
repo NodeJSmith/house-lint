@@ -6,9 +6,9 @@ from typing import Annotated
 
 from msgspec import Meta
 
-from house_lint.analysis import CandidateFinding, append_candidate, candidate_for_line, parsed_tree
+from house_lint.analysis import CandidateFinding, append_candidate, candidate_for_line
+from house_lint.python_source import PythonSource
 from house_lint.rules.options import RuleOptions
-from house_lint.source import SourceFile
 
 _ALLOWED_ENTRY = re.compile(r"\*?[A-Za-z_][A-Za-z0-9_]*")
 
@@ -28,12 +28,10 @@ class HSL103Options(RuleOptions, frozen=True):
 
 
 def detect(
-    source: SourceFile, options: HSL103Options, *, limit: int | None = None
+    source: PythonSource, options: HSL103Options, *, limit: int | None = None
 ) -> list[CandidateFinding]:
     """Return HSL103 candidates for disallowed bound exception names."""
-    tree = parsed_tree(source)
-    if tree is None:
-        return []
+    tree = source.tree
     findings: list[CandidateFinding] = []
     for try_statement in ast.walk(tree):
         if not isinstance(try_statement, (ast.Try, ast.TryStar)):

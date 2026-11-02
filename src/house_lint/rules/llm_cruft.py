@@ -9,7 +9,7 @@ from house_lint.analysis import (
     comment_owner_for_line,
     docstring_owner_for_line,
 )
-from house_lint.source import SourceFile
+from house_lint.python_source import PythonSource
 
 DIVIDER_RULE = re.compile(r"^[-=#*~_]{4,}$")
 # Each flanking run must repeat a single character: `-*-` in a coding cookie or emacs modeline
@@ -38,12 +38,9 @@ FILLER_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 
 def detect(
-    source: SourceFile, options: object, *, limit: int | None = None
+    source: PythonSource, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
     """Return HSL001 candidates using only cached source representations."""
-    if source.error is not None:
-        return []
-
     findings: list[CandidateFinding] = []
 
     def add(finding: CandidateFinding) -> None:
@@ -84,7 +81,7 @@ def detect(
     return sorted(findings, key=lambda finding: (finding.line or 0, finding.message))
 
 
-def _comment_candidate(source: SourceFile, line: int, message: str) -> CandidateFinding:
+def _comment_candidate(source: PythonSource, line: int, message: str) -> CandidateFinding:
     comment = source.comments[line]
     return candidate_for_line(
         source,

@@ -1,5 +1,6 @@
 import msgspec
 import pytest
+from _source_helpers import parse_file
 
 from house_lint.config import LintConfig, selected_detector_inputs
 from house_lint.rule_catalog import (
@@ -12,7 +13,6 @@ from house_lint.rule_catalog import (
     rules_by_id,
 )
 from house_lint.rules.file_length import HSL102Options
-from house_lint.source import SourceFile
 
 
 def test_rule_catalog_has_fixed_metadata_and_derived_selections() -> None:
@@ -60,5 +60,5 @@ def test_selected_inputs_pair_each_enabled_file_rule_with_its_options(write_samp
     assert inputs == ((FILE_RULES["HSL102"], options),)
     path = write_sample("first\nsecond\n")
     [(rule, rule_options)] = inputs
-    findings = rule.detect(SourceFile(path, path.parent), rule_options)
+    findings = rule.detect(parse_file(path), rule_options)
     assert [finding.rule_id for finding in findings] == ["HSL102"]

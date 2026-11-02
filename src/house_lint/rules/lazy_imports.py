@@ -2,29 +2,21 @@
 
 import ast
 
-from house_lint.analysis import (
-    CandidateFinding,
-    append_candidate,
-    candidate_for_statement,
-    parsed_tree,
-)
-from house_lint.source import SourceFile
+from house_lint.analysis import CandidateFinding, append_candidate, candidate_for_statement
+from house_lint.python_source import PythonSource
 
 
 def detect(
-    source: SourceFile, options: object, *, limit: int | None = None
+    source: PythonSource, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
     """Return HSL002 candidates for imports reached at function depth."""
-    tree = parsed_tree(source)
-    if tree is None:
-        return []
     visitor = _LazyImportVisitor(source, limit)
-    visitor.visit(tree)
+    visitor.visit(source.tree)
     return visitor.findings
 
 
 class _LazyImportVisitor(ast.NodeVisitor):
-    def __init__(self, source: SourceFile, limit: int | None) -> None:
+    def __init__(self, source: PythonSource, limit: int | None) -> None:
         self.findings: list[CandidateFinding] = []
         self.function_depth = 0
         self.source = source
@@ -52,7 +44,7 @@ class _LazyImportVisitor(ast.NodeVisitor):
         append_candidate(self.findings, _candidate(self.source, node), self.source, self.limit)
 
 
-def _candidate(source: SourceFile, node: ast.Import | ast.ImportFrom) -> CandidateFinding:
+def _candidate(source: PythonSource, node: ast.Import | ast.ImportFrom) -> CandidateFinding:
     return candidate_for_statement(source, "HSL002", "import inside function body", node)
 
 

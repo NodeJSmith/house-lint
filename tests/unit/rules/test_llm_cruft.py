@@ -1,4 +1,5 @@
 import pytest
+from _source_helpers import parse_file
 
 from house_lint.analysis import (
     MAX_CANDIDATES_PER_FILE,
@@ -7,7 +8,6 @@ from house_lint.analysis import (
     StatementKey,
 )
 from house_lint.rules.llm_cruft import detect
-from house_lint.source import SourceFile
 
 
 def test_detects_dividers_and_filler_in_comments_and_docstrings(write_sample) -> None:
@@ -18,7 +18,7 @@ def test_detects_dividers_and_filler_in_comments_and_docstrings(write_sample) ->
         value = 1
     """)
 
-    findings = detect(SourceFile(path, path.parent), None)
+    findings = detect(parse_file(path), None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (1, "section-divider comment"),
@@ -38,7 +38,7 @@ def test_multiline_docstring_reports_the_matching_line_and_keeps_statement_owner
 ) -> None:
     path = write_sample('"""Explain the operation.\nPlease note that it is temporary.\n"""\n')
 
-    [finding] = detect(SourceFile(path, path.parent), None)
+    [finding] = detect(parse_file(path), None)
 
     assert (finding.line, finding.column, finding.end_line, finding.end_column) == (2, 1, 2, 34)
     assert finding.source_kind is SourceKind.STATEMENT
@@ -52,7 +52,7 @@ def test_preserves_divider_thresholds_and_excludes_ordinary_strings(write_sample
         label = "in order to proceed"
     """)
 
-    findings = detect(SourceFile(path, path.parent), None)
+    findings = detect(parse_file(path), None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (2, "section-divider comment")
@@ -62,7 +62,7 @@ def test_preserves_divider_thresholds_and_excludes_ordinary_strings(write_sample
 def test_comment_on_a_statement_keeps_statement_provenance(write_sample) -> None:
     path = write_sample("value = 1  # Please note that this is temporary\n")
 
-    [finding] = detect(SourceFile(path, path.parent), None)
+    [finding] = detect(parse_file(path), None)
 
     assert finding.source_kind is SourceKind.STATEMENT
     assert finding.owner == StatementKey(1, 1, 1, 10)
@@ -76,7 +76,7 @@ def test_comment_on_a_multiline_statement_uses_its_narrowest_owner(write_sample)
         "    )  # Please note that this is temporary\n"
     )
 
-    [finding] = detect(SourceFile(path, path.parent), None)
+    [finding] = detect(parse_file(path), None)
 
     assert finding.source_kind is SourceKind.STATEMENT
     assert finding.owner == StatementKey(2, 5, 4, 6)
@@ -87,7 +87,7 @@ def test_standalone_body_comment_has_no_owner(write_sample) -> None:
         "def prepare() -> None:\n    # Please note that this is temporary\n    value = 1\n"
     )
 
-    [finding] = detect(SourceFile(path, path.parent), None)
+    [finding] = detect(parse_file(path), None)
 
     assert finding.source_kind is SourceKind.NO_OWNER
     assert finding.owner is None
@@ -115,7 +115,7 @@ def test_detects_remaining_retained_filler_patterns_in_comments(
 ) -> None:
     path = write_sample(f"# {comment}\nvalue = 1\n")
 
-    [finding] = detect(SourceFile(path, path.parent), None)
+    [finding] = detect(parse_file(path), None)
 
     assert (finding.line, finding.message) == (1, message)
 
@@ -123,14 +123,14 @@ def test_detects_remaining_retained_filler_patterns_in_comments(
 def test_ignores_ordinary_comments(write_sample) -> None:
     path = write_sample("# resolve the owner app from the confirmed app_key\nvalue = 1\n")
 
-    assert detect(SourceFile(path, path.parent), None) == []
+    assert detect(parse_file(path), None) == []
 
 
 def test_limits_materialized_candidates_when_requested(write_sample) -> None:
     path = write_sample("\n".join("# utilize this" for _ in range(MAX_CANDIDATES_PER_FILE + 2)))
 
     with pytest.raises(CandidateBudgetExceeded):
-        detect(SourceFile(path, path.parent), None, limit=MAX_CANDIDATES_PER_FILE)
+        detect(parse_file(path), None, limit=MAX_CANDIDATES_PER_FILE)
 
 
 def test_coding_cookies_and_modelines_are_not_dividers(write_sample) -> None:
@@ -138,13 +138,13 @@ def test_coding_cookies_and_modelines_are_not_dividers(write_sample) -> None:
         "#!/usr/bin/env python\n# -*- coding: utf-8 -*-\n# -*- mode: python -*-\nvalue = 1\n"
     )
 
-    assert detect(SourceFile(path, path.parent), None) == []
+    assert detect(parse_file(path), None) == []
 
 
 def test_all_hash_divider_rows_are_flagged(write_sample) -> None:
     path = write_sample("########\nvalue = 1\n#### section ####\nother = 2\n")
 
-    findings = detect(SourceFile(path, path.parent), None)
+    findings = detect(parse_file(path), None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (1, "section-divider comment"),

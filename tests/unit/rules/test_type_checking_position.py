@@ -1,4 +1,5 @@
 import pytest
+from _source_helpers import parse_file
 
 from house_lint.analysis import (
     MAX_CANDIDATES_PER_FILE,
@@ -7,7 +8,6 @@ from house_lint.analysis import (
     StatementKey,
 )
 from house_lint.rules.type_checking_position import detect
-from house_lint.source import SourceFile
 
 
 def test_detects_both_top_level_guards_followed_by_later_imports(write_sample) -> None:
@@ -24,7 +24,7 @@ def test_detects_both_top_level_guards_followed_by_later_imports(write_sample) -
         from pathlib import Path
     """)
 
-    findings = detect(SourceFile(path, path.parent), None)
+    findings = detect(parse_file(path), None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (4, "if TYPE_CHECKING block followed by imports"),
@@ -47,7 +47,7 @@ def test_ignores_final_and_nested_type_checking_guards(write_sample) -> None:
             from pathlib import Path
     """)
 
-    assert detect(SourceFile(path, path.parent), None) == []
+    assert detect(parse_file(path), None) == []
 
 
 def test_ignores_final_and_nested_qualified_type_checking_guards(write_sample) -> None:
@@ -66,7 +66,7 @@ def test_ignores_final_and_nested_qualified_type_checking_guards(write_sample) -
             pass
     """)
 
-    assert detect(SourceFile(path, path.parent), None) == []
+    assert detect(parse_file(path), None) == []
 
 
 def test_reports_only_guards_with_later_top_level_imports(write_sample) -> None:
@@ -86,7 +86,7 @@ def test_reports_only_guards_with_later_top_level_imports(write_sample) -> None:
             pass
     """)
 
-    findings = detect(SourceFile(path, path.parent), None)
+    findings = detect(parse_file(path), None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (4, "if TYPE_CHECKING block followed by imports")
@@ -98,7 +98,7 @@ def test_limits_materialized_candidates_when_requested(write_sample) -> None:
     path = write_sample(f"from typing import TYPE_CHECKING\n\n{guards}import os\n")
 
     with pytest.raises(CandidateBudgetExceeded):
-        detect(SourceFile(path, path.parent), None, limit=MAX_CANDIDATES_PER_FILE)
+        detect(parse_file(path), None, limit=MAX_CANDIDATES_PER_FILE)
 
 
 def test_detects_guards_through_typing_module_and_flag_aliases(write_sample) -> None:
@@ -112,7 +112,7 @@ def test_detects_guards_through_typing_module_and_flag_aliases(write_sample) -> 
         "import os\n"
     )
 
-    findings = detect(SourceFile(path, path.parent), None)
+    findings = detect(parse_file(path), None)
 
     assert [finding.line for finding in findings] == [3, 5]
 
@@ -120,4 +120,4 @@ def test_detects_guards_through_typing_module_and_flag_aliases(write_sample) -> 
 def test_ignores_type_checking_alias_from_relative_typing_import(write_sample) -> None:
     path = write_sample("from .typing import TYPE_CHECKING as TC\nif TC:\n    pass\nimport os\n")
 
-    assert detect(SourceFile(path, path.parent), None) == []
+    assert detect(parse_file(path), None) == []

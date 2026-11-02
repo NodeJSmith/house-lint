@@ -3,25 +3,18 @@
 import ast
 import re
 
-from house_lint.analysis import (
-    CandidateFinding,
-    append_candidate,
-    candidate_for_statement,
-    parsed_tree,
-)
-from house_lint.source import SourceFile
+from house_lint.analysis import CandidateFinding, append_candidate, candidate_for_statement
+from house_lint.python_source import PythonSource
 
 CONSTANT_NAME = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 DUNDER_NAME = re.compile(r"^__.+__$")
 
 
 def detect(
-    source: SourceFile, options: object, *, limit: int | None = None
+    source: PythonSource, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
     """Return HSL004 candidates using the preserved derived-binding heuristic."""
-    tree = parsed_tree(source)
-    if tree is None:
-        return []
+    tree = source.tree
     bound_names, first_definition = _module_bindings(tree)
     if first_definition is None:
         return []

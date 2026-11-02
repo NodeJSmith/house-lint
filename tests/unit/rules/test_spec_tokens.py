@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from _source_helpers import parse_file
 
 from house_lint.analysis import (
     MAX_CANDIDATES_PER_FILE,
@@ -9,7 +10,6 @@ from house_lint.analysis import (
     StatementKey,
 )
 from house_lint.rules.spec_tokens import BUILTIN_TASK, HSL101Options, TokenFamily, detect
-from house_lint.source import SourceFile
 
 
 def test_detects_configured_comment_and_docstring_tokens_with_provenance(write_sample) -> None:
@@ -33,7 +33,7 @@ def test_detects_configured_comment_and_docstring_tokens_with_provenance(write_s
         )
     )
 
-    findings = detect(SourceFile(path, path.parent), options)
+    findings = detect(parse_file(path), options)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (1, "spec token FR#6a in docstring"),
@@ -60,7 +60,7 @@ def test_respects_hash_digits_suffix_case_time_and_ordinary_strings(write_sample
         )
     )
 
-    findings = detect(SourceFile(path, path.parent), options)
+    findings = detect(parse_file(path), options)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (2, "spec token FR#6a in comment"),
@@ -72,7 +72,7 @@ def test_comment_token_on_multiline_statement_uses_statement_provenance(write_sa
     path = write_sample("def prepare() -> None:\n    value = (\n        1\n    )  # AC1\n")
     options = HSL101Options((TokenFamily(prefixes=("AC",), scopes=("comments",)),))
 
-    [finding] = detect(SourceFile(path, path.parent), options)
+    [finding] = detect(parse_file(path), options)
 
     assert finding.source_kind is SourceKind.STATEMENT
     assert finding.owner == StatementKey(2, 5, 4, 6)
@@ -92,7 +92,7 @@ def test_respects_case_and_maximum_digits_for_each_configured_scope(write_sample
         )
     )
 
-    findings = detect(SourceFile(path, path.parent), options)
+    findings = detect(parse_file(path), options)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (2, "spec token fr01 in comment")
@@ -106,7 +106,7 @@ def test_detects_whole_filename_segments_without_source_owner(tmp_path: Path) ->
         (TokenFamily(prefixes=("AC", "T"), scopes=("filenames",), min_digits=1),)
     )
 
-    findings = detect(SourceFile(path, tmp_path), options)
+    findings = detect(parse_file(path, tmp_path), options)
 
     assert [
         (finding.message, finding.line, finding.column, finding.end_line, finding.end_column)
@@ -133,7 +133,7 @@ def test_detects_dash_separated_family_as_joined_segment_in_filename(tmp_path: P
         (TokenFamily(prefixes=("KI",), scopes=("filenames",), separator="dash"),)
     )
 
-    findings = detect(SourceFile(path, tmp_path), options)
+    findings = detect(parse_file(path, tmp_path), options)
 
     assert [finding.message for finding in findings] == ["spec token KI-001 in filename"]
 
@@ -144,7 +144,7 @@ def test_limits_findings_per_file(write_sample) -> None:
         (TokenFamily(prefixes=("AC",), scopes=("comments",)),), max_findings_per_file=2
     )
 
-    findings = detect(SourceFile(path, path.parent), options)
+    findings = detect(parse_file(path), options)
 
     assert [finding.message for finding in findings] == [
         "spec token AC1 in comment",
@@ -156,7 +156,7 @@ def test_none_separator_forbids_any_separator(write_sample) -> None:
     path = write_sample("# AC#1 AC001\n")
     options = HSL101Options((TokenFamily(prefixes=("AC",), scopes=("comments",)),))
 
-    findings = detect(SourceFile(path, path.parent), options)
+    findings = detect(parse_file(path), options)
 
     assert [finding.message for finding in findings] == ["spec token AC001 in comment"]
 
@@ -165,7 +165,7 @@ def test_default_max_findings_per_file_is_200(write_sample) -> None:
     path = write_sample("# " + " ".join(f"AC{number:03d}" for number in range(1, 202)) + "\n")
     options = HSL101Options((TokenFamily(prefixes=("AC",), scopes=("comments",)),))
 
-    findings = detect(SourceFile(path, path.parent), options)
+    findings = detect(parse_file(path), options)
 
     assert len(findings) == 200
     assert findings[0].message == "spec token AC001 in comment"
@@ -182,7 +182,7 @@ def test_limits_materialized_candidates_when_requested(write_sample) -> None:
     )
 
     with pytest.raises(CandidateBudgetExceeded):
-        detect(SourceFile(path, path.parent), options, limit=MAX_CANDIDATES_PER_FILE)
+        detect(parse_file(path), options, limit=MAX_CANDIDATES_PER_FILE)
 
 
 @pytest.mark.parametrize(
@@ -211,7 +211,7 @@ def test_separator_mode_matches_expected_tokens(
         (TokenFamily(prefixes=(prefix,), scopes=("comments",), separator=separator),)
     )
 
-    findings = detect(SourceFile(path, path.parent), options)
+    findings = detect(parse_file(path), options)
 
     assert [finding.message for finding in findings] == expected_messages
 
@@ -220,7 +220,7 @@ def test_builtin_task_family_detects_task_tokens_but_not_time_strings(write_samp
     path = write_sample("# T05 planned, but not T05:30\n")
     options = HSL101Options((BUILTIN_TASK,))
 
-    findings = detect(SourceFile(path, path.parent), options)
+    findings = detect(parse_file(path), options)
 
     assert [finding.message for finding in findings] == ["spec token T05 in comment"]
 
@@ -229,7 +229,7 @@ def test_comment_tokens_after_a_form_feed_inside_a_string(write_sample) -> None:
     path = write_sample('text = "a\fb"\n# tracks FR1\n')
     options = HSL101Options((TokenFamily(prefixes=("FR",), scopes=("comments",)),))
 
-    findings = detect(SourceFile(path, path.parent), options)
+    findings = detect(parse_file(path), options)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (2, "spec token FR1 in comment")

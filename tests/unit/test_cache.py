@@ -58,18 +58,6 @@ def test_hash_source_content_is_stable_and_changes_with_content() -> None:
     assert hash_source_content(b"x = 2\n") != first
 
 
-def test_hash_source_content_is_none_without_bytes() -> None:
-    # None is what `SourceFile.content_bytes` reports for a file it could not read at all —
-    # missing, non-regular, or permission-denied. Such a file is simply never cached.
-    assert hash_source_content(None) is None
-
-
-def test_hash_source_content_is_none_when_oversized(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("house_lint.cache.MAX_SOURCE_BYTES", 2)
-
-    assert hash_source_content(b"x = 1\n") is None
-
-
 def _hash(
     enabled_rules: tuple[str, ...] = ("HSL001",),
     *,

@@ -1,21 +1,23 @@
+from _source_helpers import parse_file
+
 from house_lint.analysis import CandidateFinding, SourceKind, statement_key
+from house_lint.python_source import PythonSource
 from house_lint.rules.exception_names import HSL103Options
 from house_lint.rules.exception_names import detect as detect_exception_names
 from house_lint.rules.lazy_imports import detect as detect_lazy_imports
 from house_lint.rules.llm_cruft import detect as detect_llm_cruft
 from house_lint.rules.spec_tokens import HSL101Options, TokenFamily
 from house_lint.rules.spec_tokens import detect as detect_spec_tokens
-from house_lint.source import SourceFile
 from house_lint.suppressions import apply_suppressions
 
 
-def _source(write_sample, text: str) -> SourceFile:
+def _source(write_sample, text: str) -> PythonSource:
     path = write_sample(text)
-    return SourceFile(path, path.parent)
+    return parse_file(path)
 
 
 def _candidate(
-    source: SourceFile, rule_id: str, statement_line: int, finding_line: int | None = None
+    source: PythonSource, rule_id: str, statement_line: int, finding_line: int | None = None
 ) -> CandidateFinding:
     statement = next(
         statement for statement in source.statements if statement.lineno == statement_line

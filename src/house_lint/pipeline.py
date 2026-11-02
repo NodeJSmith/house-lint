@@ -28,14 +28,14 @@ from house_lint.config import (
 from house_lint.discovery import DiscoveryError, DiscoveryResult, discover_files
 from house_lint.results import Finding, LintError, ScanResult
 from house_lint.scanner import FileScanResult, open_source, scan_source
-from house_lint.source import SourceFile
+from house_lint.source import LoadedFile
 
 CacheKey: TypeAlias = tuple[str, str]
 
 
 @dataclass(frozen=True)
 class FilePhaseResult:
-    """The file phase's totals for the run. No `SourceFile` outlives its loop iteration."""
+    """The file phase's totals for the run. No loaded file outlives its loop iteration."""
 
     findings: tuple[Finding, ...]
     errors: tuple[LintError, ...]
@@ -75,12 +75,12 @@ class RunCache:
             f"is a symlink"
         )
 
-    def lookup(self, key: CacheKey | None, *, relative_path: str) -> CachedFileResult | None:
+    def lookup(self, key: CacheKey, *, relative_path: str) -> CachedFileResult | None:
         """Return this file's cached result, if this run reads the cache and there is one.
 
         The caller decides whether to replay it: see the `--debug` rule in `run_file_phase`.
         """
-        if key is None or not self.base_is_safe or not self.read_enabled:
+        if not self.base_is_safe or not self.read_enabled:
             return None
         content_hash, config_hash = key
         return read_cached_result(
@@ -91,18 +91,13 @@ class RunCache:
             reporter=self.reporter,
         )
 
-    def store(
-        self, key: CacheKey | None, file_result: FileScanResult, *, relative_path: str
-    ) -> None:
+    def store(self, key: CacheKey, file_result: FileScanResult, *, relative_path: str) -> None:
         """Write one scanned file's result, unless this run has already ruled writes out.
 
         Writes aren't gated on `read_enabled`: --no-cache only disables reads, so a run under it
         still leaves the cache warm for the next one.
         """
-        # No key means an unhashable file (non-regular, unreadable, or oversized). That is never
-        # cached and is not a cache failure, so it must stay apart from the circuit breaker below:
-        # one such file must not disable caching for the rest of the run.
-        if key is None or not self.base_is_safe:
+        if not self.base_is_safe:
             return
         # A cache directory that rejected one write rejects every later one for the rest of this
         # process (unwritable, full, or removed mid-run by a concurrent prune). Retrying per file
@@ -219,10 +214,10 @@ def run_file_phase(
     detector_inputs = selected_detector_inputs(config)
     compiled_per_file_ignores = compile_per_file_ignores(config.per_file_ignores)
     results: list[FileScanResult | CachedFileResult] = []
-    for path in discovered.files:
-        relative = path.relative_to(root).as_posix()
+    for file in discovered.files:
+        relative = file.path.relative_to(root).as_posix()
         # Pattern matching runs on the file's resolved location, reporting on the spelling the
-        # user typed. `discovered.files` preserves the argument as given, so an accepted path
+        # user typed. `file.path` preserves the argument as given, so an accepted path
         # containing `..` — `src/../tests/a.py`, with both directories present — reaches
         # `relative` as `src/../tests/a.py`, which a configured `"tests/**"` never matches:
         # house-lint then runs a rule the config disabled for everything under `tests/`.
@@ -234,31 +229,23 @@ def run_file_phase(
         # actually opened, and it is already the identity discovery itself uses — `selected` is
         # keyed by resolved path, which is what makes a symlink and its target deduplicate. A
         # per-file-ignore therefore follows the file, not the spelling that reached it.
-        match_relative = discovered.resolved_paths[path].relative_to(root).as_posix()
+        match_relative = file.resolved.relative_to(root).as_posix()
         file_enabled_rules, file_detector_inputs = _resolve_file_rules(
             match_relative, config, detector_inputs, compiled_per_file_ignores
         )
         # The file is read exactly once per scan, here. Everything below — the cache key, the
         # detectors, and the entry written back — derives from that one buffer, so a cache entry
         # can never describe bytes that were not the ones scanned.
-        loaded = open_source(
-            path,
-            root=root,
-            # Indexed, not `.get()`: `DiscoveryResult.files` is built from `resolved_paths`'
-            # own keys, so a miss means that invariant broke. Falling back to `None` there would
-            # silently re-resolve the path and reopen the symlink-retarget window this threading
-            # exists to close, so a `KeyError` is the wanted outcome.
-            resolved_path=discovered.resolved_paths[path],
-            debug=debug,
-        )
+        loaded = open_source(file.path, root=root, resolved_path=file.resolved, debug=debug)
         if isinstance(loaded, FileScanResult):
-            # open_source only returns a result for a process-boundary abort, which is fatal to
-            # the run and never cached.
+            # No `LoadedFile` means no cache key, so neither a load failure nor a process-boundary
+            # abort is ever cached. Only the abort ends the run.
             results.append(loaded)
-            break
-        source = loaded
+            if loaded.stop:
+                break
+            continue
         # Computed unconditionally (even under --no-cache) because `store` still writes on a miss.
-        key = _cache_keys(source, config, file_enabled_rules)
+        key = _cache_keys(loaded, config, file_enabled_rules)
         cached = cache.lookup(key, relative_path=relative)
         # A cached *error* is not replayable under `--debug`: the traceback is printed by
         # `scan_source`, which a hit skips. Re-scanning those files keeps `--debug` output
@@ -268,7 +255,7 @@ def run_file_phase(
             results.append(cached)
             continue
         file_result = scan_source(
-            source,
+            loaded,
             enabled_rules=file_enabled_rules,
             detector_inputs=file_detector_inputs,
             debug=debug,
@@ -288,22 +275,18 @@ def run_file_phase(
 
 
 def _cache_keys(
-    source: SourceFile, config: LintConfig, file_enabled_rules: tuple[str, ...]
-) -> CacheKey | None:
-    """Compute this file's (content_hash, config_hash) cache key, or None if the file can't be
-    safely hashed — that just means this file's result is never cached, not a failure.
+    loaded: LoadedFile, config: LintConfig, file_enabled_rules: tuple[str, ...]
+) -> CacheKey:
+    """Compute this file's (content_hash, config_hash) cache key.
 
-    The content hash comes from `source.content_bytes`: the single buffer the detectors will
-    analyze. Deriving the key from the same bytes as the findings is what makes a cache entry
-    honest — it cannot describe content that was never scanned under that key.
+    The content hash comes from `loaded.content`: the single buffer the detectors will analyze.
+    Deriving the key from the same bytes as the findings is what makes a cache entry honest — it
+    cannot describe content that was never scanned under that key.
     """
-    content_hash = hash_source_content(source.content_bytes)
-    if content_hash is None:
-        return None
     config_hash = hash_effective_config(
-        file_enabled_rules, config.rule_options, filename=source.path.name
+        file_enabled_rules, config.rule_options, filename=loaded.path.name
     )
-    return content_hash, config_hash
+    return hash_source_content(loaded.content), config_hash
 
 
 def _resolve_file_rules(

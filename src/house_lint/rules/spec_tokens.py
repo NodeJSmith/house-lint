@@ -18,8 +18,8 @@ from house_lint.analysis import (
     comment_owner_for_line,
     docstring_owner_for_line,
 )
+from house_lint.python_source import PythonSource
 from house_lint.rules.options import RuleOptions
-from house_lint.source import SourceFile
 
 DEFAULT_MAX_FINDINGS_PER_FILE = 200
 MAX_FINDINGS_PER_FILE_LIMIT = 10_000
@@ -133,12 +133,9 @@ def parse_options(raw: Any) -> HSL101Options:
 
 
 def detect(
-    source: SourceFile, options: HSL101Options, *, limit: int | None = None
+    source: PythonSource, options: HSL101Options, *, limit: int | None = None
 ) -> list[CandidateFinding]:
     """Return HSL101 candidates for the configured token families."""
-    if source.error is not None:
-        return []
-
     findings: list[CandidateFinding] = []
     seen: set[tuple[str, int | None, str]] = set()
 
@@ -185,7 +182,7 @@ def _ordered(findings: list[CandidateFinding]) -> list[CandidateFinding]:
 
 
 def _content_candidates(
-    source: SourceFile,
+    source: PythonSource,
     pattern: re.Pattern[str],
     text: str,
     line: int,
@@ -208,7 +205,7 @@ def _content_candidates(
 
 
 def _owner_for_line(
-    source: SourceFile, line: int, scope: str, text: str
+    source: PythonSource, line: int, scope: str, text: str
 ) -> ast.stmt | ast.excepthandler | None:
     if scope == "comment":
         return comment_owner_for_line(source, line, text)
@@ -216,7 +213,7 @@ def _owner_for_line(
 
 
 def _filename_candidates(
-    source: SourceFile, family: TokenFamily, seen: set[tuple[str, int | None, str]]
+    source: PythonSource, family: TokenFamily, seen: set[tuple[str, int | None, str]]
 ) -> Iterator[CandidateFinding]:
     pattern = _filename_pattern(family)
     for match in pattern.finditer(source.path.name):

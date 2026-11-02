@@ -7,7 +7,7 @@ import ast
 from dataclasses import dataclass
 from enum import Enum
 
-from house_lint.source import SourceFile
+from house_lint.python_source import PythonSource
 
 MAX_CANDIDATES_PER_FILE = 10_000
 
@@ -53,25 +53,13 @@ class CandidateBudgetExceeded(RuntimeError):
 def append_candidate(
     candidates: list[CandidateFinding],
     candidate: CandidateFinding,
-    source: SourceFile,
+    source: PythonSource,
     limit: int | None,
 ) -> None:
     """Append a candidate without exceeding the per-detector capacity."""
     if limit is not None and len(candidates) >= limit:
         raise CandidateBudgetExceeded(source.relative_path, candidates=tuple(candidates))
     candidates.append(candidate)
-
-
-def parsed_tree(source: SourceFile) -> ast.Module | None:
-    """Return the parsed module, or None when the file failed to load or parse.
-
-    `source.error is None` guarantees `source.tree is not None` — the loader parses eagerly and
-    only leaves an error set when parsing failed.
-    """
-    if source.error is not None:
-        return None
-    assert source.tree is not None
-    return source.tree
 
 
 def statement_key(statement: ast.stmt | ast.excepthandler) -> StatementKey:
@@ -90,7 +78,7 @@ def statement_key(statement: ast.stmt | ast.excepthandler) -> StatementKey:
 
 
 def candidate_for_statement(
-    source: SourceFile, rule_id: str, message: str, statement: ast.stmt
+    source: PythonSource, rule_id: str, message: str, statement: ast.stmt
 ) -> CandidateFinding:
     """Build a candidate owned by an AST statement."""
     owner = statement_key(statement)
@@ -108,7 +96,7 @@ def candidate_for_statement(
 
 
 def candidate_for_line(
-    source: SourceFile,
+    source: PythonSource,
     rule_id: str,
     message: str,
     line: int,
@@ -130,7 +118,7 @@ def candidate_for_line(
 
 
 def statement_owner_for_line(
-    source: SourceFile, line: int, column: int
+    source: PythonSource, line: int, column: int
 ) -> ast.stmt | ast.excepthandler | None:
     """Return the statement a comment or docstring line is attached to.
 
@@ -174,13 +162,13 @@ def statement_owner_for_line(
 
 
 def comment_owner_for_line(
-    source: SourceFile, line: int, comment: str
+    source: PythonSource, line: int, comment: str
 ) -> ast.stmt | ast.excepthandler | None:
     """Return the statement syntactically attached to this comment token."""
     return statement_owner_for_line(source, line, source.lines[line - 1].index(comment))
 
 
-def docstring_owner_for_line(source: SourceFile, line: int) -> ast.stmt:
+def docstring_owner_for_line(source: PythonSource, line: int) -> ast.stmt:
     """Return the string-expression statement containing a docstring line."""
     for statement in source.statements:
         if (

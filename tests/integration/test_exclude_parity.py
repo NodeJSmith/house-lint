@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from _git_harness import git_ignored, init_repository
 
-from house_lint.discovery import DiscoveryResult, discover_files
+from house_lint.discovery import DiscoveredFile, DiscoveryResult, discover_files
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
 
@@ -105,7 +105,7 @@ def _build(root: Path, scenario: Scenario) -> None:
 
 
 def _dropped(result: DiscoveryResult, root: Path, files: tuple[str, ...]) -> set[str]:
-    selected = {path.relative_to(root.resolve()).as_posix() for path in result.files}
+    selected = {file.path.relative_to(root.resolve()).as_posix() for file in result.files}
     return {relative for relative in files if relative not in selected}
 
 
@@ -165,7 +165,8 @@ def test_harness_detects_a_real_divergence(
     def broken_discovery(root: Path, **_: object) -> DiscoveryResult:
         if broken == "drops-everything":
             return DiscoveryResult(())
-        return DiscoveryResult(tuple(sorted(root.resolve() / item for item in files)))
+        paths = sorted(root.resolve() / item for item in files)
+        return DiscoveryResult(tuple(DiscoveredFile(path, path) for path in paths))
 
     # `tests` is not an importable package, so patch this module's own globals — which is what
     # `test_excludes_match_git_on_a_full_scan` resolves `discover_files` through.

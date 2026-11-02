@@ -1,15 +1,13 @@
 import pytest
+from _source_helpers import load
 
 from house_lint import scanner
 from house_lint.config import LintConfig, selected_detector_inputs
-from house_lint.source import SourceFile
 
 
 def _scan(path, enabled_rules: tuple[str, ...]) -> scanner.FileScanResult:
-    source = SourceFile(path, path.parent)
-    source.load()
     return scanner.scan_source(
-        source,
+        load(path),
         enabled_rules=enabled_rules,
         detector_inputs=selected_detector_inputs(LintConfig(), enabled_rules=enabled_rules),
         debug=False,

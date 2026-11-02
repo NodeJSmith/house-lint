@@ -11,6 +11,7 @@ from typing import Any, Generic, Literal, Protocol, TypeVar
 import msgspec
 
 from house_lint.analysis import CandidateFinding
+from house_lint.python_source import PythonSource
 from house_lint.rules import (
     constants_position,
     exception_names,
@@ -24,7 +25,6 @@ from house_lint.rules.exception_names import HSL103Options
 from house_lint.rules.file_length import HSL102Options
 from house_lint.rules.options import RuleOptions
 from house_lint.rules.spec_tokens import HSL101Options
-from house_lint.source import SourceFile
 
 OptionsT = TypeVar("OptionsT")
 ConfigurableOptionsT = TypeVar("ConfigurableOptionsT", bound=RuleOptions)
@@ -34,7 +34,7 @@ OptionsT_contra = TypeVar("OptionsT_contra", contravariant=True)
 
 class Detector(Protocol[OptionsT_contra]):
     def __call__(
-        self, source: SourceFile, options: OptionsT_contra, *, limit: int | None = None
+        self, source: PythonSource, options: OptionsT_contra, *, limit: int | None = None
     ) -> list[CandidateFinding]: ...
 
 
