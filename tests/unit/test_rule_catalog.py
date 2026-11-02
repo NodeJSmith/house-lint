@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import msgspec
 import pytest
 from _source_helpers import parse_file
@@ -19,6 +21,7 @@ from house_lint.rule_catalog import (
     rules_by_id,
 )
 from house_lint.rules.file_length import HSL102Options
+from house_lint.source import LoadedFile
 
 
 def test_rule_catalog_has_fixed_metadata_and_derived_selections() -> None:
@@ -69,14 +72,16 @@ def test_the_always_on_rule_declares_no_languages() -> None:
 
 def test_a_project_candidate_needs_a_location() -> None:
     with pytest.raises(ValueError, match="at least one location"):
-        ProjectCandidate("HSL199", "message", ())
+        ProjectCandidate("message", ())
 
 
 def test_a_location_is_validated_like_a_finding() -> None:
+    file = LoadedFile(Path("/root/a.py"), "a.py", b"")
+
     with pytest.raises(ValueError, match="all null or valid"):
-        Location("a.py", 1, None, 1, 1)
+        Location(file, 1, None, 1, 1)
     with pytest.raises(ValueError, match="must not precede"):
-        Location("a.py", 2, 1, 1, 1)
+        Location(file, 2, 1, 1, 1)
 
 
 @pytest.mark.parametrize(

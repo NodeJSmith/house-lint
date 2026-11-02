@@ -41,7 +41,8 @@ def _flatten_ids(values: list[str] | None) -> tuple[str, ...] | None:
 def _render_error(err: LintError) -> str:
     """Render the stable error context required by the text CLI contract."""
     location = f"{err.path}: " if err.path else ""
-    return f"error: {location}[{err.code} {err.phase}/{err.operation}] {err.message}"
+    rule = f"{err.rule_id}: " if err.rule_id else ""
+    return f"error: {location}[{err.code} {err.phase}/{err.operation}] {rule}{err.message}"
 
 
 def _result_for_config_error(

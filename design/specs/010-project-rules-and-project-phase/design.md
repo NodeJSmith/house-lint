@@ -1,7 +1,7 @@
 # Design: Project rules and the project phase
 
 **Date:** 2026-11-02
-**Status:** ratified
+**Status:** built
 **Mode:** sketch
 **Issues:** #59
 **Parent:** design/specs/005-cross-file-rules-and-duplicate-code/design.md
@@ -18,7 +18,7 @@ Every rule today runs once per file, and `pipeline.run_file_phase` drops each fi
 **New homes (each follows from the decision named):**
 - `ProjectRule`, its factory, and `PROJECT_RULES`: `rule_catalog.py`, as the sibling of `FileRule` that spec 008 D1 set out. `RULES` merges both tables, and `DEFAULT_SELECT`, `ORDINARY_RULES`, and `is_known_rule` keep deriving from it. HSL900 stays a plain `Rule` with no languages (D5).
 - `languages` on rows: `FileRule` and `ProjectRule` both carry it. `file_rule` and `configurable_rule` set it to Python, because their `Detector` protocol takes a `PythonSource`. The project factory takes it as an argument.
-- `Location`, `ProjectCandidate`, and `ProjectRuleFailure`: a new leaf module, `project_rule.py`. `analysis.py` doesn't fit, since it imports the Python layer and #61 would inherit that (D2, D3).
+- `Location`, `ProjectCandidate`, and `ProjectRuleFailure`: a new language-neutral module, `project_rule.py`, importing only `results` and `source`. `analysis.py` doesn't fit, since it imports the Python layer and #61 would inherit that (D2, D3).
 - The applies check: `config.py`, replacing `per_file_enabled_rules` (`config.py:93`) with one that also takes the file's language. `pipeline._resolve_file_rules` calls it for detector dispatch and the cache key, and for each project rule's input. Project-rule options parse through the same loop as file rules (`config._rule_options`, `config.py:248`).
 - The project phase: `pipeline.run_project_phase`, called from `run_scan` after `run_file_phase` and before `cache.finish`. It adds to the same finding and error totals.
 - Retained files: `FilePhaseResult` gains each project rule's input and whether the file phase aborted. Its docstring at `pipeline.py:38` changes (D1).
@@ -74,7 +74,7 @@ Every rule today runs once per file, and `pipeline.run_file_phase` drops each fi
 
 **Deciding factor:** a duplicate's copies are equals, so nothing has to invent a primary, and #60 can add to it without reshaping.
 
-| | A: `ProjectCandidate(rule_id, message, locations)`; the phase expands it to one `Finding` per location | B: Rule returns `CandidateFinding`s with a new group key | C: Primary location plus related locations |
+| | A: `ProjectCandidate(message, locations)`; the phase expands it to one `Finding` per location | B: Rule returns `CandidateFinding`s with a new group key | C: Primary location plus related locations |
 |---|---|---|---|
 | Invents a primary | No | No | Yes, arbitrarily for a duplicate |
 | Represents a group of one or a split group | A group is one object | Any key can be mistyped or lone | One object |
@@ -83,10 +83,11 @@ Every rule today runs once per file, and `pipeline.run_file_phase` drops each fi
 | Today's reporters | Unchanged: they see `Finding`s | Unchanged | Unchanged, after expansion |
 | Peers | PMD CPD's N-ary group, symmetric | None | LSP, SARIF, Ruff (as reporter contracts). Pylint's text-blob form anchors its report on an unrelated file |
 
-**Recommendation:** A. `Location` is path, line, column, end line, and end column, validated by the shared `results._validate_location`, and a candidate must have at least one. At #59 every finding from one candidate shares its message. The primary-plus-related contracts are about what a reporter emits, which parent D12 already answers.
+**Recommendation:** A. `Location` is the input's `LoadedFile`, line, column, end line, and end column, validated by the shared `results.validate_location`, and a candidate must have at least one. At #59 every finding from one candidate shares its message. The primary-plus-related contracts are about what a reporter emits, which parent D12 already answers.
 **Pick B instead if** you want one candidate type for both kinds of rule. **Pick C instead if** you expect a project rule with a true primary site, such as an import cycle reported at one import.
 **Reversibility:** easy
 **Ratified:** Chose a symmetric `ProjectCandidate` with a tuple of locations, expanded to one `Finding` per location, over group keys on `CandidateFinding` or a primary plus related locations, so no primary is invented and #60 can add to it without reshaping, accepting a second candidate type alongside `CandidateFinding`.
+**Amended at the ship-time challenge:** `ProjectCandidate` has no `rule_id`, since the phase stamps the ID of the rule that ran, and `Location` takes the input's `LoadedFile` rather than a path string, so a wrong ID can't reach output and a wrong path is hard to write. The phase doesn't check that a location's file came from the rule's input. This forecloses a rule reporting on a file outside its input.
 
 ### D3: How does a project rule report failure?
 
@@ -142,7 +143,7 @@ Every rule today runs once per file, and `pipeline.run_file_phase` drops each fi
 | Issue's "Python-only file set must stay unchanged" | Holds for every project with a rule enabled; not for `select = []` | Holds literally | Holds until #61 |
 | Peers | Biome and oxlint derive scope from enabled rules; ESLint selects language by config, not rules; Ruff has no zero-rule state | None | None found |
 
-**Recommendation:** A. A project with no rules enabled has nothing for pragmas to suppress, and today every pragma there is just reported as naming a disabled rule. HSL900 stays impossible to disable: it runs on every scanned file whose language has an analysis layer, and D7's skip branch is the one place that's decided. Two follow-ons: the zero-file note says no rules are enabled rather than telling the user to check `include`, and the PR is `feat!` with a `BREAKING CHANGE:` footer.
+**Recommendation:** A. A project with no rules enabled has nothing for pragmas to suppress, and today every pragma there is just reported as naming a disabled rule. HSL900 stays impossible to disable: it runs on every scanned file whose language has an analysis layer, and D7's skip branch is the one place that's decided. Two follow-ons: the zero-file note says no enabled rule handles any language rather than telling the user to check `include`, and the PR is `feat!` with a `BREAKING CHANGE:` footer.
 **Pick B instead if** you want `select = []` to keep validating pragmas, accepting that Python is always parsed. **Pick C instead if** you want every pragma in the tree validated regardless of selection, and accept scanning TypeScript everywhere at #61.
 **Reversibility:** easy
 **Ratified:** Chose letting only ordinary rules decide the discovered languages, with HSL900 validating every scanned file whose language has an analysis layer, over an always-on Python floor or having HSL900 declare languages, so one sentence explains why a language is scanned and a project enabling only Python rules sees no change, accepting that `select = []` becomes a zero-file scan with no HSL900 findings, a break marked `feat!`.
@@ -220,15 +221,16 @@ Every rule today runs once per file, and `pipeline.run_file_phase` drops each fi
 
 - [x] Implementation and tests committed
 - [x] Docs
-- [ ] Ship-time challenge
+- [x] Ship-time challenge
 
 **Calls made during the build:**
 - `ProjectRule.run` is `(files: tuple[LoadedFile, ...], options) -> list[ProjectCandidate]`, with no root and no `limit`: `LoadedFile` already carries the absolute and relative paths, and the posture has no candidate budget.
 - Two factories, `project_rule` and `configurable_project_rule`: this mirrors the file-rule pair, so Pyright rejects a run function and options type that disagree.
 - `discover_files` takes `languages` as a required second positional argument, with no default: a Python default would hide a caller that forgot to pass it.
 - A project rule with an empty input doesn't run: a tool handed no paths could fall back to scanning its working directory.
-- A `ProjectRuleFailure` message is prefixed with the rule ID: text output prints no `rule_id` field, so two failing rules couldn't otherwise be told apart.
+- Text output prints an error's `rule_id` before its message, so two failing project rules can be told apart, including a rule that crashes. An internal error from a project rule carries `rule_id` too.
 - A pragma's language check comes before its disabled check: enabling a rule that doesn't handle Python wouldn't make the pragma useful, and the cached result stays valid when that rule is toggled.
 - The base zero-file message becomes `empty scan: no files selected`: a TypeScript-only scan makes "no Python files" untrue. The no-rules guidance applies even with explicit directories or `include = []`, since it's the actual cause.
 - The explicit-path error reads "not a regular file any enabled rule handles", because the same branch also rejects non-regular files.
+- A rule's findings are built inside the same `try` as its `run`, so anything wrong with its output is that rule's internal error, none of its findings are kept, and the run's other results are.
 - The Assumed line saying no test pins the old message was off by one: `test_explicit_paths_are_strict_and_directories_recursive` matched "Python". It now matches the new message.

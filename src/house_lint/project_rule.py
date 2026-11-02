@@ -3,13 +3,18 @@
 from dataclasses import dataclass
 
 from house_lint.results import validate_location
+from house_lint.source import LoadedFile
 
 
 @dataclass(frozen=True)
 class Location:
-    """One place a project candidate occurs. `path` is root-relative, as in `Finding`."""
+    """One place a project candidate occurs, in a file from the rule's own input.
 
-    path: str
+    `file` is the record from the rule's input, not a path string, so a rule has no path to
+    misspell and no record to hand for a file left out of its input. The phase doesn't check it.
+    """
+
+    file: LoadedFile
     line: int | None
     column: int | None
     end_line: int | None
@@ -23,10 +28,9 @@ class Location:
 class ProjectCandidate:
     """One issue a project rule found, at locations that are equals: none of them is the primary.
 
-    The project phase reports one finding per location.
+    The project phase reports one finding per location, under the ID of the rule that ran.
     """
 
-    rule_id: str
     message: str
     locations: tuple[Location, ...]
 

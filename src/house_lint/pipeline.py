@@ -341,31 +341,31 @@ def run_project_phase(
         files = file_phase.project_inputs[rule.id]
         if not files:
             continue
+        # Built whole inside the `try`, so a rule's bad output counts as its failure and a rule that
+        # fails partway leaves none of its findings behind.
         try:
-            candidates = rule.run(files, options)
+            rule_findings = [
+                Finding(
+                    rule.id,
+                    location.file.relative_path,
+                    location.line,
+                    location.column,
+                    location.end_line,
+                    location.end_column,
+                    candidate.message,
+                )
+                for candidate in rule.run(files, options)
+                for location in candidate.locations
+            ]
         except ProjectRuleFailure as exc:
-            errors.append(
-                error("project-rule", "project", "rule-run", f"{rule.id}: {exc}", rule_id=rule.id)
-            )
+            errors.append(error("project-rule", "project", "rule-run", str(exc), rule_id=rule.id))
             continue
         except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
             if debug:
                 traceback.print_exc(file=sys.stderr)
             errors.append(internal_error("project", "rule-run", rule_id=rule.id))
             break
-        findings.extend(
-            Finding(
-                candidate.rule_id,
-                location.path,
-                location.line,
-                location.column,
-                location.end_line,
-                location.end_column,
-                candidate.message,
-            )
-            for candidate in candidates
-            for location in candidate.locations
-        )
+        findings.extend(rule_findings)
     return ProjectPhaseResult(tuple(findings), tuple(errors))
 
 

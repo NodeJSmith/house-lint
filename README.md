@@ -175,7 +175,7 @@ When several apply, the highest code wins.
 | `decode-error` | A source file could not be decoded |
 | `tokenize-error` | A source file could not be tokenized |
 | `syntax-error` | A source file could not be parsed as Python |
-| `project-rule-error` | A project rule could not run; the message names the rule |
+| `project-rule-error` | A project rule could not run; `rule_id` names the rule |
 | `internal-error` | An unexpected failure reached the CLI boundary |
 
 ## Development

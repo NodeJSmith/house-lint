@@ -116,11 +116,11 @@ The text reporter's existing `empty scan: no files selected` summary line grows 
 - No config file found: create one with an `include` list, or pass explicit paths (`house-lint check <path>`)
 - `pyproject.toml` resolved: check the `include` list in its `[tool.house-lint]` table
 - A standalone config resolved: check the `include` list in its `[house-lint]` table
-- No rules enabled (`select = []`): check `select` and `ignore`. This one applies whatever `include` says, and also when explicit directories are given
+- No enabled rule handles any language (`select = []`): check `select` and `ignore`. This one applies whatever `include` says, and also when explicit directories are given
 
 The JSON reporter carries the same message under a `zero_file_diagnostic` key, present only when the scan found zero files — it has no equivalent in ordinary output. This key is a presentation-layer addition layered on top of the `check` output's `schema_version: 2` contract, not part of it: it can change shape or be removed without a schema version bump, unlike the versioned fields in `to_dict()`'s output.
 
-Apart from the no-rules case, the guidance clause is suppressed in exactly two cases — the base "empty scan" message still appears in both, just without it: `include = []` explicitly configured (an intentional empty scan), and explicit paths given on the command line. A typo'd explicit `include` (e.g. `include = ["tset"]` for a `tests/` directory) is *not* suppressed — a config that names a directory that doesn't exist is the most common real trigger for this diagnostic, and it should not be silently swallowed.
+Apart from that last case, the guidance clause is suppressed in exactly two cases — the base "empty scan" message still appears in both, just without it: `include = []` explicitly configured (an intentional empty scan), and explicit paths given on the command line. A typo'd explicit `include` (e.g. `include = ["tset"]` for a `tests/` directory) is *not* suppressed — a config that names a directory that doesn't exist is the most common real trigger for this diagnostic, and it should not be silently swallowed.
 
 ## Caching
 

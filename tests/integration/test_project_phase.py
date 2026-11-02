@@ -31,6 +31,7 @@ PYTHON = frozenset({Language.PYTHON})
 TYPESCRIPT = frozenset({Language.TYPESCRIPT})
 CLEAN = "value = 1\n"
 LAZY_IMPORT = "def example():\n    import module\n"
+SPAN = (1, 1, 1, 5)
 
 
 class ThresholdOptions(RuleOptions, frozen=True, forbid_unknown_fields=True):
@@ -39,9 +40,13 @@ class ThresholdOptions(RuleOptions, frozen=True, forbid_unknown_fields=True):
 
 @dataclass
 class Recorder:
-    """A project rule's `run`: records each call and returns `candidates`, or raises `raises`."""
+    """A project rule's `run`: records each call, then raises `raises` or reports `reports`.
 
-    candidates: tuple[ProjectCandidate, ...] = ()
+    With `reports` set, it returns one candidate with that message, located in every file it was
+    given. Without it, the rule finds nothing.
+    """
+
+    reports: str | None = None
     raises: Exception | None = None
     calls: list[tuple[LoadedFile, ...]] = field(default_factory=list)
     options: list[Any] = field(default_factory=list)
@@ -55,7 +60,9 @@ class Recorder:
             self.order.append(self.rule_id)
         if self.raises is not None:
             raise self.raises
-        return list(self.candidates)
+        if self.reports is None:
+            return []
+        return [ProjectCandidate(self.reports, tuple(Location(f, *SPAN) for f in files))]
 
     @property
     def paths(self) -> list[str]:
@@ -63,7 +70,7 @@ class Recorder:
         return [file.relative_path for file in files]
 
 
-def row(rule_id: str, run: Recorder, languages: frozenset[Language] = PYTHON) -> ProjectRule[Any]:
+def row(rule_id: str, run: Any, languages: frozenset[Language] = PYTHON) -> ProjectRule[Any]:
     return project_rule(rule_id, "Test rule", "Registered by a test", "opt-in", run, languages)
 
 
@@ -83,12 +90,7 @@ def test_a_project_rule_gets_the_scanned_files_and_reports_one_finding_per_locat
 ) -> None:
     (tmp_path / "a.py").write_text(CLEAN)
     (tmp_path / "b.py").write_text("other = 2\n")
-    candidate = ProjectCandidate(
-        PY_RULE,
-        "duplicated block",
-        (Location("a.py", 1, 1, 1, 5), Location("b.py", 1, 1, 1, 5)),
-    )
-    run = Recorder((candidate,))
+    run = Recorder("duplicated block")
     register_project_rules(row(PY_RULE, run))
 
     code, result = scan(capsys, tmp_path, PY_RULE)
@@ -115,8 +117,7 @@ def test_project_findings_join_file_findings_in_the_same_totals(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
     (tmp_path / "a.py").write_text(LAZY_IMPORT)
-    candidate = ProjectCandidate(PY_RULE, "project", (Location("a.py", 1, 1, 1, 2),))
-    register_project_rules(row(PY_RULE, Recorder((candidate,))))
+    register_project_rules(row(PY_RULE, Recorder("project")))
 
     code, result = scan(capsys, tmp_path, "HSL002", PY_RULE)
 
@@ -203,12 +204,11 @@ def test_nothing_from_the_project_phase_is_cached(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
     (tmp_path / "a.py").write_text(CLEAN)
-    candidate = ProjectCandidate(PY_RULE, "first", (Location("a.py", 1, 1, 1, 2),))
-    run = Recorder((candidate,))
+    run = Recorder("first")
     register_project_rules(row(PY_RULE, run))
 
     scan(capsys, tmp_path, PY_RULE)
-    run.candidates = ()
+    run.reports = None
     code, result = scan(capsys, tmp_path, PY_RULE)
 
     assert len(run.calls) == 2
@@ -271,8 +271,7 @@ def test_a_file_that_fails_to_load_is_left_out_and_the_rule_still_runs(
 ) -> None:
     (tmp_path / "a.py").write_text(CLEAN)
     (tmp_path / "huge.py").write_bytes(b"#" * (MAX_SOURCE_BYTES + 1))
-    candidate = ProjectCandidate(PY_RULE, "found", (Location("a.py", 1, 1, 1, 2),))
-    run = Recorder((candidate,))
+    run = Recorder("found")
     register_project_rules(row(PY_RULE, run))
 
     code, result = scan(capsys, tmp_path, PY_RULE)
@@ -306,9 +305,8 @@ def test_a_rule_failure_reports_its_own_message_and_the_next_rule_still_runs(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
     (tmp_path / "a.py").write_text(CLEAN)
-    candidate = ProjectCandidate(PY_RULE, "found", (Location("a.py", 1, 1, 1, 2),))
     failing = Recorder(raises=ProjectRuleFailure("jscpd is not installed: npm install jscpd"))
-    following = Recorder((candidate,))
+    following = Recorder("found")
     register_project_rules(row("HSL197", failing), row(PY_RULE, following))
 
     code, result = scan(capsys, tmp_path, "HSL197", PY_RULE)
@@ -326,7 +324,7 @@ def test_a_rule_failure_reports_its_own_message_and_the_next_rule_still_runs(
             "phase": "project",
             "operation": "rule-run",
             "rule_id": "HSL197",
-            "message": "HSL197: jscpd is not installed: npm install jscpd",
+            "message": "jscpd is not installed: npm install jscpd",
         }
     ]
     assert rule_ids_and_paths(result) == [(PY_RULE, "a.py")]
@@ -336,8 +334,7 @@ def test_a_rule_bug_is_an_internal_error_that_ends_the_phase_and_keeps_results(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
     (tmp_path / "a.py").write_text(LAZY_IMPORT)
-    candidate = ProjectCandidate("HSL196", "earlier", (Location("a.py", 1, 1, 1, 2),))
-    earlier = Recorder((candidate,))
+    earlier = Recorder("earlier")
     buggy = Recorder(raises=RuntimeError("secret detail"))
     later = Recorder()
     register_project_rules(row("HSL196", earlier), row("HSL197", buggy), row(PY_RULE, later))
@@ -355,6 +352,50 @@ def test_a_rule_bug_is_an_internal_error_that_ends_the_phase_and_keeps_results(
     )
     assert error["rule_id"] == "HSL197"
     assert "secret detail" not in error["message"]
+
+
+def test_a_rule_whose_output_cant_be_reported_is_an_internal_error_that_keeps_results(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
+) -> None:
+    # A valid candidate first, to show a rule that fails partway leaves none of its findings. The
+    # `Any` is how bad output gets past the type checker, as when it comes from parsed JSON.
+    def malformed(files: tuple[LoadedFile, ...], options: Any) -> list[ProjectCandidate]:
+        locations: Any = ("not a location",)
+        valid = ProjectCandidate("valid", (Location(files[0], *SPAN),))
+        return [valid, ProjectCandidate("malformed", locations)]
+
+    (tmp_path / "a.py").write_text(LAZY_IMPORT)
+    register_project_rules(row(PY_RULE, malformed))
+
+    code, result = scan(capsys, tmp_path, "HSL002", PY_RULE)
+
+    assert code == 4
+    assert rule_ids_and_paths(result) == [("HSL002", "a.py")]
+    assert [(error["kind"], error["rule_id"]) for error in result["errors"]] == [
+        ("internal", PY_RULE)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("raises", "expected"),
+    [
+        (ProjectRuleFailure("jscpd is missing"), "HSL197: jscpd is missing"),
+        (RuntimeError("secret detail"), "HSL197: an unexpected internal error occurred"),
+    ],
+)
+def test_text_output_names_the_project_rule_that_failed(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    register_project_rules,
+    raises: Exception,
+    expected: str,
+) -> None:
+    (tmp_path / "a.py").write_text(CLEAN)
+    register_project_rules(row("HSL197", Recorder(raises=raises)))
+
+    assert cli.check(root=tmp_path, select=["HSL197"], format="text") >= 3
+
+    assert expected in capsys.readouterr().err
 
 
 def test_enabling_a_rule_brings_its_language_in_and_only_that_language(
@@ -443,8 +484,36 @@ def test_selecting_no_rules_is_a_zero_file_scan_that_says_why(
     assert code == 0
     assert result["files_scanned"] == 0
     assert result["findings"] == []
-    assert "no rules are enabled" in result["zero_file_diagnostic"]
+    assert "no enabled rule handles any language" in result["zero_file_diagnostic"]
     assert scan(capsys, tmp_path, fail_on_empty=True)[0] == 1
+
+
+def test_a_rule_can_only_report_on_files_it_was_given(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        f'[tool.house-lint.per-file-ignores]\n"gen.py" = ["{PY_RULE}"]\n'
+    )
+    (tmp_path / "gen.py").write_text(CLEAN)
+    (tmp_path / "kept.py").write_text(CLEAN)
+    register_project_rules(row(PY_RULE, Recorder("found")))
+
+    code, result = scan(capsys, tmp_path, PY_RULE)
+
+    assert code == 1
+    assert rule_ids_and_paths(result) == [(PY_RULE, "kept.py")]
+
+
+def test_a_rule_with_no_languages_gets_the_note_saying_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
+) -> None:
+    (tmp_path / "a.py").write_text(CLEAN)
+    register_project_rules(row(PY_RULE, Recorder(), frozenset()))
+
+    code, result = scan(capsys, tmp_path, PY_RULE)
+
+    assert code == 0
+    assert "no enabled rule handles any language" in result["zero_file_diagnostic"]
 
 
 def test_an_explicit_path_with_no_rules_selected_is_an_error(
