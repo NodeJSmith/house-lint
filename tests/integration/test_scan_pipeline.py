@@ -358,7 +358,8 @@ def test_a_parse_failure_is_cached_and_replayed_without_parsing_again(
     code: str,
 ) -> None:
     (tmp_path / "a.py").write_bytes(content)
-    _, cold, _ = _check(capsys, tmp_path)
+    cold_code, cold, _ = _check(capsys, tmp_path)
+    assert cold_code == 3
     assert [error["code"] for error in cold["errors"]] == [code]
     assert cold["files_scanned"] == 0
     assert len(_entries(tmp_path)) == 1
@@ -367,8 +368,9 @@ def test_a_parse_failure_is_cached_and_replayed_without_parsing_again(
         raise AssertionError("a cache hit must not decode or parse")
 
     monkeypatch.setattr(scanner, "parse_python", fail_parse)
-    _, warm, _ = _check(capsys, tmp_path)
+    warm_code, warm, _ = _check(capsys, tmp_path)
 
+    assert warm_code == cold_code
     assert warm == cold
 
 
