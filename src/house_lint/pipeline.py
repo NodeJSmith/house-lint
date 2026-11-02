@@ -27,8 +27,8 @@ from house_lint.config import (
 )
 from house_lint.discovery import DiscoveryError, DiscoveryResult, discover_files
 from house_lint.results import Finding, LintError, ScanResult
-from house_lint.scanner import FileScanResult, open_source, scan_source
-from house_lint.source import LoadedFile
+from house_lint.scanner import FileScanResult, failure_result, open_source, scan_source
+from house_lint.source import LoadedFile, LoadFailure
 
 CacheKey: TypeAlias = tuple[str, str]
 
@@ -238,11 +238,13 @@ def run_file_phase(
         # can never describe bytes that were not the ones scanned.
         loaded = open_source(file.path, root=root, resolved_path=file.resolved, debug=debug)
         if isinstance(loaded, FileScanResult):
-            # No `LoadedFile` means no cache key, so neither a load failure nor a process-boundary
-            # abort is ever cached. Only the abort ends the run.
+            # open_source only returns a result for a process-boundary abort, which is fatal to
+            # the run and never cached.
             results.append(loaded)
-            if loaded.stop:
-                break
+            break
+        if isinstance(loaded, LoadFailure):
+            # No `LoadedFile` means no cache key, so a load failure is reported and never cached.
+            results.append(failure_result(loaded, debug=debug))
             continue
         # Computed unconditionally (even under --no-cache) because `store` still writes on a miss.
         key = _cache_keys(loaded, config, file_enabled_rules)

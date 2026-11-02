@@ -34,20 +34,17 @@ class FileScanResult:
 
 def open_source(
     path: Path, *, root: Path, resolved_path: Path, debug: bool
-) -> LoadedFile | FileScanResult:
+) -> LoadedFile | LoadFailure | FileScanResult:
     """Perform this file's one read of its bytes.
 
     Split out from `scan_source` so the caller can compute a cache key from the bytes this read
     produced and skip scanning on a hit, without any second read of the path.
 
-    A `FileScanResult` means this file has no bytes to scan or cache: a load failure (path escape,
-    non-regular file, oversize, read error), or a process-boundary failure with `stop=True`.
+    A `FileScanResult` comes back only for a process-boundary failure (`stop=True`). Ordinary load
+    failures (path escape, non-regular file, oversize, read error) come back as a `LoadFailure`.
     """
     try:
-        loaded = load_file(path, root, resolved_path=resolved_path)
-        if isinstance(loaded, LoadFailure):
-            return _failure_result(loaded, debug=debug)
-        return loaded
+        return load_file(path, root, resolved_path=resolved_path)
     except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
         if debug:
             traceback.print_exc(file=sys.stderr)
@@ -55,6 +52,13 @@ def open_source(
             errors=(internal_error("analysis", "source-load", path=_fallback_path(path, root)),),
             stop=True,
         )
+
+
+def failure_result(failure: LoadFailure | ParseFailure, *, debug: bool) -> FileScanResult:
+    """Report one file's failure, printing its preserved exception under `--debug`."""
+    if debug and failure.debug_exception is not None:
+        traceback.print_exception(failure.debug_exception, file=sys.stderr)
+    return FileScanResult(errors=(failure.error,))
 
 
 def _fallback_path(path: Path, root: Path) -> str:
@@ -76,7 +80,7 @@ def scan_source(
     try:
         source = parse_python(loaded)
         if isinstance(source, ParseFailure):
-            return _failure_result(source, debug=debug)
+            return failure_result(source, debug=debug)
     except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
         if debug:
             traceback.print_exc(file=sys.stderr)
@@ -89,12 +93,6 @@ def scan_source(
     return _scan_ready_source(
         source, enabled_rules=enabled_rules, detector_inputs=detector_inputs, debug=debug
     )
-
-
-def _failure_result(failure: LoadFailure | ParseFailure, *, debug: bool) -> FileScanResult:
-    if debug and failure.debug_exception is not None:
-        traceback.print_exception(failure.debug_exception, file=sys.stderr)
-    return FileScanResult(errors=(failure.error,))
 
 
 def _scan_ready_source(

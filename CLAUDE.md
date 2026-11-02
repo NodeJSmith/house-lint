@@ -49,7 +49,7 @@ CI has two workflows. `.github/workflows/ci.yml` runs the tests on Python 3.11 t
 - `language.py`: the `Language` enum and `language_for(path)`, the one place a file's language is decided
 - `source.py`: `load_file`, the one read path every language shares, giving a `LoadedFile` (path and bytes) or a `LoadFailure`
 - `python_source.py`: `parse_python`, which decodes, tokenizes, and parses a `LoadedFile`, giving a `PythonSource` or a `ParseFailure`
-- `scanner.py`: loading one file, running its detectors, and applying suppressions
+- `scanner.py`: the process boundaries around loading and parsing one file, running its detectors, and applying suppressions
 - `rule_catalog.py`: the table of rules: each rule's metadata, detector, and options type
 - `suppressions.py`: pragma parsing and HSL900
 - `cache.py`: the result cache
@@ -60,8 +60,8 @@ CI has two workflows. `.github/workflows/ci.yml` runs the tests on Python 3.11 t
 Tests:
 - `tests/unit/`, with `tests/unit/rules/` mirroring `src/house_lint/rules/`.
 - `tests/integration/`: CLI, reporters, the pre-commit hook, and the `exclude` parity suite.
-- `tests/conftest.py` provides `write_sample(content) -> Path`, which dedents content and writes it to `tmp_path/sample.py`. Use it in rule tests instead of ad hoc file writes.
-- `tests/_source_helpers.py` provides `parse_file(path, root=None) -> PythonSource` and `load(path, root=None) -> LoadedFile`, for handing a detector or the scanner a file on disk.
+- `tests/conftest.py` provides `parse_sample(content) -> PythonSource`, which writes dedented content to `tmp_path/sample.py` and parses it, and `write_sample(content) -> Path`, for a test that needs the file itself. Use them in rule tests instead of ad hoc file writes.
+- `tests/_source_helpers.py` provides `parse_file(path, root=None) -> PythonSource` and `load(path, root=None) -> LoadedFile`, for a file a test wrote some other way.
 
 `design/` holds research briefs (`design/research/`), sketch ledgers and specs (`design/specs/`), and audits. Check there for prior decisions before re-deciding something.
 

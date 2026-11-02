@@ -1,7 +1,7 @@
 # Design: Language-neutral loaded files
 
 **Date:** 2026-11-02
-**Status:** ratified
+**Status:** built
 **Mode:** sketch
 **Issues:** #57
 **Parent:** design/specs/005-cross-file-rules-and-duplicate-code/design.md
@@ -24,9 +24,9 @@
 
 **Must hold in the build:**
 - A load failure (path escape, non-regular, oversized, read error) is reported and never cached, as today. A decode, tokenize, or syntax failure has a cache key and is cached, as today, because its bytes were read.
-- Error codes, kinds, phases, operations, and messages don't change, including `decode-error`'s phase `read`. The internal-error labels stay `source-load` for the read and `source-analyze` for decoding and parsing.
+- Error codes, kinds, phases, operations, and messages don't change, including `decode-error`'s phase `read`. The internal-error labels are `source-load` for the read and `source-analyze` for decoding and parsing.
 - `--debug` still prints the preserved traceback for a source error, and a cached error is still re-scanned under `--debug` (`pipeline.py:267`).
-- The file loop: `open_source` calls `load_file` inside the `source-load` boundary. On a load failure, the preserved exception prints under `--debug` when there is one, and the file contributes `FileScanResult(errors=(error,))` with `files_scanned` 0 and no cache lookup or store. Otherwise the loop hashes the bytes and looks up the cache. On a miss, or a cached error under `--debug`, `scan_source` calls `parse_python` inside its `source-analyze` boundary, so a hit never decodes. A parse failure gives the same `FileScanResult` shape and is stored. `LoadedFile` holds `path`, `relative_path` (with the `path.name` fallback at `source.py:72-74`, so a path escape reports as today), and the bytes. `PythonSource` copies `path` and `relative_path` once at construction, with no reference back to `LoadedFile`. With `tree` no longer optional, the guards at `suppressions.py:237`, `:281`, and `source.py:280` go too.
+- The file loop: `open_source` calls `load_file` inside the `source-load` boundary and returns its `LoadedFile` or `LoadFailure`, with a `FileScanResult` only for a process-boundary abort. On a load failure, the loop prints the preserved exception under `--debug` when there is one, and the file contributes `FileScanResult(errors=(error,))` with `files_scanned` 0 and no cache lookup or store. Otherwise the loop hashes the bytes and looks up the cache. On a miss, or a cached error under `--debug`, `scan_source` calls `parse_python` inside its `source-analyze` boundary, so a hit never decodes. A parse failure gives the same `FileScanResult` shape and is stored. `LoadedFile` holds `path`, `relative_path` (with the `path.name` fallback at `source.py:72-74`, so a path escape reports as today), and the bytes. `PythonSource` copies `path` and `relative_path` once at construction, with no reference back to `LoadedFile`. With `tree` no longer optional, the guards at `suppressions.py:237`, `:281`, and `source.py:280` go too.
 - `resolved_path` becomes a required input to loading, and only an input: nothing outside `source.py` reads it. Only tests omit it today, and the fallback re-resolves the path, which the comment at `source.py:51` exists to warn against.
 
 **References to update in the same change:** `CLAUDE.md` (Layout, Adding a rule, the read-once gotcha), `cache.py:144`, `:149`, `:172-175`, `:178`, `discovery.py:105`, `pipeline.py:38`, `:225`, `:247`, `:296`, `scanner.py` docstrings, `tests/unit/test_cache.py:62`, `tests/unit/test_discovery.py:149`, `tests/integration/test_cli.py:1309-1316`.
@@ -83,7 +83,7 @@
 **Recommendation:** B. It deletes branches rather than moving them, and it's already how a run behaves. Each layer returns its own failure type, `LoadFailure` and `ParseFailure`, and each holds the `LintError` and the preserved exception for `--debug`. The names make the cache rule visible: a load failure is never cached and a parse failure is. The data flow enforces this too, since a cache key needs a `LoadedFile`'s bytes.
 **Pick A instead if** you want the smallest diff and accept the dead guards. **Pick C instead if** you expect a rule that must run on a file `ast` can't parse, such as a line-length check on broken Python. Nothing planned does.
 **Reversibility:** easy
-**Ratified:** Chose results, where loading and parsing each return a valid object or a failure, over error fields on both layers or on the Python layer alone, so a rule can't be handed a failed file and the seven detector guards go away, accepting a rewrite of the failure tests in `tests/unit/test_source.py`. At the sketch challenge (Finding 7), chose two failure types over one type with a stated rule or a `cacheable` field, so each layer's return type names its own failure and the cache rule reads from the name, accepting a second type with identical fields.
+**Ratified:** Chose results, where loading and parsing each return a valid object or a failure, over error fields on both layers or on the Python layer alone, so a rule can't be handed a failed file and the seven detector guards go away, accepting a rewrite of the failure tests in `tests/unit/test_source.py`. At the sketch challenge (Finding 7), chose two failure types over one type with a stated rule or a `cacheable` field, so each layer's return type names its own failure and the cache rule reads from the name, accepting a second type with the same two fields, where `debug_exception` is optional only on `LoadFailure`, since only some load failures have an exception. At the ship-time challenge (Finding 1), chose `open_source` returning `LoadedFile | LoadFailure | FileScanResult`, with the result meaning abort only, over converting a load failure to a result and telling skip from abort with `stop`, so each outcome is visible in the type the loop reads, accepting that the loop handles three arms.
 
 ### D3: How does a file's language get from discovery to the rules?
 
@@ -96,7 +96,7 @@
 | Stored copies of language | One | None | None | One | None |
 | Matches issue text ("tags") | Yes | The effect, not the word | No | Yes | The effect, not the word |
 | `resolved_paths` indexing invariant | Removed | Removed | Removed | Stays, with a second like it | Stays |
-| Unread names in this PR | `language` field | None | None | `languages` | None |
+| Unread names in this PR | `language` field | `Language.PYTHON`, which only tests read | None | `languages` | `Language.PYTHON`, which only tests read |
 | `.py` check in one place | Yes | Yes | Yes | Yes | Yes |
 | Home of the language model | `source.py`, imported by discovery | Leaf module the catalog can import at #59 with no cycle | #59 decides | `source.py` | Leaf module |
 | Overlap with the cache key's filename input (`pipeline.py:303-305`) | Two truths | None: the rule sits on `language_for` | None until #59 | Two truths | None |
@@ -132,12 +132,15 @@
 
 - [x] Implementation and tests committed
 - [x] Docs: `CLAUDE.md` and the docstrings the ledger lists; nothing in `docs/` or `README.md` names these internals
-- [ ] Ship-time challenge
+- [x] Ship-time challenge
 
 **Calls made during the build:**
+- Pickups for #61, which a suffix-table entry alone won't do: `scan_source` calls `parse_python` on every file until something dispatches on language, the "explicit path is not a Python file" message in `discovery.py`, and `.pre-commit-hooks.yaml`.
 - `PythonSource` is a frozen dataclass whose `lines`, `comments`, and `docstring_spans` are `cached_property`: the failure-producing steps run once in `parse_python`, while rules that don't read the derived forms still don't pay for them.
 - `LoadedFile`'s bytes field is `content`, and `Token` moves to `python_source.py`, since only the Python layer has tokens.
 - `hash_source_content` takes `bytes` and returns `str`, and `RunCache.lookup` and `store` take a non-optional key, because a load failure now ends the iteration before any key exists. `MAX_SOURCE_BYTES` leaves `cache.py`.
-- A load failure's `--debug` print happens inside `open_source`'s boundary, so an exception while printing it is labelled `source-load` rather than today's `source-analyze`. That only arises if writing to stderr itself fails.
+- A load failure's `--debug` print happens in the loop, outside `open_source`'s boundary, so an exception while printing it is no longer labelled `source-analyze` and reaches the CLI's own boundary instead. That only arises if writing to stderr itself fails.
+- An unexpected exception while decoding is now labelled `source-analyze`. On master it was `source-load`, because decoding ran inside `SourceFile.load()`. It shows in the internal error's `operation`, and a file declaring `# coding: undefined` reaches it; that file aborts the run with exit 4 either way.
 - Tests build these objects through a new `tests/_source_helpers.py` (`load`, `parse_file`), and `test_source.py` splits by layer into `test_source.py` and `test_python_source.py`. A checked-in helper replaces 67 constructor calls with one recipe.
+- A `parse_sample` fixture in `conftest.py` gives rule tests one name for the common recipe, chosen at the ship-time challenge (Finding 8).
 - `open_source` and `scan_source` keep their names, since the ledger's file loop names them.

@@ -1,15 +1,13 @@
-from _source_helpers import parse_file
-
 from house_lint.analysis import SourceKind
 from house_lint.rules.file_length import HSL102Options, detect
 
 
-def test_flags_only_files_strictly_over_configured_splitlines_threshold(write_sample) -> None:
-    exact = write_sample("x = 1\n" * 3)
-    assert detect(parse_file(exact), HSL102Options(max_lines=3)) == []
+def test_flags_only_files_strictly_over_configured_splitlines_threshold(parse_sample) -> None:
+    exact = parse_sample("x = 1\n" * 3)
+    assert detect(exact, HSL102Options(max_lines=3)) == []
 
-    over = write_sample("x = 1\n" * 4)
-    [finding] = detect(parse_file(over), HSL102Options(max_lines=3))
+    over = parse_sample("x = 1\n" * 4)
+    [finding] = detect(over, HSL102Options(max_lines=3))
 
     assert finding.message == "4 lines (threshold: 3)"
     assert (finding.line, finding.column, finding.end_line, finding.end_column) == (
@@ -22,10 +20,10 @@ def test_flags_only_files_strictly_over_configured_splitlines_threshold(write_sa
     assert finding.owner is None
 
 
-def test_legacy_file_size_exemption_comment_does_not_suppress_finding(write_sample) -> None:
-    path = write_sample("# file-size-exempt: legacy annotation\nx = 1\ny = 2\nz = 3\n")
+def test_legacy_file_size_exemption_comment_does_not_suppress_finding(parse_sample) -> None:
+    source = parse_sample("# file-size-exempt: legacy annotation\nx = 1\ny = 2\nz = 3\n")
 
-    findings = detect(parse_file(path), HSL102Options(max_lines=3))
+    findings = detect(source, HSL102Options(max_lines=3))
 
     assert [finding.message for finding in findings] == ["4 lines (threshold: 3)"]
 

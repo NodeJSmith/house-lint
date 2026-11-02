@@ -12,8 +12,8 @@ from house_lint.analysis import (
 from house_lint.rules.spec_tokens import BUILTIN_TASK, HSL101Options, TokenFamily, detect
 
 
-def test_detects_configured_comment_and_docstring_tokens_with_provenance(write_sample) -> None:
-    path = write_sample(
+def test_detects_configured_comment_and_docstring_tokens_with_provenance(parse_sample) -> None:
+    source = parse_sample(
         '"""Implement FR#6a before release.\nT05: planning label\n"""\nvalue = 1  # AC1 and WP04\n'
     )
     options = HSL101Options(
@@ -33,7 +33,7 @@ def test_detects_configured_comment_and_docstring_tokens_with_provenance(write_s
         )
     )
 
-    findings = detect(parse_file(path), options)
+    findings = detect(source, options)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (1, "spec token FR#6a in docstring"),
@@ -44,8 +44,8 @@ def test_detects_configured_comment_and_docstring_tokens_with_provenance(write_s
     assert all(finding.source_kind is SourceKind.STATEMENT for finding in findings)
 
 
-def test_respects_hash_digits_suffix_case_time_and_ordinary_strings(write_sample) -> None:
-    path = write_sample('data = "FR#6 and T05"\n# FR6 FR#6a FR#6A fr#6 T05:30 T05: label\n')
+def test_respects_hash_digits_suffix_case_time_and_ordinary_strings(parse_sample) -> None:
+    source = parse_sample('data = "FR#6 and T05"\n# FR6 FR#6a FR#6A fr#6 T05:30 T05: label\n')
     options = HSL101Options(
         (
             TokenFamily(
@@ -60,7 +60,7 @@ def test_respects_hash_digits_suffix_case_time_and_ordinary_strings(write_sample
         )
     )
 
-    findings = detect(parse_file(path), options)
+    findings = detect(source, options)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (2, "spec token FR#6a in comment"),
@@ -68,18 +68,18 @@ def test_respects_hash_digits_suffix_case_time_and_ordinary_strings(write_sample
     ]
 
 
-def test_comment_token_on_multiline_statement_uses_statement_provenance(write_sample) -> None:
-    path = write_sample("def prepare() -> None:\n    value = (\n        1\n    )  # AC1\n")
+def test_comment_token_on_multiline_statement_uses_statement_provenance(parse_sample) -> None:
+    source = parse_sample("def prepare() -> None:\n    value = (\n        1\n    )  # AC1\n")
     options = HSL101Options((TokenFamily(prefixes=("AC",), scopes=("comments",)),))
 
-    [finding] = detect(parse_file(path), options)
+    [finding] = detect(source, options)
 
     assert finding.source_kind is SourceKind.STATEMENT
     assert finding.owner == StatementKey(2, 5, 4, 6)
 
 
-def test_respects_case_and_maximum_digits_for_each_configured_scope(write_sample) -> None:
-    path = write_sample('"""fr01 is prose but outside the configured scope."""\n# fr01 FR012\n')
+def test_respects_case_and_maximum_digits_for_each_configured_scope(parse_sample) -> None:
+    source = parse_sample('"""fr01 is prose but outside the configured scope."""\n# fr01 FR012\n')
     options = HSL101Options(
         (
             TokenFamily(
@@ -92,7 +92,7 @@ def test_respects_case_and_maximum_digits_for_each_configured_scope(write_sample
         )
     )
 
-    findings = detect(parse_file(path), options)
+    findings = detect(source, options)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (2, "spec token fr01 in comment")
@@ -138,13 +138,13 @@ def test_detects_dash_separated_family_as_joined_segment_in_filename(tmp_path: P
     assert [finding.message for finding in findings] == ["spec token KI-001 in filename"]
 
 
-def test_limits_findings_per_file(write_sample) -> None:
-    path = write_sample("# AC1 AC2 AC3\n")
+def test_limits_findings_per_file(parse_sample) -> None:
+    source = parse_sample("# AC1 AC2 AC3\n")
     options = HSL101Options(
         (TokenFamily(prefixes=("AC",), scopes=("comments",)),), max_findings_per_file=2
     )
 
-    findings = detect(parse_file(path), options)
+    findings = detect(source, options)
 
     assert [finding.message for finding in findings] == [
         "spec token AC1 in comment",
@@ -152,37 +152,37 @@ def test_limits_findings_per_file(write_sample) -> None:
     ]
 
 
-def test_none_separator_forbids_any_separator(write_sample) -> None:
-    path = write_sample("# AC#1 AC001\n")
+def test_none_separator_forbids_any_separator(parse_sample) -> None:
+    source = parse_sample("# AC#1 AC001\n")
     options = HSL101Options((TokenFamily(prefixes=("AC",), scopes=("comments",)),))
 
-    findings = detect(parse_file(path), options)
+    findings = detect(source, options)
 
     assert [finding.message for finding in findings] == ["spec token AC001 in comment"]
 
 
-def test_default_max_findings_per_file_is_200(write_sample) -> None:
-    path = write_sample("# " + " ".join(f"AC{number:03d}" for number in range(1, 202)) + "\n")
+def test_default_max_findings_per_file_is_200(parse_sample) -> None:
+    source = parse_sample("# " + " ".join(f"AC{number:03d}" for number in range(1, 202)) + "\n")
     options = HSL101Options((TokenFamily(prefixes=("AC",), scopes=("comments",)),))
 
-    findings = detect(parse_file(path), options)
+    findings = detect(source, options)
 
     assert len(findings) == 200
     assert findings[0].message == "spec token AC001 in comment"
     assert findings[-1].message == "spec token AC200 in comment"
 
 
-def test_limits_materialized_candidates_when_requested(write_sample) -> None:
+def test_limits_materialized_candidates_when_requested(parse_sample) -> None:
     # range starts at 1 (not 0) for readable token text, so +3 here produces the same
     # MAX_CANDIDATES_PER_FILE + 2 total tokens as the other rules' budget-cutoff tests
     tokens = " ".join(f"AC{i}" for i in range(1, MAX_CANDIDATES_PER_FILE + 3))
-    path = write_sample(f"# {tokens}\n")
+    source = parse_sample(f"# {tokens}\n")
     options = HSL101Options(
         (TokenFamily(prefixes=("AC",), scopes=("comments",)),), max_findings_per_file=20_000
     )
 
     with pytest.raises(CandidateBudgetExceeded):
-        detect(parse_file(path), options, limit=MAX_CANDIDATES_PER_FILE)
+        detect(source, options, limit=MAX_CANDIDATES_PER_FILE)
 
 
 @pytest.mark.parametrize(
@@ -204,32 +204,32 @@ def test_limits_materialized_candidates_when_requested(write_sample) -> None:
     ],
 )
 def test_separator_mode_matches_expected_tokens(
-    write_sample, separator: str, prefix: str, sample: str, expected_messages: list[str]
+    parse_sample, separator: str, prefix: str, sample: str, expected_messages: list[str]
 ) -> None:
-    path = write_sample(sample)
+    source = parse_sample(sample)
     options = HSL101Options(
         (TokenFamily(prefixes=(prefix,), scopes=("comments",), separator=separator),)
     )
 
-    findings = detect(parse_file(path), options)
+    findings = detect(source, options)
 
     assert [finding.message for finding in findings] == expected_messages
 
 
-def test_builtin_task_family_detects_task_tokens_but_not_time_strings(write_sample) -> None:
-    path = write_sample("# T05 planned, but not T05:30\n")
+def test_builtin_task_family_detects_task_tokens_but_not_time_strings(parse_sample) -> None:
+    source = parse_sample("# T05 planned, but not T05:30\n")
     options = HSL101Options((BUILTIN_TASK,))
 
-    findings = detect(parse_file(path), options)
+    findings = detect(source, options)
 
     assert [finding.message for finding in findings] == ["spec token T05 in comment"]
 
 
-def test_comment_tokens_after_a_form_feed_inside_a_string(write_sample) -> None:
-    path = write_sample('text = "a\fb"\n# tracks FR1\n')
+def test_comment_tokens_after_a_form_feed_inside_a_string(parse_sample) -> None:
+    source = parse_sample('text = "a\fb"\n# tracks FR1\n')
     options = HSL101Options((TokenFamily(prefixes=("FR",), scopes=("comments",)),))
 
-    findings = detect(parse_file(path), options)
+    findings = detect(source, options)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (2, "spec token FR1 in comment")

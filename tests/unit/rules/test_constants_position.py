@@ -1,5 +1,4 @@
 import pytest
-from _source_helpers import parse_file
 
 from house_lint.analysis import (
     MAX_CANDIDATES_PER_FILE,
@@ -11,9 +10,9 @@ from house_lint.rules.constants_position import detect
 
 
 def test_detects_misplaced_uppercase_assignments_and_excludes_dunders_and_lowercase(
-    write_sample,
+    parse_sample,
 ) -> None:
-    path = write_sample("""\
+    source = parse_sample("""\
         class Example:
             pass
 
@@ -24,7 +23,7 @@ def test_detects_misplaced_uppercase_assignments_and_excludes_dunders_and_lowerc
         X = 4
     """)
 
-    findings = detect(parse_file(path), None)
+    findings = detect(source, None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (4, "constant defined after the first class or function"),
@@ -34,18 +33,18 @@ def test_detects_misplaced_uppercase_assignments_and_excludes_dunders_and_lowerc
     assert findings[0].owner == StatementKey(4, 1, 4, 8)
 
 
-def test_ignores_constants_without_definitions_or_before_the_first_definition(write_sample) -> None:
-    no_definitions = write_sample("FOO = 1\nBAR = 2\n")
-    assert detect(parse_file(no_definitions), None) == []
+def test_ignores_constants_without_definitions_or_before_the_first_definition(parse_sample) -> None:
+    no_definitions = parse_sample("FOO = 1\nBAR = 2\n")
+    assert detect(no_definitions, None) == []
 
-    before_definition = write_sample("FOO = 1\n\nclass Example:\n    pass\n")
-    assert detect(parse_file(before_definition), None) == []
+    before_definition = parse_sample("FOO = 1\n\nclass Example:\n    pass\n")
+    assert detect(before_definition, None) == []
 
 
 def test_exempts_constants_derived_from_earlier_bindings_in_values_and_annotations(
-    write_sample,
+    parse_sample,
 ) -> None:
-    path = write_sample("""\
+    source = parse_sample("""\
         class Handle:
             pass
 
@@ -57,11 +56,11 @@ def test_exempts_constants_derived_from_earlier_bindings_in_values_and_annotatio
         HANDLE_VAR: dict[str, Handle] = {}
     """)
 
-    assert detect(parse_file(path), None) == []
+    assert detect(source, None) == []
 
 
-def test_exempts_annotation_references_with_postponed_annotations(write_sample) -> None:
-    path = write_sample("""\
+def test_exempts_annotation_references_with_postponed_annotations(parse_sample) -> None:
+    source = parse_sample("""\
         from __future__ import annotations
 
         class Handle:
@@ -70,11 +69,11 @@ def test_exempts_annotation_references_with_postponed_annotations(write_sample) 
         HANDLE_VAR: dict[str, Handle] = {}
     """)
 
-    assert detect(parse_file(path), None) == []
+    assert detect(source, None) == []
 
 
-def test_handles_unpacking_and_skips_unsupported_assignment_targets(write_sample) -> None:
-    path = write_sample("""\
+def test_handles_unpacking_and_skips_unsupported_assignment_targets(parse_sample) -> None:
+    source = parse_sample("""\
         class Example:
             pass
 
@@ -82,16 +81,16 @@ def test_handles_unpacking_and_skips_unsupported_assignment_targets(write_sample
         module.VALUE = 3
     """)
 
-    findings = detect(parse_file(path), None)
+    findings = detect(source, None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (4, "constant defined after the first class or function")
     ]
 
 
-def test_limits_materialized_candidates_when_requested(write_sample) -> None:
+def test_limits_materialized_candidates_when_requested(parse_sample) -> None:
     constants = "\n".join(f"X{i} = {i}" for i in range(MAX_CANDIDATES_PER_FILE + 2))
-    path = write_sample(f"class Example:\n    pass\n\n{constants}\n")
+    source = parse_sample(f"class Example:\n    pass\n\n{constants}\n")
 
     with pytest.raises(CandidateBudgetExceeded):
-        detect(parse_file(path), None, limit=MAX_CANDIDATES_PER_FILE)
+        detect(source, None, limit=MAX_CANDIDATES_PER_FILE)

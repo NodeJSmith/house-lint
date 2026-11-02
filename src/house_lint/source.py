@@ -39,7 +39,9 @@ class LoadedFile:
     """One file's path and bytes. Each language layer decodes `content` by its own rules.
 
     `content` is the only read of a scanned file, so the cache key and every rule derive from the
-    same buffer. See `pipeline._cache_keys`.
+    same buffer. See `pipeline._cache_keys`. It is at most `MAX_SOURCE_BYTES`, which `load_file`
+    establishes and the cache relies on: an oversized file has no entry because it has no
+    `LoadedFile`.
     """
 
     path: Path
