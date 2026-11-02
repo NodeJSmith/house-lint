@@ -1200,12 +1200,16 @@ def test_budget_error_counts_the_file_when_rule_execution_begins(
 
 def test_subprocess_internal_failure_exits_four_with_parseable_json(repository: Path) -> None:
     prelude = """
-from house_lint import cli, scanner
+from dataclasses import replace
 
-def fail(*_args: object) -> object:
+from house_lint import cli, config
+
+def fail(*_args: object, **_kwargs: object) -> object:
     raise RuntimeError("simulated failure")
 
-scanner.detect_candidates = fail
+config.FILE_RULES = {
+    rule_id: replace(rule, detect=fail) for rule_id, rule in config.FILE_RULES.items()
+}
 cli.main()
 """
 
@@ -1236,16 +1240,18 @@ def test_subprocess_internal_error_precedes_incomplete_scan_and_preserves_findin
     broken.write_text("def broken()\n    pass\n")
     failing.write_text("value = 1\n")
     prelude = """
-from house_lint import cli, scanner
+from dataclasses import replace
 
-original = scanner.detect_candidates
+from house_lint import cli, config
 
-def fail_c(source, detector_inputs, **kwargs):
-    if source.relative_path == "src/c.py":
-        raise RuntimeError("simulated failure")
-    return original(source, detector_inputs, **kwargs)
+def fail_c(rule):
+    def detect(source, options, **kwargs):
+        if source.relative_path == "src/c.py":
+            raise RuntimeError("simulated failure")
+        return rule.detect(source, options, **kwargs)
+    return replace(rule, detect=detect)
 
-scanner.detect_candidates = fail_c
+config.FILE_RULES = {rule_id: fail_c(rule) for rule_id, rule in config.FILE_RULES.items()}
 cli.main()
 """
 
@@ -1270,22 +1276,13 @@ cli.main()
 
 
 def test_internal_error_preserves_completed_results_and_writes_debug_to_stderr(
-    repository: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    repository: Path, fail_detectors_for, capsys: pytest.CaptureFixture[str]
 ) -> None:
     first = repository / "src" / "a.py"
     second = repository / "src" / "b.py"
     first.write_text("def example():\n    import module\n")
     second.write_text("value = 1\n")
-    original = scanner.detect_candidates
-
-    def fail_second(
-        source: scanner.SourceFile, detector_inputs: object, **kwargs: object
-    ) -> object:
-        if source.relative_path == "src/b.py":
-            raise RuntimeError("simulated failure")
-        return original(source, detector_inputs, **kwargs)
-
-    monkeypatch.setattr(scanner, "detect_candidates", fail_second)
+    fail_detectors_for("src/b.py")
 
     code = cli.check(paths=[first, second], root=repository, format="json", debug=True)
     captured = capsys.readouterr()

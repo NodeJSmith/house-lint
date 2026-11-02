@@ -1,6 +1,5 @@
 from house_lint.analysis import SourceKind
-from house_lint.config import HSL102Options
-from house_lint.rules.file_length import detect
+from house_lint.rules.file_length import HSL102Options, detect
 from house_lint.source import SourceFile
 
 

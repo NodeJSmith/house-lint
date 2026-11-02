@@ -21,8 +21,10 @@ from house_lint.cache import (
     versioned_cache_dir,
     write_cached_result,
 )
-from house_lint.config import HSL101Options, HSL102Options, HSL103Options, TokenFamily
+from house_lint.config import LintConfig
 from house_lint.results import Finding, LintError
+from house_lint.rules.file_length import HSL102Options
+from house_lint.rules.spec_tokens import HSL101Options, TokenFamily
 
 # Well-formed cache payloads, as `_finding_to_payload`/`_error_to_payload` write them (the
 # `path` field is stripped on write and re-attached by the reader).
@@ -67,76 +69,50 @@ def test_hash_source_content_is_none_when_oversized(monkeypatch: pytest.MonkeyPa
     assert hash_source_content(b"x = 1\n") is None
 
 
-def test_hash_effective_config_is_order_independent_and_content_sensitive() -> None:
-    hsl101, hsl102, hsl103 = HSL101Options(), HSL102Options(), HSL103Options()
+def _hash(
+    enabled_rules: tuple[str, ...] = ("HSL001",),
+    *,
+    filename: str = "a.py",
+    python_version: tuple[int, int] | None = None,
+    **overrides: object,
+) -> str:
+    options = {**LintConfig().rule_options, **overrides}
+    return hash_effective_config(
+        enabled_rules, options, filename=filename, python_version=python_version
+    )
 
-    # Explicit parameters rather than `**kwargs`: a typo'd keyword would be silently ignored by
-    # `kwargs.get`, leaving the final assertion comparing two identical hashes and passing while
-    # testing nothing.
-    def h(
-        enabled_rules: tuple[str, ...],
-        *,
-        options101: HSL101Options = hsl101,
-        options102: HSL102Options = hsl102,
-        options103: HSL103Options = hsl103,
-    ) -> str:
-        return hash_effective_config(
-            enabled_rules, options101, options102, options103, filename="a.py"
-        )
 
-    assert h(("HSL001", "HSL002")) == h(("HSL002", "HSL001"))
-    assert h(("HSL001",)) != h(("HSL001", "HSL002"))
-    assert h(("HSL102",), options102=HSL102Options(max_lines=100)) != h(("HSL102",))
+def test_hash_effective_config_ignores_rule_order_and_tracks_the_enabled_set() -> None:
+    assert _hash(("HSL001", "HSL002")) == _hash(("HSL002", "HSL001"))
+    assert _hash(("HSL001",)) != _hash(("HSL001", "HSL002"))
+
+
+def test_hash_effective_config_changes_with_any_option_value() -> None:
+    assert _hash(HSL102=HSL102Options(max_lines=100)) != _hash()
+    assert _hash(HSL101=HSL101Options(max_findings_per_file=1)) != _hash()
+    family = TokenFamily(prefixes=("TASK",), scopes=("comments",))
+    assert _hash(HSL101=HSL101Options(tokens=(family,))) != _hash()
+
+
+def test_hash_effective_config_covers_the_options_of_a_rule_that_is_not_enabled() -> None:
+    assert _hash(("HSL001",), HSL102=HSL102Options(max_lines=100)) != _hash(("HSL001",))
 
 
 def test_hash_effective_config_changes_with_python_version() -> None:
-    hsl101, hsl102, hsl103 = HSL101Options(), HSL102Options(), HSL103Options()
-
-    def h(python_version: tuple[int, int]) -> str:
-        return hash_effective_config(
-            ("HSL001",), hsl101, hsl102, hsl103, filename="a.py", python_version=python_version
-        )
-
-    assert h((3, 11)) != h((3, 12))
-    assert h((3, 12)) == h((3, 12))
+    assert _hash(python_version=(3, 11)) != _hash(python_version=(3, 12))
+    assert _hash(python_version=(3, 12)) == _hash(python_version=(3, 12))
 
 
 def test_hash_effective_config_defaults_python_version_to_the_running_interpreter() -> None:
-    hsl101, hsl102, hsl103 = HSL101Options(), HSL102Options(), HSL103Options()
-
-    default = hash_effective_config(("HSL001",), hsl101, hsl102, hsl103, filename="a.py")
-    explicit = hash_effective_config(
-        ("HSL001",),
-        hsl101,
-        hsl102,
-        hsl103,
-        filename="a.py",
-        python_version=tuple(sys.version_info[:2]),
-    )
-
-    assert default == explicit
+    assert _hash() == _hash(python_version=tuple(sys.version_info[:2]))
 
 
-def test_hash_effective_config_includes_filename_only_when_hsl101_scopes_to_filenames() -> None:
-    scoped = HSL101Options(
-        tokens=(TokenFamily(prefixes=("TASK",), scopes=("filenames",)),),
-    )
-    unscoped = HSL101Options(
-        tokens=(TokenFamily(prefixes=("TASK",), scopes=("comments",)),),
-    )
-    other_rule_options = (HSL102Options(), HSL103Options())
-
-    assert hash_effective_config(
-        ("HSL101",), scoped, *other_rule_options, filename="a.py"
-    ) != hash_effective_config(("HSL101",), scoped, *other_rule_options, filename="b.py")
-    assert hash_effective_config(
-        ("HSL101",), unscoped, *other_rule_options, filename="a.py"
-    ) == hash_effective_config(("HSL101",), unscoped, *other_rule_options, filename="b.py")
-    # HSL101 configured with a filenames-scoped family, but not currently enabled: filename
-    # cannot affect output for this run, so it must not affect the hash either.
-    assert hash_effective_config(
-        (), scoped, *other_rule_options, filename="a.py"
-    ) == hash_effective_config((), scoped, *other_rule_options, filename="b.py")
+@pytest.mark.parametrize("enabled_rules", [(), ("HSL001",), ("HSL101",)])
+def test_hash_effective_config_always_includes_the_filename(
+    enabled_rules: tuple[str, ...],
+) -> None:
+    assert _hash(enabled_rules, filename="a.py") != _hash(enabled_rules, filename="b.py")
+    assert _hash(enabled_rules, filename="a.py") != _hash(enabled_rules, filename="a.ts")
 
 
 def test_default_cache_base_and_versioned_cache_dir(tmp_path: Path) -> None:

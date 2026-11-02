@@ -44,17 +44,16 @@ CI has two workflows. `.github/workflows/ci.yml` runs the tests on Python 3.11 t
 `src/house_lint/`:
 - `cli.py`: the cyclopts app: argument parsing, config loading, the internal-error boundary, and rendering
 - `pipeline.py`: the whole run (`run_scan`): discovery, the file phase, the per-run cache (`RunCache`), and result aggregation
-- `config.py`: config discovery, validation, and per-rule option dataclasses (`HSL10xOptions`)
+- `config.py`: config discovery and validation, and each run's resolved rule options (`LintConfig.rule_options`)
 - `discovery.py`: file discovery through `git ls-files` or a plain walk, and configured excludes
 - `source.py`: `SourceFile`, which loads, decodes, tokenizes, and parses one file
 - `scanner.py`: loading one file, running its detectors, and applying suppressions
-- `registry.py`: rule dispatch
-- `rule_catalog.py`: rule metadata
+- `rule_catalog.py`: the table of rules: each rule's metadata, detector, and options type
 - `suppressions.py`: pragma parsing and HSL900
 - `cache.py`: the result cache
 - `results.py`: the result model
 - `reporters/`: text and JSON output
-- `rules/`: one module per rule
+- `rules/`: one module per rule, holding its detector and its options type
 
 Tests:
 - `tests/unit/`, with `tests/unit/rules/` mirroring `src/house_lint/rules/`.
@@ -67,14 +66,10 @@ Tests:
 
 Today a rule is a detector `(source: SourceFile, options, *, limit=None) -> list[CandidateFinding]` in `rules/<name>.py`. Adding one touches:
 
-1. `rule_catalog.py`: the `RULES` entry. This is the single source of truth for ID, display info, and default or opt-in tier.
-2. `registry.py`: the `_DETECTORS` entry. An import-time check raises `RuntimeError` if `_DETECTORS` and `rule_catalog.ORDINARY_RULES` diverge. A rule with options needs a small cast adapter, like `_hsl102`.
-3. `config.py`: an entry in `selected_detector_inputs`'s options dict, even for a rule with no options (`None`). A rule missing from it is silently dropped and never runs, and the registry check doesn't catch that.
-4. For a configurable rule, also add:
-   - an options dataclass, a `LintConfig` field, the `DetectorOptions` union member, and `_rule_options` parsing
-   - the options in `cache.hash_effective_config` and `pipeline._cache_keys`, or a changed option will replay stale cached results
-5. `docs/rules.md` and, for options, `docs/configuration.md`. Also update the README rules table.
-6. Tests under `tests/unit/rules/`.
+1. `rules/<name>.py`: the detector. A rule with options also declares its options type there, a frozen `RuleOptions` subclass whose fields, defaults, and `Annotated` constraints are the config schema. Cross-field checks go in `__post_init__`, raising `ValueError`.
+2. `rule_catalog.py`: one row, `file_rule(...)` or `configurable_rule(...)`. This is the single source of truth for ID, display info, default or opt-in tier, detector, and options. Parsing, dispatch, and the cache key all derive from it. A row whose detector and options type disagree fails Pyright. Pass `parse=` only when a rule's config needs more than converting its table to its options type, as HSL101's merge with the built-in families does.
+3. `docs/rules.md` and, for options, `docs/configuration.md`. Also update the README rules table.
+4. Tests under `tests/unit/rules/`.
 
 If a step here doesn't match the code, the code wins; fix this list in the same PR.
 

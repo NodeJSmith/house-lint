@@ -1,7 +1,7 @@
 """Whole-run pins for what a scan reports and what it does to the cache.
 
-Everything here goes through `cli.check` and patches only code below the pipeline (`scanner` and
-`cache` internals), so a pin keeps meaning the same thing when the pipeline around it is reshaped.
+Everything here goes through `cli.check` and patches only code below the pipeline (the rule table
+and `cache` internals), so a pin keeps meaning the same thing when the pipeline around it is reshaped.
 Files are scanned in sorted order, which is what puts `a.py` ahead of `b.py` in the cache pins.
 """
 
@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from house_lint import cache, cli, scanner
+from house_lint import cache, cli
 
 LAZY_IMPORT = "def example():\n    import module\n"
 OTHER_LAZY_IMPORT = "def other():\n    import other\n"
@@ -59,17 +59,6 @@ def _add_foreign_namespace(root: Path) -> Path:
     foreign.mkdir(parents=True)
     (foreign / ".house-lint-version").write_text("")
     return foreign
-
-
-def _fail_detectors_for(monkeypatch: pytest.MonkeyPatch, path: str) -> None:
-    original = scanner.detect_candidates
-
-    def fail(source: scanner.SourceFile, detector_inputs: object, **kwargs: object) -> object:
-        if source.relative_path == path:
-            raise RuntimeError("simulated failure")
-        return original(source, detector_inputs, **kwargs)
-
-    monkeypatch.setattr(scanner, "detect_candidates", fail)
 
 
 def _fail_cache_writes(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
@@ -250,7 +239,7 @@ def _fail_cache_writes(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
 def test_suppression_outcome_is_the_same_cold_and_warm(
     tmp_path: Path,
     write_sample: Callable[[str], Path],
-    monkeypatch: pytest.MonkeyPatch,
+    fail_detectors_for,
     capsys: pytest.CaptureFixture[str],
     source: str,
     config: str,
@@ -272,7 +261,7 @@ def test_suppression_outcome_is_the_same_cold_and_warm(
 
     # A warm run that missed the cache would call this and report an internal error, so a pass
     # below means the outcome was replayed rather than recomputed.
-    _fail_detectors_for(monkeypatch, "sample.py")
+    fail_detectors_for("sample.py")
 
     warm_code, warm, _ = _check(capsys, tmp_path)
 
@@ -296,12 +285,12 @@ def test_reads_continue_after_a_failed_write_disables_writes(
 
 
 def test_a_run_that_stops_early_still_prunes_when_it_wrote_an_entry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, fail_detectors_for, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "a.py").write_text(LAZY_IMPORT)
     (tmp_path / "b.py").write_text(OTHER_LAZY_IMPORT)
     foreign = _add_foreign_namespace(tmp_path)
-    _fail_detectors_for(monkeypatch, "b.py")
+    fail_detectors_for("b.py")
 
     code, result, _ = _check(capsys, tmp_path)
 
@@ -311,11 +300,11 @@ def test_a_run_that_stops_early_still_prunes_when_it_wrote_an_entry(
 
 
 def test_a_run_that_stops_before_writing_does_not_prune(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, fail_detectors_for, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "a.py").write_text(LAZY_IMPORT)
     foreign = _add_foreign_namespace(tmp_path)
-    _fail_detectors_for(monkeypatch, "a.py")
+    fail_detectors_for("a.py")
 
     code, result, _ = _check(capsys, tmp_path)
 
@@ -325,10 +314,10 @@ def test_a_run_that_stops_before_writing_does_not_prune(
 
 
 def test_a_stop_result_is_never_written_to_the_cache(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, fail_detectors_for, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "a.py").write_text(LAZY_IMPORT)
-    _fail_detectors_for(monkeypatch, "a.py")
+    fail_detectors_for("a.py")
 
     code, result, _ = _check(capsys, tmp_path)
 

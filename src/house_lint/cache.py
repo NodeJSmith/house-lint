@@ -7,10 +7,10 @@ directory is namespaced by house-lint's own version, so an upgrade invalidates s
 automatically without an explicit migration step.
 
 Cache entries are addressed purely by content and config hashes, not by file path — two files
-with identical content and an identical effective rule set produce the same entry. Cached
-findings and errors are therefore stored without their `path` field; `read_cached_result` takes
-the caller-supplied `relative_path` of the file actually being scanned and re-attaches it to
-each reconstructed finding/error.
+with identical content, an identical effective rule set, and the same basename produce the same
+entry. Cached findings and errors are therefore stored without their `path` field;
+`read_cached_result` takes the caller-supplied `relative_path` of the file actually being scanned
+and re-attaches it to each reconstructed finding/error.
 """
 
 import hashlib
@@ -18,16 +18,19 @@ import json
 import os
 import shutil
 import sys
+from collections.abc import Mapping
 from contextlib import suppress
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from enum import Enum, auto
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
 
+import msgspec
+
 from house_lint import __version__
-from house_lint.config import HSL101Options, HSL102Options, HSL103Options
 from house_lint.results import Finding, LintError
+from house_lint.rules.options import RuleOptions
 from house_lint.source import MAX_SOURCE_BYTES
 
 CACHE_DIRNAME = ".house-lint-cache"
@@ -153,9 +156,7 @@ def hash_source_content(content: bytes | None) -> str | None:
 
 def hash_effective_config(
     enabled_rules: tuple[str, ...],
-    hsl101: HSL101Options,
-    hsl102: HSL102Options,
-    hsl103: HSL103Options,
+    rule_options: Mapping[str, RuleOptions | None],
     *,
     filename: str,
     python_version: tuple[int, int] | None = None,
@@ -165,12 +166,13 @@ def hash_effective_config(
     `enabled_rules` is the per-file effective set (after `per-file-ignores`, `extend-select`,
     etc. have already resolved it), not the raw configured selection.
 
-    `filename` (the file's own basename, e.g. `path.name`) is folded in only when an enabled
-    HSL101 token family scopes to `"filenames"` — that's the one detector in this codebase whose
-    output depends on the file's name rather than purely its content, since it matches spec
-    tokens against the filename itself (see `_filename_candidates` in rules/spec_tokens.py).
-    Without this, two files with identical content but different names could otherwise collide
-    on the same cache entry and silently swap each other's filename-derived findings.
+    `rule_options` is every rule's resolved options, whether or not that rule is enabled, so a new
+    option can't be left out of the key.
+
+    `filename` (the file's own basename, e.g. `path.name`) is always folded in. A rule can read the
+    name as well as the content, and a file's language follows from its suffix, so two files with
+    identical content but different names must not share an entry. A way to choose a file's
+    language other than its suffix would have to join this hash.
 
     `python_version` (major, minor) defaults to the running interpreter's `sys.version_info[:2]`
     and is always folded into the hash. `SourceFile._analyze` parses source with `ast.parse`,
@@ -182,15 +184,12 @@ def hash_effective_config(
     """
     payload: dict[str, object] = {
         "enabled_rules": sorted(enabled_rules),
-        "hsl101": asdict(hsl101),
-        "hsl102": asdict(hsl102),
-        "hsl103": asdict(hsl103),
+        "filename": filename,
         "python_version": list(
             python_version if python_version is not None else sys.version_info[:2]
         ),
+        "rule_options": msgspec.to_builtins(dict(rule_options)),
     }
-    if "HSL101" in enabled_rules and any("filenames" in family.scopes for family in hsl101.tokens):
-        payload["filename"] = filename
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 

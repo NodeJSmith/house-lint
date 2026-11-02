@@ -2,8 +2,13 @@
 
 import ast
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from functools import lru_cache
+from types import MappingProxyType
+from typing import Annotated, Any
+
+import msgspec
+from msgspec import Meta
 
 from house_lint.analysis import (
     CandidateFinding,
@@ -13,8 +18,120 @@ from house_lint.analysis import (
     comment_owner_for_line,
     docstring_owner_for_line,
 )
-from house_lint.config import SEPARATOR_REGEX, SUFFIX_REGEX, HSL101Options, TokenFamily
+from house_lint.rules.options import RuleOptions
 from house_lint.source import SourceFile
+
+DEFAULT_MAX_FINDINGS_PER_FILE = 200
+MAX_FINDINGS_PER_FILE_LIMIT = 10_000
+MAX_TOKEN_FAMILIES = 32
+MAX_PREFIXES_PER_FAMILY = 32
+MAX_PREFIX_LENGTH = 12
+MAX_DIGITS_BOUND = 12
+_BUILTIN_MAX_DIGITS = 4
+_PREFIX_PATTERN = r"^[A-Z][A-Z0-9_]*\Z"
+
+VALID_SCOPES: tuple[str, ...] = ("comments", "docstrings", "filenames")
+
+# Single source of truth for separator/suffix vocabularies: the keys validate configured
+# values, and the values build detection regexes.
+SEPARATOR_REGEX: Mapping[str, str] = MappingProxyType(
+    {
+        "none": "",
+        "hash": "#",
+        "hash-optional": "#?",
+        "dash": "-",
+        "dash-optional": "-?",
+    }
+)
+SUFFIX_REGEX: Mapping[str, str] = MappingProxyType(
+    {
+        "none": "",
+        "optional-lower-alpha": "[a-z]?",
+    }
+)
+
+_Digits = Annotated[int, Meta(ge=1, le=MAX_DIGITS_BOUND)]
+_Prefix = Annotated[str, Meta(max_length=MAX_PREFIX_LENGTH, pattern=_PREFIX_PATTERN)]
+
+
+class TokenFamily(RuleOptions, frozen=True, kw_only=True):
+    prefixes: Annotated[tuple[_Prefix, ...], Meta(min_length=1, max_length=MAX_PREFIXES_PER_FAMILY)]
+    scopes: Annotated[tuple[str, ...], Meta(min_length=1)]
+    separator: str = "none"
+    min_digits: _Digits = 1
+    max_digits: _Digits | None = None
+    suffix: str = "none"
+    case_sensitive: bool = True
+    not_followed_by_time: bool = False
+
+    def __post_init__(self) -> None:
+        if len(set(self.prefixes)) != len(self.prefixes):
+            raise ValueError("prefixes must be unique")
+        if len(set(self.scopes)) != len(self.scopes) or not set(self.scopes) <= set(VALID_SCOPES):
+            raise ValueError(f"scopes must be unique values from {', '.join(VALID_SCOPES)}")
+        if self.separator not in SEPARATOR_REGEX:
+            raise ValueError(f"separator must be one of {', '.join(SEPARATOR_REGEX)}")
+        if self.suffix not in SUFFIX_REGEX:
+            raise ValueError(f"suffix must be one of {', '.join(SUFFIX_REGEX)}")
+        if self.max_digits is not None and self.max_digits < self.min_digits:
+            raise ValueError("max_digits must not be less than min_digits")
+
+
+BUILTIN_SPEC = TokenFamily(
+    prefixes=("AC", "FR", "NFR", "WP"),
+    scopes=VALID_SCOPES,
+    separator="hash-optional",
+    max_digits=_BUILTIN_MAX_DIGITS,
+    suffix="optional-lower-alpha",
+)
+
+BUILTIN_TASK = TokenFamily(
+    prefixes=("T",),
+    scopes=VALID_SCOPES,
+    separator="hash-optional",
+    max_digits=_BUILTIN_MAX_DIGITS,
+    suffix="optional-lower-alpha",
+    not_followed_by_time=True,
+)
+
+BUILTIN_KNOWN_ISSUES = TokenFamily(
+    prefixes=("KI",),
+    scopes=VALID_SCOPES,
+    separator="dash",
+    max_digits=_BUILTIN_MAX_DIGITS,
+)
+
+BUILTIN_TOKEN_FAMILIES: tuple[TokenFamily, ...] = (
+    BUILTIN_SPEC,
+    BUILTIN_TASK,
+    BUILTIN_KNOWN_ISSUES,
+)
+
+
+class HSL101Options(RuleOptions, frozen=True):
+    """`tokens` is every family the rule matches. A config table's `tokens` lists only additions to
+    the built-ins, and `parse_options` does the merge, so a directly built value means exactly the
+    families it names."""
+
+    tokens: Annotated[
+        tuple[TokenFamily, ...], Meta(min_length=1, max_length=MAX_TOKEN_FAMILIES)
+    ] = BUILTIN_TOKEN_FAMILIES
+    max_findings_per_file: Annotated[int, Meta(ge=1, le=MAX_FINDINGS_PER_FILE_LIMIT)] = (
+        DEFAULT_MAX_FINDINGS_PER_FILE
+    )
+
+
+def parse_options(raw: Any) -> HSL101Options:
+    """Convert HSL101's config table, adding any configured families to the built-ins."""
+    parsed = msgspec.convert(raw, HSL101Options)
+    if "tokens" not in raw:
+        return parsed
+    tokens = BUILTIN_TOKEN_FAMILIES + parsed.tokens
+    if len(tokens) > MAX_TOKEN_FAMILIES:
+        raise msgspec.ValidationError(
+            f"tokens combined with built-in families must not exceed {MAX_TOKEN_FAMILIES}"
+        )
+    return msgspec.structs.replace(parsed, tokens=tokens)
 
 
 def detect(

@@ -1,8 +1,7 @@
 import pytest
 
 from house_lint.analysis import MAX_CANDIDATES_PER_FILE, CandidateBudgetExceeded, SourceKind
-from house_lint.config import HSL103Options
-from house_lint.rules.exception_names import detect
+from house_lint.rules.exception_names import HSL103Options, detect
 from house_lint.source import SourceFile
 
 

@@ -20,28 +20,21 @@ reviews:
     - path: "src/house_lint/rules/**"
       instructions: |
         Detector modules. Each detector has signature
-        `(source, options, *, limit=None) -> list[CandidateFinding]` and is
-        lazily imported from `registry.py`'s `_DETECTORS` map. A new or renamed
-        rule needs matching entries in both `rule_catalog.py` (RULES) and
-        `registry.py` (_DETECTORS) or the import-time consistency check raises
-        RuntimeError. HSL900 (suppression-pragma validation) must never become
-        disableable or suppressible — flag any change that would let it be
-        skipped via config or pragma.
+        `(source, options, *, limit=None) -> list[CandidateFinding]`, and a
+        rule with options declares its options type (a frozen `RuleOptions`
+        subclass) in its own module. A new or renamed rule needs one row in
+        `rule_catalog.py`. HSL900 (suppression-pragma validation) must never
+        become disableable or suppressible — flag any change that would let it
+        be skipped via config or pragma.
 
     - path: "src/house_lint/rule_catalog.py"
       instructions: |
-        Single source of truth for rule IDs, display info, and enablement tier
-        (default vs opt-in vs always-on). Check that any new/changed rule entry
-        stays consistent with its corresponding registry.py dispatch entry and
-        that tier placement (HSL0xx default, HSL1xx opt-in, HSL900 always-on)
-        is correct.
-
-    - path: "src/house_lint/registry.py"
-      instructions: |
-        Dispatch only — lazily imports rules/<name>.py per rule ID to avoid
-        import cost for unused rules. Check that _DETECTORS stays in sync with
-        rule_catalog.ORDINARY_RULES, and that no eager top-level imports of
-        rule modules are introduced (defeats the lazy-import point).
+        The table of rules: the single source of truth for each rule's ID,
+        display info, enablement tier (default vs opt-in vs always-on),
+        detector, and options. Check that tier placement (HSL0xx default,
+        HSL1xx opt-in, HSL900 always-on) is correct, and that rows go through
+        `file_rule` or `configurable_rule` so a detector and options type that
+        disagree fail the type check.
 
     - path: "src/house_lint/reporters/**"
       instructions: |

@@ -7,7 +7,6 @@ from pathlib import Path
 
 from house_lint.analysis import MAX_CANDIDATES_PER_FILE, CandidateBudgetExceeded, CandidateFinding
 from house_lint.config import DetectorInput
-from house_lint.registry import detect_candidates
 from house_lint.results import Finding, LintError, error, internal_error
 from house_lint.source import SourceFile
 from house_lint.suppressions import SuppressionBudgetExceeded, apply_suppressions
@@ -107,13 +106,9 @@ def _scan_ready_source(
     """Run detectors and suppressions for a successfully loaded source file."""
     candidates: list[CandidateFinding] = []
     try:
-        for detector_input in detector_inputs:
+        for rule, options in detector_inputs:
             candidates.extend(
-                detect_candidates(
-                    source,
-                    (detector_input,),
-                    limit=MAX_CANDIDATES_PER_FILE - len(candidates),
-                )
+                rule.detect(source, options, limit=MAX_CANDIDATES_PER_FILE - len(candidates))
             )
         suppressed = apply_suppressions(
             source, tuple(candidates), enabled_rules, limit=MAX_CANDIDATES_PER_FILE

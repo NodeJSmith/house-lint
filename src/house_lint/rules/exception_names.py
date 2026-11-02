@@ -1,10 +1,30 @@
 """Detect exception bindings that do not follow the configured name policy."""
 
 import ast
+import re
+from typing import Annotated
+
+from msgspec import Meta
 
 from house_lint.analysis import CandidateFinding, append_candidate, candidate_for_line, parsed_tree
-from house_lint.config import HSL103Options
+from house_lint.rules.options import RuleOptions
 from house_lint.source import SourceFile
+
+_ALLOWED_ENTRY = re.compile(r"\*?[A-Za-z_][A-Za-z0-9_]*")
+
+
+class HSL103Options(RuleOptions, frozen=True):
+    allowed: Annotated[tuple[str, ...], Meta(min_length=1)] = ("exc", "*_exc")
+
+    def __post_init__(self) -> None:
+        if len(set(self.allowed)) != len(self.allowed):
+            raise ValueError("allowed must contain no duplicates")
+        for entry in self.allowed:
+            if not _ALLOWED_ENTRY.fullmatch(entry):
+                raise ValueError(
+                    f"allowed entry {entry!r} must be an identifier, or a leading * and an "
+                    "identifier suffix"
+                )
 
 
 def detect(

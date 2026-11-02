@@ -8,13 +8,19 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, cast
 
+import msgspec
 from pathspec import GitIgnoreSpec
 
-from house_lint.rule_catalog import ALWAYS_ON_RULE_ID, DEFAULT_SELECT, ORDINARY_RULES
+from house_lint.rule_catalog import (
+    ALWAYS_ON_RULE_ID,
+    DEFAULT_SELECT,
+    FILE_RULES,
+    ORDINARY_RULES,
+    FileRule,
+)
+from house_lint.rules.options import RuleOptions
 
 DEFAULT_INCLUDE = (".",)
-_PREFIX = re.compile(r"[A-Z][A-Z0-9_]*\Z")
-_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 # pathspec 1.1.1 compiles a trailing `**/` so it also matches the directory before it, which would
 # take in files directly inside `src/` for `src/**/` where gitignore matches only what lies beneath.
 # `/**/*/` means the same in gitignore and compiles correctly. `**` must be a whole segment
@@ -23,101 +29,12 @@ _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 # the fix.
 _TRAILING_DOUBLE_STAR_DIRECTORY = re.compile(r"(?<=[^/])(?:/\*\*)+/ *$")
 
-DEFAULT_MAX_FINDINGS_PER_FILE = 200
-MAX_FINDINGS_PER_FILE_LIMIT = 10_000
-DEFAULT_MAX_LINES = 800
-MAX_LINES_LIMIT = 10_000_000
-MAX_TOKEN_FAMILIES = 32
-MAX_PREFIXES_PER_FAMILY = 32
-MAX_PREFIX_LENGTH = 12
-MAX_DIGITS_BOUND = 12
-_BUILTIN_MAX_DIGITS = 4
-
-VALID_SCOPES: tuple[str, ...] = ("comments", "docstrings", "filenames")
-
 STANDALONE_CONFIG_NAMES: tuple[str, ...] = ("house-lint.toml", ".house-lint.toml")
 PYPROJECT_CONFIG_NAME = "pyproject.toml"
-
-# Single source of truth for separator/suffix vocabularies: the keys validate configured
-# values, and house_lint.rules.spec_tokens uses the values to build detection regexes.
-SEPARATOR_REGEX: Mapping[str, str] = MappingProxyType(
-    {
-        "none": "",
-        "hash": "#",
-        "hash-optional": "#?",
-        "dash": "-",
-        "dash-optional": "-?",
-    }
-)
-SUFFIX_REGEX: Mapping[str, str] = MappingProxyType(
-    {
-        "none": "",
-        "optional-lower-alpha": "[a-z]?",
-    }
-)
 
 
 class ConfigError(ValueError):
     """Raised when a configuration cannot be used for a scan."""
-
-
-@dataclass(frozen=True, kw_only=True)
-class TokenFamily:
-    prefixes: tuple[str, ...]
-    scopes: tuple[str, ...]
-    separator: str = "none"
-    min_digits: int = 1
-    max_digits: int | None = None
-    suffix: str = "none"
-    case_sensitive: bool = True
-    not_followed_by_time: bool = False
-
-
-BUILTIN_SPEC = TokenFamily(
-    prefixes=("AC", "FR", "NFR", "WP"),
-    scopes=VALID_SCOPES,
-    separator="hash-optional",
-    max_digits=_BUILTIN_MAX_DIGITS,
-    suffix="optional-lower-alpha",
-)
-
-BUILTIN_TASK = TokenFamily(
-    prefixes=("T",),
-    scopes=VALID_SCOPES,
-    separator="hash-optional",
-    max_digits=_BUILTIN_MAX_DIGITS,
-    suffix="optional-lower-alpha",
-    not_followed_by_time=True,
-)
-
-BUILTIN_KNOWN_ISSUES = TokenFamily(
-    prefixes=("KI",),
-    scopes=VALID_SCOPES,
-    separator="dash",
-    max_digits=_BUILTIN_MAX_DIGITS,
-)
-
-BUILTIN_TOKEN_FAMILIES: tuple[TokenFamily, ...] = (
-    BUILTIN_SPEC,
-    BUILTIN_TASK,
-    BUILTIN_KNOWN_ISSUES,
-)
-
-
-@dataclass(frozen=True)
-class HSL101Options:
-    tokens: tuple[TokenFamily, ...] = BUILTIN_TOKEN_FAMILIES
-    max_findings_per_file: int = DEFAULT_MAX_FINDINGS_PER_FILE
-
-
-@dataclass(frozen=True)
-class HSL102Options:
-    max_lines: int = DEFAULT_MAX_LINES
-
-
-@dataclass(frozen=True)
-class HSL103Options:
-    allowed: tuple[str, ...] = ("exc", "*_exc")
 
 
 @dataclass(frozen=True)
@@ -125,37 +42,32 @@ class LintConfig:
     include: tuple[str, ...] = DEFAULT_INCLUDE
     exclude: tuple[str, ...] = ()
     enabled_rules: tuple[str, ...] = (*DEFAULT_SELECT, ALWAYS_ON_RULE_ID)
-    hsl101: HSL101Options = HSL101Options()
-    hsl102: HSL102Options = HSL102Options()
-    hsl103: HSL103Options = HSL103Options()
+    # Every file rule's resolved options by ID, None for a rule that takes none.
+    rule_options: Mapping[str, RuleOptions | None] = field(
+        default_factory=lambda: _rule_options({})
+    )
     per_file_ignores: Mapping[str, tuple[str, ...]] = field(
         default_factory=lambda: MappingProxyType({})
     )
 
 
-DetectorOptions = HSL101Options | HSL102Options | HSL103Options | None
-DetectorInput = tuple[str, DetectorOptions]
+DetectorInput = tuple[FileRule[Any], RuleOptions | None]
 
 
 def selected_detector_inputs(
     config: LintConfig, *, enabled_rules: tuple[str, ...] | None = None
 ) -> tuple[DetectorInput, ...]:
-    """Return enabled ordinary rules with their already-validated options.
+    """Return enabled file rules with their already-validated options.
 
     `enabled_rules` overrides `config.enabled_rules` when given, for callers that resolved a
     per-file effective rule set (see `per_file_enabled_rules`) rather than the global one.
     """
-    options: dict[str, DetectorOptions] = {
-        "HSL001": None,
-        "HSL002": None,
-        "HSL003": None,
-        "HSL004": None,
-        "HSL101": config.hsl101,
-        "HSL102": config.hsl102,
-        "HSL103": config.hsl103,
-    }
     rules = config.enabled_rules if enabled_rules is None else enabled_rules
-    return tuple((rule_id, options[rule_id]) for rule_id in rules if rule_id in options)
+    return tuple(
+        (FILE_RULES[rule_id], config.rule_options[rule_id])
+        for rule_id in rules
+        if rule_id in FILE_RULES
+    )
 
 
 CompiledPerFileIgnores = tuple[tuple[GitIgnoreSpec, frozenset[str]], ...]
@@ -333,113 +245,19 @@ def _strict_keys(table: dict[str, Any], allowed: set[str], name: str) -> None:
         raise ConfigError(f"{name} contains unknown keys: {', '.join(sorted(unknown))}")
 
 
-def _bounded_int(value: Any, name: str, maximum: int, *, minimum: int = 1) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
-        raise ConfigError(f"{name} must be an integer between {minimum} and {maximum}")
-    return value
-
-
-def _token_family(raw: Any, index: int) -> TokenFamily:
-    name = f"HSL101.tokens[{index}]"
-    table = _table(raw, name)
-    _strict_keys(
-        table,
-        {
-            "prefixes",
-            "scopes",
-            "separator",
-            "min_digits",
-            "max_digits",
-            "suffix",
-            "case_sensitive",
-            "not_followed_by_time",
-        },
-        name,
-    )
-    prefixes = _strings(table.get("prefixes"), f"{name}.prefixes")
-    too_many_prefixes = len(prefixes) > MAX_PREFIXES_PER_FAMILY
-    duplicate_prefixes = len(set(prefixes)) != len(prefixes)
-    if not prefixes or too_many_prefixes or duplicate_prefixes:
-        raise ConfigError(
-            f"{name}.prefixes must contain 1 to {MAX_PREFIXES_PER_FAMILY} unique values"
-        )
-    if any(len(item) > MAX_PREFIX_LENGTH or not _PREFIX.fullmatch(item) for item in prefixes):
-        raise ConfigError(f"{name}.prefixes contains an invalid prefix")
-    scopes = _strings(table.get("scopes"), f"{name}.scopes")
-    if not scopes or len(set(scopes)) != len(scopes) or not set(scopes) <= set(VALID_SCOPES):
-        raise ConfigError(f"{name}.scopes contains an invalid scope")
-    separator = table.get("separator", "none")
-    if not isinstance(separator, str) or separator not in SEPARATOR_REGEX:
-        raise ConfigError(f"{name}.separator is invalid")
-    min_digits = _bounded_int(table.get("min_digits", 1), f"{name}.min_digits", MAX_DIGITS_BOUND)
-    max_digits_raw = table.get("max_digits")
-    max_digits = (
-        _bounded_int(max_digits_raw, f"{name}.max_digits", MAX_DIGITS_BOUND, minimum=min_digits)
-        if max_digits_raw is not None
-        else None
-    )
-    suffix = table.get("suffix", "none")
-    if not isinstance(suffix, str) or suffix not in SUFFIX_REGEX:
-        raise ConfigError(f"{name}.suffix is invalid")
-    for key in ("case_sensitive", "not_followed_by_time"):
-        if key in table and type(table[key]) is not bool:
-            raise ConfigError(f"{name}.{key} must be a boolean")
-    return TokenFamily(
-        prefixes=prefixes,
-        scopes=scopes,
-        separator=separator,
-        min_digits=min_digits,
-        max_digits=max_digits,
-        suffix=suffix,
-        case_sensitive=table.get("case_sensitive", True),
-        not_followed_by_time=table.get("not_followed_by_time", False),
-    )
-
-
-def _rule_options(raw: dict[str, Any]) -> tuple[HSL101Options, HSL102Options, HSL103Options]:
+def _rule_options(raw: dict[str, Any]) -> Mapping[str, RuleOptions | None]:
     rules = _table(raw.get("rules", {}), "rules")
-    _strict_keys(rules, {"HSL101", "HSL102", "HSL103"}, "rules")
-    hsl101_raw = _table(rules.get("HSL101", {}), "rules.HSL101")
-    _strict_keys(hsl101_raw, {"tokens", "max_findings_per_file"}, "rules.HSL101")
-    user_tokens: tuple[TokenFamily, ...] = ()
-    if "tokens" in hsl101_raw:
-        token_values = _array(hsl101_raw["tokens"], "HSL101.tokens")
-        if not token_values or len(token_values) > MAX_TOKEN_FAMILIES:
-            raise ConfigError(f"HSL101.tokens must contain 1 to {MAX_TOKEN_FAMILIES} families")
-        user_tokens = tuple(_token_family(item, i) for i, item in enumerate(token_values))
-    tokens = BUILTIN_TOKEN_FAMILIES + user_tokens
-    # Re-check the same cap after merging: the check above only bounds the user-supplied
-    # list, before built-in families are added on top.
-    if len(tokens) > MAX_TOKEN_FAMILIES:
-        raise ConfigError(
-            f"HSL101.tokens combined with built-in families must not exceed {MAX_TOKEN_FAMILIES}"
-        )
-    hsl101 = HSL101Options(
-        tokens,
-        _bounded_int(
-            hsl101_raw.get("max_findings_per_file", DEFAULT_MAX_FINDINGS_PER_FILE),
-            "max_findings_per_file",
-            MAX_FINDINGS_PER_FILE_LIMIT,
-        ),
-    )
-    hsl102_raw = _table(rules.get("HSL102", {}), "rules.HSL102")
-    _strict_keys(hsl102_raw, {"max_lines"}, "rules.HSL102")
-    hsl102 = HSL102Options(
-        _bounded_int(hsl102_raw.get("max_lines", DEFAULT_MAX_LINES), "max_lines", MAX_LINES_LIMIT)
-    )
-    hsl103_raw = _table(rules.get("HSL103", {}), "rules.HSL103")
-    _strict_keys(hsl103_raw, {"allowed"}, "rules.HSL103")
-    allowed = _strings(hsl103_raw.get("allowed", ["exc", "*_exc"]), "allowed")
-    if not allowed or len(set(allowed)) != len(allowed):
-        raise ConfigError("allowed must be non-empty and contain no duplicates")
-    for item in allowed:
-        if "*" in item and (
-            not item.startswith("*") or item.count("*") != 1 or not _IDENTIFIER.fullmatch(item[1:])
-        ):
-            raise ConfigError("allowed wildcard entries must be a leading * and identifier suffix")
-        if "*" not in item and not _IDENTIFIER.fullmatch(item):
-            raise ConfigError("allowed entries must be identifiers")
-    return hsl101, hsl102, HSL103Options(allowed)
+    _strict_keys(rules, {rule.id for rule in FILE_RULES.values() if rule.parse_options}, "rules")
+    options: dict[str, RuleOptions | None] = {}
+    for rule in FILE_RULES.values():
+        if rule.parse_options is None:
+            options[rule.id] = None
+            continue
+        try:
+            options[rule.id] = rule.parse_options(rules.get(rule.id, {}))
+        except msgspec.ValidationError as exc:
+            raise ConfigError(f"rules.{rule.id}: {exc}") from exc
+    return MappingProxyType(options)
 
 
 def load_toml(path: Path) -> dict[str, Any]:
@@ -529,8 +347,8 @@ def load_config(
         cli_extend_ignore=cli_extend_ignore,
     )
     per_file_ignores = _per_file_ignores(house.get("per-file-ignores", {}))
-    options = _rule_options(house)
+    rule_options = _rule_options(house)
     # `enabled` is already sorted with the always-on rule appended (see
     # `_effective_rule_selection`); re-sorting here would only differ from `default_config`'s
     # handling of the same value if an always-on rule ID ever stopped sorting last.
-    return LintConfig(include, exclude, enabled, *options, per_file_ignores)
+    return LintConfig(include, exclude, enabled, rule_options, per_file_ignores)
