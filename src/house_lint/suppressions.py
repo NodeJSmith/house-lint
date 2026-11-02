@@ -16,9 +16,9 @@ from house_lint.analysis import (
     statement_key,
     statement_owner_for_line,
 )
+from house_lint.python_source import PythonSource, Token
 from house_lint.results import Finding
 from house_lint.rule_catalog import ALWAYS_ON_RULE_ID, is_known_rule
-from house_lint.source import SourceFile, Token
 
 _ID = re.compile(r"HSL[0-9]{3}\Z")
 _PRAGMA = re.compile(r"#\s*house-lint:\s*(ignore-next|ignore-file|ignore)\[([^]]*)\] - (.+)\Z")
@@ -38,7 +38,7 @@ class SuppressionResult:
 class SuppressionBudgetExceeded(CandidateBudgetExceeded):
     """Carry the bounded visible prefix when suppression diagnostics exceed the budget."""
 
-    def __init__(self, source: SourceFile, result: SuppressionResult) -> None:
+    def __init__(self, source: PythonSource, result: SuppressionResult) -> None:
         self.result = result
         super().__init__(source.relative_path)
 
@@ -60,7 +60,7 @@ class _Claim:
 
 
 def apply_suppressions(
-    source: SourceFile,
+    source: PythonSource,
     candidates: tuple[CandidateFinding, ...],
     enabled_rules: Collection[str],
     *,
@@ -109,7 +109,7 @@ def apply_suppressions(
 
 
 def _collect_claims(
-    source: SourceFile,
+    source: PythonSource,
     candidates: tuple[CandidateFinding, ...],
     enabled_rules: Collection[str],
     add_diagnostic: Callable[[CandidateFinding], None],
@@ -155,7 +155,7 @@ def _is_pragma(token: Token) -> bool:
     return bool(re.match(r"#\s*house-lint:", token.string))
 
 
-def _parse_pragma(source: SourceFile, token: Token) -> tuple[_Pragma | None, str]:
+def _parse_pragma(source: PythonSource, token: Token) -> tuple[_Pragma | None, str]:
     match = _PRAGMA.fullmatch(token.string)
     if match is None:
         return None, "malformed suppression pragma"
@@ -176,7 +176,7 @@ def _parse_pragma(source: SourceFile, token: Token) -> tuple[_Pragma | None, str
 
 
 def _owner_for_pragma(
-    source: SourceFile, pragma: _Pragma
+    source: PythonSource, pragma: _Pragma
 ) -> tuple[StatementKey | None, str | None]:
     if pragma.action == "ignore":
         owner = _trailing_owner(source, pragma.token)
@@ -189,7 +189,7 @@ def _owner_for_pragma(
     return None, "misplaced ignore-file suppression"
 
 
-def _trailing_owner(source: SourceFile, token: Token) -> StatementKey | None:
+def _trailing_owner(source: PythonSource, token: Token) -> StatementKey | None:
     line, column = token.start
     if not source.lines[line - 1][:column].strip():
         return None
@@ -197,7 +197,7 @@ def _trailing_owner(source: SourceFile, token: Token) -> StatementKey | None:
     return statement_key(owner) if owner is not None else None
 
 
-def _next_owner(source: SourceFile, token: Token) -> StatementKey | None:
+def _next_owner(source: PythonSource, token: Token) -> StatementKey | None:
     line, column = token.start
     if source.lines[line - 1][:column].strip():
         return None
@@ -232,10 +232,8 @@ def _statement_start_line(statement: ast.stmt) -> int:
     return statement.lineno
 
 
-def _suites(tree: ast.Module | None) -> tuple[tuple[ast.stmt, ...], ...]:
+def _suites(tree: ast.Module) -> tuple[tuple[ast.stmt, ...], ...]:
     """Return Python grammar suites eligible for `ignore-next` ownership."""
-    if tree is None:
-        return ()
     suites: list[tuple[ast.stmt, ...]] = []
 
     def add_suite(statements: list[ast.stmt]) -> None:
@@ -268,17 +266,15 @@ def _suites(tree: ast.Module | None) -> tuple[tuple[ast.stmt, ...], ...]:
     return tuple(suites)
 
 
-def _comments_or_blanks_only(source: SourceFile, start: int, end: int) -> bool:
+def _comments_or_blanks_only(source: PythonSource, start: int, end: int) -> bool:
     return all(
         not source.lines[line - 1].strip() or source.lines[line - 1].lstrip().startswith("#")
         for line in range(start, end + 1)
     )
 
 
-def _is_file_prologue(source: SourceFile, token: Token) -> bool:
+def _is_file_prologue(source: PythonSource, token: Token) -> bool:
     if source.lines[token.start[0] - 1][: token.start[1]].strip():
-        return False
-    if source.tree is None:
         return False
     for index, statement in enumerate(source.tree.body):
         if _prologue_statement(statement, is_module_docstring=index == 0):
@@ -355,7 +351,7 @@ def _conflicting_claims(claims: list[_Claim]) -> set[int]:
     return conflicts
 
 
-def _diagnostic(source: SourceFile, token: Token, message: str) -> CandidateFinding:
+def _diagnostic(source: PythonSource, token: Token, message: str) -> CandidateFinding:
     line, column = token.start
     return CandidateFinding(
         ALWAYS_ON_RULE_ID,

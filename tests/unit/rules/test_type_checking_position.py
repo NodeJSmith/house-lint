@@ -7,11 +7,10 @@ from house_lint.analysis import (
     StatementKey,
 )
 from house_lint.rules.type_checking_position import detect
-from house_lint.source import SourceFile
 
 
-def test_detects_both_top_level_guards_followed_by_later_imports(write_sample) -> None:
-    path = write_sample("""\
+def test_detects_both_top_level_guards_followed_by_later_imports(parse_sample) -> None:
+    source = parse_sample("""\
         from typing import TYPE_CHECKING
         import typing
 
@@ -24,7 +23,7 @@ def test_detects_both_top_level_guards_followed_by_later_imports(write_sample) -
         from pathlib import Path
     """)
 
-    findings = detect(SourceFile(path, path.parent), None)
+    findings = detect(source, None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (4, "if TYPE_CHECKING block followed by imports"),
@@ -34,8 +33,8 @@ def test_detects_both_top_level_guards_followed_by_later_imports(write_sample) -
     assert findings[0].owner == StatementKey(4, 1, 5, 20)
 
 
-def test_ignores_final_and_nested_type_checking_guards(write_sample) -> None:
-    path = write_sample("""\
+def test_ignores_final_and_nested_type_checking_guards(parse_sample) -> None:
+    source = parse_sample("""\
         from typing import TYPE_CHECKING
 
         def function():
@@ -47,11 +46,11 @@ def test_ignores_final_and_nested_type_checking_guards(write_sample) -> None:
             from pathlib import Path
     """)
 
-    assert detect(SourceFile(path, path.parent), None) == []
+    assert detect(source, None) == []
 
 
-def test_ignores_final_and_nested_qualified_type_checking_guards(write_sample) -> None:
-    path = write_sample("""\
+def test_ignores_final_and_nested_qualified_type_checking_guards(parse_sample) -> None:
+    source = parse_sample("""\
         import typing
 
         def function():
@@ -66,11 +65,11 @@ def test_ignores_final_and_nested_qualified_type_checking_guards(write_sample) -
             pass
     """)
 
-    assert detect(SourceFile(path, path.parent), None) == []
+    assert detect(source, None) == []
 
 
-def test_reports_only_guards_with_later_top_level_imports(write_sample) -> None:
-    path = write_sample("""\
+def test_reports_only_guards_with_later_top_level_imports(parse_sample) -> None:
+    source = parse_sample("""\
         import os
         from typing import TYPE_CHECKING
 
@@ -86,23 +85,23 @@ def test_reports_only_guards_with_later_top_level_imports(write_sample) -> None:
             pass
     """)
 
-    findings = detect(SourceFile(path, path.parent), None)
+    findings = detect(source, None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (4, "if TYPE_CHECKING block followed by imports")
     ]
 
 
-def test_limits_materialized_candidates_when_requested(write_sample) -> None:
+def test_limits_materialized_candidates_when_requested(parse_sample) -> None:
     guards = "if TYPE_CHECKING:\n    from a import A\n" * (MAX_CANDIDATES_PER_FILE + 2)
-    path = write_sample(f"from typing import TYPE_CHECKING\n\n{guards}import os\n")
+    source = parse_sample(f"from typing import TYPE_CHECKING\n\n{guards}import os\n")
 
     with pytest.raises(CandidateBudgetExceeded):
-        detect(SourceFile(path, path.parent), None, limit=MAX_CANDIDATES_PER_FILE)
+        detect(source, None, limit=MAX_CANDIDATES_PER_FILE)
 
 
-def test_detects_guards_through_typing_module_and_flag_aliases(write_sample) -> None:
-    path = write_sample(
+def test_detects_guards_through_typing_module_and_flag_aliases(parse_sample) -> None:
+    source = parse_sample(
         "import typing as t\n"
         "from typing import TYPE_CHECKING as TC\n"
         "if t.TYPE_CHECKING:\n"
@@ -112,12 +111,12 @@ def test_detects_guards_through_typing_module_and_flag_aliases(write_sample) -> 
         "import os\n"
     )
 
-    findings = detect(SourceFile(path, path.parent), None)
+    findings = detect(source, None)
 
     assert [finding.line for finding in findings] == [3, 5]
 
 
-def test_ignores_type_checking_alias_from_relative_typing_import(write_sample) -> None:
-    path = write_sample("from .typing import TYPE_CHECKING as TC\nif TC:\n    pass\nimport os\n")
+def test_ignores_type_checking_alias_from_relative_typing_import(parse_sample) -> None:
+    source = parse_sample("from .typing import TYPE_CHECKING as TC\nif TC:\n    pass\nimport os\n")
 
-    assert detect(SourceFile(path, path.parent), None) == []
+    assert detect(source, None) == []

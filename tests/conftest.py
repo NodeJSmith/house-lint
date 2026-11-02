@@ -5,8 +5,10 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from _source_helpers import parse_file
 
 from house_lint import config
+from house_lint.python_source import PythonSource
 from house_lint.rule_catalog import FileRule
 
 
@@ -18,6 +20,19 @@ def write_sample(tmp_path: Path) -> Callable[[str], Path]:
         return target
 
     return _write
+
+
+@pytest.fixture
+def parse_sample(write_sample: Callable[[str], Path]) -> Callable[[str], PythonSource]:
+    """Write dedented content to `sample.py` and return it parsed, for handing to a detector.
+
+    A test that depends on the file's name writes it itself and calls `parse_file`.
+    """
+
+    def _parse(content: str) -> PythonSource:
+        return parse_file(write_sample(content))
+
+    return _parse
 
 
 @pytest.fixture

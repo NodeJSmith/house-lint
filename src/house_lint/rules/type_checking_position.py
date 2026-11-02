@@ -2,22 +2,15 @@
 
 import ast
 
-from house_lint.analysis import (
-    CandidateFinding,
-    append_candidate,
-    candidate_for_statement,
-    parsed_tree,
-)
-from house_lint.source import SourceFile
+from house_lint.analysis import CandidateFinding, append_candidate, candidate_for_statement
+from house_lint.python_source import PythonSource
 
 
 def detect(
-    source: SourceFile, options: object, *, limit: int | None = None
+    source: PythonSource, options: object, *, limit: int | None = None
 ) -> list[CandidateFinding]:
     """Return HSL003 candidates for misplaced top-level type-checking guards."""
-    tree = parsed_tree(source)
-    if tree is None:
-        return []
+    tree = source.tree
     flag_names, module_names = _type_checking_names(tree)
     findings: list[CandidateFinding] = []
     for index, node in enumerate(tree.body):

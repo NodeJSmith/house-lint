@@ -1,21 +1,16 @@
 from house_lint.analysis import CandidateFinding, SourceKind, statement_key
+from house_lint.python_source import PythonSource
 from house_lint.rules.exception_names import HSL103Options
 from house_lint.rules.exception_names import detect as detect_exception_names
 from house_lint.rules.lazy_imports import detect as detect_lazy_imports
 from house_lint.rules.llm_cruft import detect as detect_llm_cruft
 from house_lint.rules.spec_tokens import HSL101Options, TokenFamily
 from house_lint.rules.spec_tokens import detect as detect_spec_tokens
-from house_lint.source import SourceFile
 from house_lint.suppressions import apply_suppressions
 
 
-def _source(write_sample, text: str) -> SourceFile:
-    path = write_sample(text)
-    return SourceFile(path, path.parent)
-
-
 def _candidate(
-    source: SourceFile, rule_id: str, statement_line: int, finding_line: int | None = None
+    source: PythonSource, rule_id: str, statement_line: int, finding_line: int | None = None
 ) -> CandidateFinding:
     statement = next(
         statement for statement in source.statements if statement.lineno == statement_line
@@ -35,9 +30,8 @@ def _candidate(
     )
 
 
-def test_trailing_ignore_suppresses_all_owned_rule_candidates(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_trailing_ignore_suppresses_all_owned_rule_candidates(parse_sample) -> None:
+    source = parse_sample(
         "value = (\n    1\n)  # house-lint: ignore[HSL001] - generated value\n",
     )
     candidates = (_candidate(source, "HSL001", 1), _candidate(source, "HSL001", 1, 2))
@@ -48,8 +42,8 @@ def test_trailing_ignore_suppresses_all_owned_rule_candidates(write_sample) -> N
     assert not hasattr(result, "visible_candidates")
 
 
-def test_trailing_ignore_suppresses_a_simple_statement(write_sample) -> None:
-    source = _source(write_sample, "value = 1  # house-lint: ignore[HSL001] - generated value\n")
+def test_trailing_ignore_suppresses_a_simple_statement(parse_sample) -> None:
+    source = parse_sample("value = 1  # house-lint: ignore[HSL001] - generated value\n")
 
     result = apply_suppressions(source, (_candidate(source, "HSL001", 1),), {"HSL001", "HSL900"})
 
@@ -58,10 +52,9 @@ def test_trailing_ignore_suppresses_a_simple_statement(write_sample) -> None:
 
 
 def test_trailing_ignore_owns_the_last_statement_on_a_semicolon_separated_line(
-    write_sample,
+    parse_sample,
 ) -> None:
-    source = _source(
-        write_sample,
+    source = parse_sample(
         "def load() -> None:\n    value = 1; import module  # house-lint: ignore[HSL002] - generated import\n",
     )
     candidates = tuple(detect_lazy_imports(source, None))
@@ -73,10 +66,9 @@ def test_trailing_ignore_owns_the_last_statement_on_a_semicolon_separated_line(
 
 
 def test_trailing_ignore_owns_interior_comment_findings_in_multiline_statements(
-    write_sample,
+    parse_sample,
 ) -> None:
-    source = _source(
-        write_sample,
+    source = parse_sample(
         "value = (  # house-lint: ignore[HSL101] - generated value\n    1  # T01\n)\n",
     )
     candidates = tuple(
@@ -93,10 +85,9 @@ def test_trailing_ignore_owns_interior_comment_findings_in_multiline_statements(
 
 
 def test_trailing_ignore_suppresses_hsl001_inline_comment_in_multiline_statement(
-    write_sample,
+    parse_sample,
 ) -> None:
-    source = _source(
-        write_sample,
+    source = parse_sample(
         "value = (\n    1\n)  # house-lint: ignore[HSL001] - Please note that generated value\n",
     )
     candidates = tuple(detect_llm_cruft(source, None))
@@ -107,9 +98,8 @@ def test_trailing_ignore_suppresses_hsl001_inline_comment_in_multiline_statement
     assert result.suppressed_count == 1
 
 
-def test_header_ignore_does_not_own_comment_findings_in_its_body(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_header_ignore_does_not_own_comment_findings_in_its_body(parse_sample) -> None:
+    source = parse_sample(
         "if condition:  # house-lint: ignore[HSL101] - generated branch\n    # T01\n    pass\n",
     )
     candidates = tuple(
@@ -125,9 +115,8 @@ def test_header_ignore_does_not_own_comment_findings_in_its_body(write_sample) -
     assert result.suppressed_count == 0
 
 
-def test_ignore_next_stays_in_its_lexical_suite(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_ignore_next_stays_in_its_lexical_suite(parse_sample) -> None:
+    source = parse_sample(
         "if condition:\n    # house-lint: ignore-next[HSL002] - circular import\n    # ordinary comment\n\n    import package\n",
     )
     result = apply_suppressions(source, (_candidate(source, "HSL002", 5),), {"HSL002", "HSL900"})
@@ -136,9 +125,8 @@ def test_ignore_next_stays_in_its_lexical_suite(write_sample) -> None:
     assert result.suppressed_count == 1
 
 
-def test_ignore_next_owns_a_statement_in_a_match_case_suite(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_ignore_next_owns_a_statement_in_a_match_case_suite(parse_sample) -> None:
+    source = parse_sample(
         "match value:\n    case _:\n        # house-lint: ignore-next[HSL002] - circular import\n        import package\n",
     )
 
@@ -148,9 +136,8 @@ def test_ignore_next_owns_a_statement_in_a_match_case_suite(write_sample) -> Non
     assert result.suppressed_count == 1
 
 
-def test_ignore_next_cannot_leave_its_lexical_suite(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_ignore_next_cannot_leave_its_lexical_suite(parse_sample) -> None:
+    source = parse_sample(
         "if condition:\n    pass\n    # house-lint: ignore-next[HSL002] - circular import\n\nvalue = 1\n",
     )
     result = apply_suppressions(source, (_candidate(source, "HSL002", 5),), {"HSL002", "HSL900"})
@@ -159,9 +146,8 @@ def test_ignore_next_cannot_leave_its_lexical_suite(write_sample) -> None:
     assert result.suppressed_count == 0
 
 
-def test_ignore_next_suppresses_a_standalone_comment_finding_in_its_gap(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_ignore_next_suppresses_a_standalone_comment_finding_in_its_gap(parse_sample) -> None:
+    source = parse_sample(
         "# house-lint: ignore-next[HSL001] - decorative divider\n# ------\nvalue = 1\n",
     )
     candidates = tuple(detect_llm_cruft(source, None))
@@ -172,9 +158,8 @@ def test_ignore_next_suppresses_a_standalone_comment_finding_in_its_gap(write_sa
     assert result.suppressed_count == 1
 
 
-def test_ignore_next_does_not_reach_a_standalone_comment_above_the_pragma(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_ignore_next_does_not_reach_a_standalone_comment_above_the_pragma(parse_sample) -> None:
+    source = parse_sample(
         "# ------\n# house-lint: ignore-next[HSL001] - decorative divider\nvalue = 1\n",
     )
     candidates = tuple(detect_llm_cruft(source, None))
@@ -185,9 +170,8 @@ def test_ignore_next_does_not_reach_a_standalone_comment_above_the_pragma(write_
     assert result.suppressed_count == 0
 
 
-def test_ignore_next_gap_reaches_through_a_decorator_prologue(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_ignore_next_gap_reaches_through_a_decorator_prologue(parse_sample) -> None:
+    source = parse_sample(
         "# house-lint: ignore-next[HSL001] - decorative divider\n"
         "# ------\n"
         "@decorator\n"
@@ -202,9 +186,8 @@ def test_ignore_next_gap_reaches_through_a_decorator_prologue(write_sample) -> N
     assert result.suppressed_count == 1
 
 
-def test_ignore_next_suppresses_filler_triggered_by_its_own_reason_text(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_ignore_next_suppresses_filler_triggered_by_its_own_reason_text(parse_sample) -> None:
+    source = parse_sample(
         "# house-lint: ignore-next[HSL001] - in order to keep this readable\nvalue = 1\n",
     )
     candidates = tuple(detect_llm_cruft(source, None))
@@ -215,9 +198,8 @@ def test_ignore_next_suppresses_filler_triggered_by_its_own_reason_text(write_sa
     assert result.suppressed_count == 1
 
 
-def test_ignore_next_requires_a_comment_only_line(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_ignore_next_requires_a_comment_only_line(parse_sample) -> None:
+    source = parse_sample(
         "value = 1  # house-lint: ignore-next[HSL002] - circular import\nnext_value = 2\n",
     )
     result = apply_suppressions(source, (_candidate(source, "HSL002", 2),), {"HSL002", "HSL900"})
@@ -226,9 +208,8 @@ def test_ignore_next_requires_a_comment_only_line(write_sample) -> None:
     assert result.suppressed_count == 0
 
 
-def test_file_ignore_suppresses_statement_file_and_filename_candidates(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_file_ignore_suppresses_statement_file_and_filename_candidates(parse_sample) -> None:
+    source = parse_sample(
         '#!/usr/bin/env python\n# coding: utf-8\n\n# generated module\n"""Docs."""\n'
         "from __future__ import annotations\n# house-lint: ignore-file[HSL101, HSL102] - generated module\n"
         "value = 1\n",
@@ -248,9 +229,8 @@ def test_file_ignore_suppresses_statement_file_and_filename_candidates(write_sam
     assert result.suppressed_count == 3
 
 
-def test_file_ignore_rejects_a_non_docstring_string_before_the_pragma(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_file_ignore_rejects_a_non_docstring_string_before_the_pragma(parse_sample) -> None:
+    source = parse_sample(
         '"""Docs."""\n"not a docstring"\n# house-lint: ignore-file[HSL001] - generated module\n',
     )
     result = apply_suppressions(source, (_candidate(source, "HSL001", 2),), {"HSL001", "HSL900"})
@@ -260,10 +240,9 @@ def test_file_ignore_rejects_a_non_docstring_string_before_the_pragma(write_samp
 
 
 def test_invalid_and_conflicting_pragmas_emit_hsl900_without_hiding_candidates(
-    write_sample,
+    parse_sample,
 ) -> None:
-    source = _source(
-        write_sample,
+    source = parse_sample(
         "# house-lint: ignore-file[HSL001] - generated module\nvalue = 1  # house-lint: ignore[HSL001] - valid reason\n# house-lint: ignore[HSL900] - valid reason\n",
     )
     candidates = (_candidate(source, "HSL001", 2),)
@@ -279,10 +258,9 @@ def test_invalid_and_conflicting_pragmas_emit_hsl900_without_hiding_candidates(
 
 
 def test_invalid_pragma_ids_reasons_and_disabled_or_unknown_rules_are_diagnostics(
-    write_sample,
+    parse_sample,
 ) -> None:
-    source = _source(
-        write_sample,
+    source = parse_sample(
         "# house-lint: ignore-next[HSL01] - valid reason\n"
         "value = 1\n"
         "# house-lint: ignore-next[HSL001,HSL001] - valid reason\n"
@@ -304,9 +282,8 @@ def test_invalid_pragma_ids_reasons_and_disabled_or_unknown_rules_are_diagnostic
     assert "disabled" in result.findings[5].message
 
 
-def test_empty_all_and_glob_ids_are_malformed(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_empty_all_and_glob_ids_are_malformed(parse_sample) -> None:
+    source = parse_sample(
         "# house-lint: ignore-next[] - valid reason\nvalue = 1\n"
         "# house-lint: ignore-next[all] - valid reason\nvalue = 2\n"
         "# house-lint: ignore-next[HSL*] - valid reason\nvalue = 3\n",
@@ -321,9 +298,8 @@ def test_empty_all_and_glob_ids_are_malformed(write_sample) -> None:
     ]
 
 
-def test_misplaced_and_unconsumed_pragmas_are_diagnostics(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_misplaced_and_unconsumed_pragmas_are_diagnostics(parse_sample) -> None:
+    source = parse_sample(
         "# house-lint: ignore-file[HSL001] - valid reason\n"
         "value = 1\n"
         "# house-lint: ignore-file[HSL001] - valid reason\n"
@@ -336,9 +312,8 @@ def test_misplaced_and_unconsumed_pragmas_are_diagnostics(write_sample) -> None:
     assert all(finding.rule_id == "HSL900" for finding in result.findings)
 
 
-def test_ignore_next_still_owns_across_a_form_feed_earlier_in_the_file(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_ignore_next_still_owns_across_a_form_feed_earlier_in_the_file(parse_sample) -> None:
+    source = parse_sample(
         'text = "a\fb"\n'
         "def load() -> None:\n"
         "    # house-lint: ignore-next[HSL002] - lazy by design\n"
@@ -352,9 +327,8 @@ def test_ignore_next_still_owns_across_a_form_feed_earlier_in_the_file(write_sam
     assert result.suppressed_count == 1
 
 
-def test_trailing_ignore_on_one_handler_leaves_sibling_handlers_visible(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_trailing_ignore_on_one_handler_leaves_sibling_handlers_visible(parse_sample) -> None:
+    source = parse_sample(
         "try:\n"
         "    value = 1\n"
         "except ValueError as first:\n"
@@ -371,9 +345,8 @@ def test_trailing_ignore_on_one_handler_leaves_sibling_handlers_visible(write_sa
     assert result.suppressed_count == 1
 
 
-def test_ignore_next_above_a_decorator_owns_the_decorated_statement(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_ignore_next_above_a_decorator_owns_the_decorated_statement(parse_sample) -> None:
+    source = parse_sample(
         "# house-lint: ignore-next[HSL001] - vetted shape\n"
         "@staticmethod\n"
         "def load() -> None:\n"
@@ -386,9 +359,8 @@ def test_ignore_next_above_a_decorator_owns_the_decorated_statement(write_sample
     assert result.suppressed_count == 1
 
 
-def test_ignore_file_between_decorator_and_def_is_misplaced(write_sample) -> None:
-    source = _source(
-        write_sample,
+def test_ignore_file_between_decorator_and_def_is_misplaced(parse_sample) -> None:
+    source = parse_sample(
         "@staticmethod\n"
         "# house-lint: ignore-file[HSL001] - vetted shape\n"
         "def load() -> None:\n"

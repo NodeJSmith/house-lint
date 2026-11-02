@@ -3,7 +3,7 @@
 import os
 import stat
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -22,6 +22,7 @@ from house_lint.config import (
     load_toml,
     validate_exclude,
 )
+from house_lint.language import language_for
 from house_lint.results import LintError
 
 BUILTIN_EXCLUDES = (
@@ -96,18 +97,25 @@ class GitFailure(Exception):
 
 
 @dataclass(frozen=True)
-class DiscoveryResult:
-    """Selected files, plus the resolved target discovery actually validated for each.
+class DiscoveredFile:
+    """A selected file, plus the resolved target discovery actually validated for it.
 
-    `files` holds unresolved paths, because those are what the user named and what findings are
-    reported against. `resolved_paths` maps each of them to the `resolve()` result that passed the
-    containment check, so the scan can read *that* target rather than resolving the symlink a
-    second time and possibly following it somewhere else — see `SourceFile.__init__`.
+    `path` is unresolved, because that is what the user named and what findings are reported
+    against. `resolved` passed the containment check, so the scan can read *that* target rather
+    than resolving the symlink a second time and possibly following it somewhere else. See
+    `source.load_file`.
     """
 
-    files: tuple[Path, ...]
+    path: Path
+    resolved: Path
+
+
+@dataclass(frozen=True)
+class DiscoveryResult:
+    """The selected files, sorted by `path`, plus the errors met while selecting them."""
+
+    files: tuple[DiscoveredFile, ...]
     errors: tuple[LintError, ...] = ()
-    resolved_paths: Mapping[Path, Path] = field(default_factory=lambda: dict[Path, Path]())
 
 
 @dataclass(frozen=True)
@@ -205,10 +213,9 @@ class _FileSelector:
             self._consider_requested(argument, explicit_paths=explicit_paths)
 
     def result(self) -> DiscoveryResult:
-        # `selected` is keyed by resolved path so a symlink and its target deduplicate; the scan
-        # needs the reverse direction, from the path it reports to the target it may read.
-        resolved_paths = {path: resolved for resolved, path in self.selected.items()}
-        return DiscoveryResult(tuple(sorted(resolved_paths)), tuple(self.errors), resolved_paths)
+        # `selected` is keyed by resolved path so a symlink and its target deduplicate.
+        files = (DiscoveredFile(path, resolved) for resolved, path in self.selected.items())
+        return DiscoveryResult(tuple(sorted(files, key=lambda file: file.path)), tuple(self.errors))
 
     def _excluded(self, relative: str, *, is_dir: bool) -> bool:
         """Whether root-relative `relative`, or a directory above it, matches an exclude pattern.
@@ -279,7 +286,7 @@ class _FileSelector:
             if not self._requested_is_excluded(resolved, is_dir=True):
                 self._scan_directory(resolved)
             return
-        if not is_file or path.suffix != ".py":
+        if not is_file or language_for(path) is None:
             if explicit_paths:
                 raise DiscoveryError(
                     self._error(
@@ -363,7 +370,7 @@ class _FileSelector:
             if not self._excluded(relative, is_dir=True):
                 self._record_directory_symlink(path)
             return
-        if not stat.S_ISREG(mode) or path.suffix != ".py":
+        if not stat.S_ISREG(mode) or language_for(path) is None:
             return
         self._select(path, path)
 

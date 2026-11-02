@@ -1299,21 +1299,21 @@ def test_internal_error_preserves_completed_results_and_writes_debug_to_stderr(
     assert result["files_scanned"] == 2
 
 
-def test_source_construction_failure_preserves_completed_results(
+def test_source_load_failure_preserves_completed_results(
     repository: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     first = repository / "src" / "a.py"
     second = repository / "src" / "b.py"
     first.write_text("def example():\n    import module\n")
     second.write_text("value = 1\n")
-    source_file = scanner.SourceFile
+    real_load = scanner.load_file
 
-    def fail_second(path: Path, root: Path, **kwargs: object) -> scanner.SourceFile:
+    def fail_second(path: Path, root: Path, *, resolved_path: Path) -> object:
         if path == second:
-            raise RuntimeError("simulated construction failure")
-        return source_file(path, root)
+            raise RuntimeError("simulated load failure")
+        return real_load(path, root, resolved_path=resolved_path)
 
-    monkeypatch.setattr(scanner, "SourceFile", fail_second)
+    monkeypatch.setattr(scanner, "load_file", fail_second)
 
     code = cli.check(paths=[first, second], root=repository, format="json")
     result = json.loads(capsys.readouterr().out)

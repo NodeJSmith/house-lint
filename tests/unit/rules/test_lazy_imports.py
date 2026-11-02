@@ -7,11 +7,10 @@ from house_lint.analysis import (
     StatementKey,
 )
 from house_lint.rules.lazy_imports import detect
-from house_lint.source import SourceFile
 
 
-def test_detects_imports_at_function_depth_including_async_methods_and_nested(write_sample) -> None:
-    path = write_sample("""\
+def test_detects_imports_at_function_depth_including_async_methods_and_nested(parse_sample) -> None:
+    source = parse_sample("""\
         import os
 
         def outer():
@@ -24,7 +23,7 @@ def test_detects_imports_at_function_depth_including_async_methods_and_nested(wr
                 import sys
     """)
 
-    findings = detect(SourceFile(path, path.parent), None)
+    findings = detect(source, None)
 
     assert [(finding.line, finding.message) for finding in findings] == [
         (4, "import inside function body"),
@@ -35,9 +34,9 @@ def test_detects_imports_at_function_depth_including_async_methods_and_nested(wr
     assert findings[0].owner == StatementKey(4, 5, 4, 16)
 
 
-def test_limits_materialized_candidates_when_requested(write_sample) -> None:
+def test_limits_materialized_candidates_when_requested(parse_sample) -> None:
     body = "\n".join(f"    import mod_{i}" for i in range(MAX_CANDIDATES_PER_FILE + 2))
-    path = write_sample(f"def example():\n{body}\n")
+    source = parse_sample(f"def example():\n{body}\n")
 
     with pytest.raises(CandidateBudgetExceeded):
-        detect(SourceFile(path, path.parent), None, limit=MAX_CANDIDATES_PER_FILE)
+        detect(source, None, limit=MAX_CANDIDATES_PER_FILE)

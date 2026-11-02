@@ -12,7 +12,8 @@ from typing import Any
 
 import pytest
 
-from house_lint import cache, cli
+from house_lint import cache, cli, scanner, source
+from house_lint.source import MAX_SOURCE_BYTES
 
 LAZY_IMPORT = "def example():\n    import module\n"
 OTHER_LAZY_IMPORT = "def other():\n    import other\n"
@@ -326,10 +327,10 @@ def test_a_stop_result_is_never_written_to_the_cache(
     assert _entries(tmp_path) == []
 
 
-def test_an_unhashable_file_does_not_disable_caching_for_later_files(
+def test_a_load_failure_does_not_disable_caching_for_later_files(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    (tmp_path / "a.py").write_bytes(b"#" * (cache.MAX_SOURCE_BYTES + 1))
+    (tmp_path / "a.py").write_bytes(b"#" * (MAX_SOURCE_BYTES + 1))
     (tmp_path / "b.py").write_text(LAZY_IMPORT)
 
     code, result, stderr = _check(capsys, tmp_path)
@@ -339,6 +340,78 @@ def test_an_unhashable_file_does_not_disable_caching_for_later_files(
     assert stderr == ""
     [entry] = _entries(tmp_path)
     assert json.loads(entry.read_text())["findings"][0]["message"] == LAZY_IMPORT_MESSAGE
+
+
+@pytest.mark.parametrize(
+    ("content", "code"),
+    [
+        pytest.param(b"name = '\xff'\n", "decode-error", id="decode"),
+        pytest.param(b"value = '''unterminated\n", "tokenize-error", id="tokenize"),
+        pytest.param(b"if:\n", "syntax-error", id="syntax"),
+    ],
+)
+def test_a_parse_failure_is_cached_and_replayed_without_parsing_again(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    content: bytes,
+    code: str,
+) -> None:
+    (tmp_path / "a.py").write_bytes(content)
+    cold_code, cold, _ = _check(capsys, tmp_path)
+    assert cold_code == 3
+    assert [error["code"] for error in cold["errors"]] == [code]
+    assert cold["files_scanned"] == 0
+    assert len(_entries(tmp_path)) == 1
+
+    def fail_parse(_loaded: object) -> object:
+        raise AssertionError("a cache hit must not decode or parse")
+
+    monkeypatch.setattr(scanner, "parse_python", fail_parse)
+    warm_code, warm, _ = _check(capsys, tmp_path)
+
+    assert warm_code == cold_code
+    assert warm == cold
+
+
+def test_a_load_failure_is_reported_every_run_and_never_cached(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "a.py").write_text(LAZY_IMPORT)
+
+    def fail_read(_path: Path, *, max_bytes: int) -> bytes:
+        raise OSError("simulated read failure")
+
+    monkeypatch.setattr(source, "read_regular_file_bytes", fail_read)
+
+    for _ in range(2):
+        code, result, stderr = _check(capsys, tmp_path)
+        assert code == 3
+        assert [error["code"] for error in result["errors"]] == ["read-error"]
+        assert result["files_scanned"] == 0
+        assert stderr == ""
+    assert _entries(tmp_path) == []
+
+    _, _, debug_stderr = _check(capsys, tmp_path, debug=True)
+
+    assert "OSError: simulated read failure" in debug_stderr
+
+
+def test_a_raising_parse_is_an_uncached_internal_error_labelled_source_analyze(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "a.py").write_text(LAZY_IMPORT)
+
+    def fail_parse(_loaded: object) -> object:
+        raise RuntimeError("simulated parser failure")
+
+    monkeypatch.setattr(scanner, "parse_python", fail_parse)
+
+    code, result, _ = _check(capsys, tmp_path)
+
+    assert code == 4
+    assert _error_identities(result) == [("internal", "a.py", "analysis", "source-analyze")]
+    assert _entries(tmp_path) == []
 
 
 @pytest.mark.parametrize(

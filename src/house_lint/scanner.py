@@ -7,8 +7,9 @@ from pathlib import Path
 
 from house_lint.analysis import MAX_CANDIDATES_PER_FILE, CandidateBudgetExceeded, CandidateFinding
 from house_lint.config import DetectorInput
+from house_lint.python_source import ParseFailure, PythonSource, parse_python
 from house_lint.results import Finding, LintError, error, internal_error
-from house_lint.source import SourceFile
+from house_lint.source import LoadedFile, LoadFailure, load_file
 from house_lint.suppressions import SuppressionBudgetExceeded, apply_suppressions
 
 
@@ -32,36 +33,36 @@ class FileScanResult:
 
 
 def open_source(
-    path: Path, *, root: Path, resolved_path: Path | None = None, debug: bool
-) -> SourceFile | FileScanResult:
-    """Construct a `SourceFile` and perform its one read of the file's bytes.
+    path: Path, *, root: Path, resolved_path: Path, debug: bool
+) -> LoadedFile | LoadFailure | FileScanResult:
+    """Perform this file's one read of its bytes.
 
     Split out from `scan_source` so the caller can compute a cache key from the bytes this read
     produced and skip scanning on a hit, without any second read of the path.
 
-    `resolved_path` carries discovery's `resolve()` result forward so a symlink is resolved once
-    for the whole pipeline; see `SourceFile.__init__`.
-
-    A `FileScanResult` comes back only for a process-boundary failure (`stop=True`). Ordinary
-    source errors — path escape, non-regular file, oversize, undecodable — stay on the returned
-    `SourceFile`, which `scan_source` turns into findings-level errors.
+    A `FileScanResult` comes back only for a process-boundary failure (`stop=True`). Ordinary load
+    failures (path escape, non-regular file, oversize, read error) come back as a `LoadFailure`.
     """
-    source: SourceFile | None = None
     try:
-        source = SourceFile(path, root, resolved_path=resolved_path)
-        source.load()
-        return source
+        return load_file(path, root, resolved_path=resolved_path)
     except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
-        error_path = source.relative_path if source is not None else _fallback_path(path, root)
         if debug:
             traceback.print_exc(file=sys.stderr)
         return FileScanResult(
-            errors=(internal_error("analysis", "source-load", path=error_path),), stop=True
+            errors=(internal_error("analysis", "source-load", path=_fallback_path(path, root)),),
+            stop=True,
         )
 
 
+def failure_result(failure: LoadFailure | ParseFailure, *, debug: bool) -> FileScanResult:
+    """Report one file's failure, printing its preserved exception under `--debug`."""
+    if debug and failure.debug_exception is not None:
+        traceback.print_exception(failure.debug_exception, file=sys.stderr)
+    return FileScanResult(errors=(failure.error,))
+
+
 def _fallback_path(path: Path, root: Path) -> str:
-    """Best-effort reporting path for a file whose `SourceFile` never finished constructing."""
+    """Best-effort reporting path for a file whose load raised unexpectedly."""
     try:
         return path.absolute().relative_to(root.absolute()).as_posix()
     except ValueError:
@@ -69,41 +70,39 @@ def _fallback_path(path: Path, root: Path) -> str:
 
 
 def scan_source(
-    source: SourceFile,
+    loaded: LoadedFile,
     *,
     enabled_rules: tuple[str, ...],
     detector_inputs: tuple[DetectorInput, ...],
     debug: bool,
 ) -> FileScanResult:
-    """Scan an already-loaded source after resolving source-load failures."""
+    """Parse a loaded file, then run detectors and suppressions on it if it parsed."""
     try:
-        if source.error is not None:
-            if debug and source.debug_exception is not None:
-                traceback.print_exception(source.debug_exception, file=sys.stderr)
-            return FileScanResult(errors=(source.error,))
+        source = parse_python(loaded)
     except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
         if debug:
             traceback.print_exc(file=sys.stderr)
         return FileScanResult(
             # "source-analyze", not "source-load": `open_source` already completed the read and
-            # owns the "source-load" label. Reaching `source.error` runs `_analyze()`, so a
-            # failure here is tokenize/parse, not I/O.
-            errors=(internal_error("analysis", "source-analyze", path=source.relative_path),),
+            # owns the "source-load" label, so a raise here comes from decoding or parsing, not I/O.
+            errors=(internal_error("analysis", "source-analyze", path=loaded.relative_path),),
             stop=True,
         )
+    if isinstance(source, ParseFailure):
+        return failure_result(source, debug=debug)
     return _scan_ready_source(
         source, enabled_rules=enabled_rules, detector_inputs=detector_inputs, debug=debug
     )
 
 
 def _scan_ready_source(
-    source: SourceFile,
+    source: PythonSource,
     *,
     enabled_rules: tuple[str, ...],
     detector_inputs: tuple[DetectorInput, ...],
     debug: bool,
 ) -> FileScanResult:
-    """Run detectors and suppressions for a successfully loaded source file."""
+    """Run detectors and suppressions for a successfully parsed source file."""
     candidates: list[CandidateFinding] = []
     try:
         for rule, options in detector_inputs:
@@ -138,7 +137,7 @@ def _scan_ready_source(
 
 
 def _recover_candidate_budget(
-    source: SourceFile,
+    source: PythonSource,
     candidates: list[CandidateFinding],
     enabled_rules: tuple[str, ...],
     exceeded: CandidateBudgetExceeded,
