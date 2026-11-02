@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 from _git_harness import git_ignored, init_repository
+from _source_helpers import PYTHON_ONLY
 
 from house_lint.discovery import DiscoveredFile, DiscoveryResult, discover_files
 
@@ -113,7 +114,7 @@ def _dropped(result: DiscoveryResult, root: Path, files: tuple[str, ...]) -> set
 def test_excludes_match_git_on_a_full_scan(scenario: Scenario, tmp_path: Path) -> None:
     _build(tmp_path, scenario)
 
-    result = discover_files(tmp_path, excludes=scenario.patterns, use_git=False)
+    result = discover_files(tmp_path, PYTHON_ONLY, excludes=scenario.patterns, use_git=False)
 
     assert result.errors == ()
     assert _dropped(result, tmp_path, scenario.files) == git_ignored(tmp_path, scenario.files)
@@ -126,6 +127,7 @@ def test_excludes_match_git_for_named_files(scenario: Scenario, tmp_path: Path) 
 
     result = discover_files(
         tmp_path,
+        PYTHON_ONLY,
         explicit=tuple(tmp_path / item for item in scenario.files),
         excludes=scenario.patterns,
         use_git=False,
@@ -142,7 +144,7 @@ def test_doubled_backslash_before_trailing_space_is_the_known_divergence(tmp_pat
     pattern = "pkg\\\\ "
     _build(tmp_path, Scenario("divergence", (pattern,), files))
 
-    result = discover_files(tmp_path, excludes=(pattern,), use_git=False)
+    result = discover_files(tmp_path, PYTHON_ONLY, excludes=(pattern,), use_git=False)
 
     assert git_ignored(tmp_path, files) == set(files)
     assert _dropped(result, tmp_path, files) == set()
@@ -162,7 +164,7 @@ def test_harness_detects_a_real_divergence(
     files = ("src/a.py", "src/b.py")
     scenario = Scenario("guard", ("a.py",), files)
 
-    def broken_discovery(root: Path, **_: object) -> DiscoveryResult:
+    def broken_discovery(root: Path, _languages: object, **_: object) -> DiscoveryResult:
         if broken == "drops-everything":
             return DiscoveryResult(())
         paths = sorted(root.resolve() / item for item in files)

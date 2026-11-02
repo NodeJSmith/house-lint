@@ -132,13 +132,13 @@ def check(
     debug: bool = False,
     fail_on_empty: bool = False,
 ) -> int:
-    """Scan configured roots or explicit Python paths.
+    """Scan configured roots or explicit paths.
 
     `fail_on_empty` makes a zero-file scan exit 1 instead of 0 — for CI pipelines that gate on
     the exit code and would otherwise see a zero-file scan (e.g. a typo'd `include`, or a rename
     that orphaned the configured paths) pass silently. Off by default: an empty scan is a normal,
     non-error outcome for interactive/exploratory use (a brand-new project, a directory that
-    hasn't grown any Python files yet).
+    hasn't grown any source files yet).
     """
     if format not in {"text", "json"}:
         result = _result_for_config_error(ConfigError("--format must be text or json"))

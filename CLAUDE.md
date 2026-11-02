@@ -19,7 +19,7 @@ Before adding a rule, ask two questions:
 
 If the answer to 2 is yes, configure or wrap that tool instead of reimplementing it. If the answer to 1 is no, it's a general style preference and doesn't belong here. Generating a plausible-sounding rule is cheap, so the bar is evidence that the pattern recurs. Rules are opinionated, not a general plugin framework.
 
-Today every rule is a Python, single-file detector, and parts of the engine assume that: the per-file result cache, and read-once loading. Those are implementation details from the port, not design principles. Cross-file checks (duplicate code #39, complexity and dead code #53) and first-class TypeScript support are in scope. The ratified plan for the engine work is the milestone ledger at `design/specs/005-cross-file-rules-and-duplicate-code/design.md`.
+Every shipped rule today is a Python, single-file detector. The engine also has a project phase for rules that take the scanned file set, but no shipped rule uses it yet. Cross-file checks (duplicate code #39, complexity and dead code #53) and first-class TypeScript support are in scope. The ratified plan for the engine work is the milestone ledger at `design/specs/005-cross-file-rules-and-duplicate-code/design.md`.
 
 When a concrete rule or a ratified spec needs the engine to grow, grow the engine, and don't reject an approach because it breaks a single-file assumption. For unrelated changes, keep the diff small. Prefer wrapping a proven external tool over hand-building a complex analyzer.
 
@@ -43,14 +43,15 @@ CI has two workflows. `.github/workflows/ci.yml` runs the tests on Python 3.11 t
 
 `src/house_lint/`:
 - `cli.py`: the cyclopts app: argument parsing, config loading, the internal-error boundary, and rendering
-- `pipeline.py`: the whole run (`run_scan`): discovery, the file phase, the per-run cache (`RunCache`), and result aggregation
-- `config.py`: config discovery and validation, and each run's resolved rule options (`LintConfig.rule_options`)
+- `pipeline.py`: the whole run (`run_scan`): discovery, the file phase, the project phase, the per-run cache (`RunCache`), and result aggregation
+- `config.py`: config discovery and validation, each run's resolved rule options (`LintConfig.rule_options`), which rules apply to a file (`applicable_rules`), and which languages to discover (`discovered_languages`)
 - `discovery.py`: file discovery through `git ls-files` or a plain walk, and configured excludes
 - `language.py`: the `Language` enum and `language_for(path)`, the one place a file's language is decided
 - `source.py`: `load_file`, the one read path every language shares, giving a `LoadedFile` (path and bytes) or a `LoadFailure`
 - `python_source.py`: `parse_python`, which decodes, tokenizes, and parses a `LoadedFile`, giving a `PythonSource` or a `ParseFailure`
 - `scanner.py`: the process boundaries around loading and parsing one file, running its detectors, and applying suppressions
-- `rule_catalog.py`: the table of rules: each rule's metadata, detector, and options type
+- `rule_catalog.py`: the table of rules: each rule's metadata, detector or project run, languages, and options type
+- `project_rule.py`: what a project rule returns (`ProjectCandidate`, `Location`) and how it reports failure (`ProjectRuleFailure`)
 - `suppressions.py`: pragma parsing and HSL900
 - `cache.py`: the result cache
 - `results.py`: the result model
@@ -67,7 +68,7 @@ Tests:
 
 ## Adding a rule
 
-Today a rule is a detector `(source: PythonSource, options, *, limit=None) -> list[CandidateFinding]` in `rules/<name>.py`. Adding one touches:
+A file rule is a detector `(source: PythonSource, options, *, limit=None) -> list[CandidateFinding]` in `rules/<name>.py`. Adding one touches:
 
 1. `rules/<name>.py`: the detector. A rule with options also declares its options type there, a frozen `RuleOptions` subclass whose fields, defaults, and `Annotated` constraints are the config schema. Cross-field checks go in `__post_init__`, raising `ValueError`.
 2. `rule_catalog.py`: one row, `file_rule(...)` or `configurable_rule(...)`. This is the single source of truth for ID, display info, default or opt-in tier, detector, and options. Parsing, dispatch, and the cache key all derive from it. A row whose detector and options type disagree fails Pyright. Pass `parse=` only when a rule's config needs more than converting its table to its options type, as HSL101's merge with the built-in families does.
@@ -76,7 +77,9 @@ Today a rule is a detector `(source: PythonSource, options, *, limit=None) -> li
 
 If a step here doesn't match the code, the code wins; fix this list in the same PR.
 
-IDs: `HSL001`-`HSL0xx` are on by default, `HSL1xx` are opt-in, and `HSL900` is reserved. The first cross-file rule will need a project-level phase that this detector signature doesn't provide. Design that as part of #39 rather than forcing it into the per-file shape.
+A project rule is `(files: tuple[LoadedFile, ...], options) -> list[ProjectCandidate]`, with a `project_rule(...)` or `configurable_project_rule(...)` row in `PROJECT_RULES` that declares its languages. It runs once per scan, after the file loop, and raises `ProjectRuleFailure` for a failure the user can act on. `tests/integration/test_project_phase.py` shows how to test one with `register_project_rules`.
+
+IDs: `HSL001`-`HSL0xx` are on by default, `HSL1xx` are opt-in, and `HSL900` is reserved.
 
 ## Gotchas
 
@@ -84,6 +87,8 @@ IDs: `HSL001`-`HSL0xx` are on by default, `HSL1xx` are opt-in, and `HSL900` is r
 - **Inside a repo, git supplies the file list.** Discovery runs `git ls-files` per requested directory, and any git failure there stops the run. Outside a repo, or with `--no-git`, it does a plain walk that reads no ignore files. A `.git` entry at or above the directory decides which, because git's exit code can't tell "not a repo" from a `safe.directory` refusal. See `docs/configuration.md` and `design/specs/007-git-file-discovery/design.md`.
 - **Configured `exclude` is the one verdict house-lint makes itself**, through `pathspec`, without negation. A change to pattern handling needs a case in `tests/integration/test_exclude_parity.py`, which compares it against real `git check-ignore`. A case costs one `Scenario` entry with no expected values.
 - **Default scope is the whole tree** from the root, minus what git ignores and built-in excludes. `include` narrows it to literal root-relative paths.
+- **Only a file in an enabled project rule's input outlives its loop iteration.** With no project rule enabled, no file's bytes are kept. Project-phase results are never cached.
+- **Only Python has an analysis layer.** A file in any other language is loaded for the project rules that asked for it and counted, but never parsed, cached, or checked by `HSL900`. The skip is in `run_file_phase`.
 - **Each scanned file is read exactly once**, by `source.load_file`. The cache key comes from that same buffer (`LoadedFile.content` → `cache.hash_source_content`), so a cache entry can never describe content other than what was scanned. A second read of a scanned path lets the file change between the read that was parsed and the read that was hashed, so a cache entry could describe the wrong content. `test_each_scanned_file_is_read_exactly_once` catches it, and you should not weaken that test. A rule that reads files outside `load_file`, such as an external tool given paths, must either not be cached or hash what it reads.
 - **A load failure is never cached; a parse failure is.** A `LoadFailure` has no `LoadedFile` to key on. A `ParseFailure` follows from the bytes, so it's stored like any other result, and a cache hit never decodes. A rule is only ever handed a `PythonSource` that parsed, so it needs no failure checks.
 - **The cache is per-file and namespaced** by `<version>-<hash of house-lint's own sources>`, so editing rule code invalidates it without a version bump. Its key includes the Python version. house-lint writes a self-ignoring `.gitignore` only into its default cache directory, never into a user-supplied `--cache-dir`.

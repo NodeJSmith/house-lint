@@ -172,7 +172,7 @@ def test_json_reporter_includes_zero_file_diagnostic(tmp_path: Path) -> None:
     data = json.loads(render_json(result, zero_file_note=note))
 
     assert data["zero_file_diagnostic"] == note
-    assert data["zero_file_diagnostic"].startswith("empty scan: no Python files selected")
+    assert data["zero_file_diagnostic"].startswith("empty scan: no files selected")
     assert "no config file found" in data["zero_file_diagnostic"]
 
 
@@ -182,7 +182,7 @@ def test_json_reporter_zero_file_diagnostic_unadorned_when_suppressed(tmp_path: 
 
     data = json.loads(render_json(result, zero_file_note=note))
 
-    assert data["zero_file_diagnostic"] == "empty scan: no Python files selected"
+    assert data["zero_file_diagnostic"] == "empty scan: no files selected"
 
 
 def test_json_reporter_omits_zero_file_diagnostic_when_files_were_scanned(tmp_path: Path) -> None:

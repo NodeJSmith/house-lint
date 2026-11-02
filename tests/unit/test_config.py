@@ -6,14 +6,16 @@ import pytest
 from house_lint.config import (
     ConfigError,
     LintConfig,
+    applicable_rules,
     compile_per_file_ignores,
     default_config,
+    discovered_languages,
     get_house_lint_table,
     get_standalone_table,
     is_standalone_config,
     load_config,
-    per_file_enabled_rules,
 )
+from house_lint.language import Language
 from house_lint.rule_catalog import FILE_RULES
 from house_lint.rules.exception_names import HSL103Options
 from house_lint.rules.file_length import HSL102Options
@@ -141,8 +143,20 @@ def test_selection_keys_reject_a_non_array_value_as_a_config_error(
 def test_per_file_ignores_trailing_double_star_directory_spares_files_directly_inside() -> None:
     compiled = compile_per_file_ignores({"src/**/": ("HSL002",)})
 
-    assert per_file_enabled_rules(("HSL002",), compiled, "src/a.py") == ("HSL002",)
-    assert per_file_enabled_rules(("HSL002",), compiled, "src/sub/b.py") == ()
+    assert applicable_rules(("HSL002",), compiled, "src/a.py", Language.PYTHON) == ("HSL002",)
+    assert applicable_rules(("HSL002",), compiled, "src/sub/b.py", Language.PYTHON) == ()
+
+
+def test_applicable_rules_drop_a_rule_that_doesnt_handle_the_files_language() -> None:
+    rules = ("HSL001", "HSL002", "HSL900")
+
+    assert applicable_rules(rules, (), "a.py", Language.PYTHON) == rules
+    assert applicable_rules(rules, (), "a.ts", Language.TYPESCRIPT) == ("HSL900",)
+
+
+def test_discovered_languages_come_from_the_enabled_rules_not_the_always_on_rule() -> None:
+    assert discovered_languages(("HSL001", "HSL900")) == {Language.PYTHON}
+    assert discovered_languages(("HSL900",)) == frozenset()
 
 
 def test_per_file_ignores_removes_rules_only_for_matching_files(tmp_path: Path) -> None:
@@ -156,11 +170,13 @@ def test_per_file_ignores_removes_rules_only_for_matching_files(tmp_path: Path) 
 
     assert config.per_file_ignores == {"tests/**": ("HSL002",)}
     compiled = compile_per_file_ignores(config.per_file_ignores)
-    assert per_file_enabled_rules(config.enabled_rules, compiled, "tests/test_foo.py") == (
+    assert applicable_rules(
+        config.enabled_rules, compiled, "tests/test_foo.py", Language.PYTHON
+    ) == (
         "HSL001",
         "HSL900",
     )
-    assert per_file_enabled_rules(config.enabled_rules, compiled, "src/foo.py") == (
+    assert applicable_rules(config.enabled_rules, compiled, "src/foo.py", Language.PYTHON) == (
         "HSL001",
         "HSL002",
         "HSL900",

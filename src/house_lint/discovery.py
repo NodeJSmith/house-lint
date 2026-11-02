@@ -1,4 +1,4 @@
-"""Strict, deterministic Python file discovery."""
+"""Strict, deterministic file discovery."""
 
 import os
 import stat
@@ -22,7 +22,7 @@ from house_lint.config import (
     load_toml,
     validate_exclude,
 )
-from house_lint.language import language_for
+from house_lint.language import Language, language_for
 from house_lint.results import LintError
 
 BUILTIN_EXCLUDES = (
@@ -195,6 +195,7 @@ class _FileSelector:
     root: Path
     exclude_spec: GitIgnoreSpec
     errors: list[LintError]
+    languages: frozenset[Language]
     use_git: bool = True
     selected: dict[Path, Path] = field(default_factory=lambda: dict[Path, Path]())
     limit_reached: bool = False
@@ -286,13 +287,10 @@ class _FileSelector:
             if not self._requested_is_excluded(resolved, is_dir=True):
                 self._scan_directory(resolved)
             return
-        if not is_file or language_for(path) is None:
+        if not is_file or language_for(path) not in self.languages:
             if explicit_paths:
-                raise DiscoveryError(
-                    self._error(
-                        path, "path", "qualify", f"explicit path is not a Python file: {path}"
-                    )
-                )
+                message = f"explicit path is not a regular file any enabled rule handles: {path}"
+                raise DiscoveryError(self._error(path, "path", "qualify", message))
             return
         if not self._requested_is_excluded(resolved, is_dir=False):
             self._select(resolved, path)
@@ -370,7 +368,7 @@ class _FileSelector:
             if not self._excluded(relative, is_dir=True):
                 self._record_directory_symlink(path)
             return
-        if not stat.S_ISREG(mode) or language_for(path) is None:
+        if not stat.S_ISREG(mode) or language_for(path) not in self.languages:
             return
         self._select(path, path)
 
@@ -466,13 +464,14 @@ class _FileSelector:
 
 def discover_files(
     root: Path,
+    languages: frozenset[Language],
     *,
     include: tuple[str, ...] = DEFAULT_INCLUDE,
     explicit: tuple[Path, ...] = (),
     excludes: tuple[str, ...] = (),
     use_git: bool = True,
 ) -> DiscoveryResult:
-    """Discover qualifying files, or raise for strict explicit path failures and git failures.
+    """Discover files in `languages`, or raise for strict explicit path and git failures.
 
     Raises `ConfigError` for a negated exclude.
 
@@ -482,7 +481,11 @@ def discover_files(
     root = root.expanduser().resolve()
     requested = explicit or tuple(root / item for item in include)
     selector = _FileSelector(
-        root, compile_git_ignore_spec(validate_exclude(excludes)), [], use_git=use_git
+        root,
+        compile_git_ignore_spec(validate_exclude(excludes)),
+        [],
+        languages,
+        use_git=use_git,
     )
     selector.select(requested, explicit_paths=bool(explicit))
     return selector.result()

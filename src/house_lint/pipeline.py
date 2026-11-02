@@ -1,5 +1,8 @@
 """Whole-run scan pipeline: discovery, the file phase, and result assembly."""
 
+import sys
+import traceback
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias
@@ -21,12 +24,16 @@ from house_lint.config import (
     CompiledPerFileIgnores,
     DetectorInput,
     LintConfig,
+    applicable_rules,
     compile_per_file_ignores,
-    per_file_enabled_rules,
+    discovered_languages,
     selected_detector_inputs,
+    selected_project_rules,
 )
 from house_lint.discovery import DiscoveryError, DiscoveryResult, discover_files
-from house_lint.results import Finding, LintError, ScanResult
+from house_lint.language import Language, language_for
+from house_lint.project_rule import ProjectRuleFailure
+from house_lint.results import Finding, LintError, ScanResult, error, internal_error
 from house_lint.scanner import FileScanResult, failure_result, open_source, scan_source
 from house_lint.source import LoadedFile, LoadFailure
 
@@ -35,12 +42,27 @@ CacheKey: TypeAlias = tuple[str, str]
 
 @dataclass(frozen=True)
 class FilePhaseResult:
-    """The file phase's totals for the run. No loaded file outlives its loop iteration."""
+    """The file phase's totals for the run, and what the project phase needs from it.
+
+    A loaded file outlives its loop iteration only in `project_inputs`, which holds each enabled
+    project rule's files by rule ID, in discovery order. It is empty when no project rule is
+    enabled. `aborted` means a process-boundary failure ended the loop early.
+    """
 
     findings: tuple[Finding, ...]
     errors: tuple[LintError, ...]
     suppressed_count: int
     files_scanned: int
+    project_inputs: Mapping[str, tuple[LoadedFile, ...]]
+    aborted: bool
+
+
+@dataclass(frozen=True)
+class ProjectPhaseResult:
+    """The project phase's additions to the run's totals."""
+
+    findings: tuple[Finding, ...]
+    errors: tuple[LintError, ...]
 
 
 class RunCache:
@@ -160,6 +182,7 @@ def run_scan(
     try:
         discovered = discover_files(
             root,
+            discovered_languages(config.enabled_rules),
             include=config.include,
             explicit=paths,
             excludes=config.exclude,
@@ -185,16 +208,17 @@ def run_scan(
         # Only when there is something to scan — so a run that discovers nothing neither creates
         # a cache directory in the project nor reports on one it was never going to use.
         cache.prepare()
-    totals = run_file_phase(discovered, root=root, config=config, cache=cache, debug=debug)
+    file_phase = run_file_phase(discovered, root=root, config=config, cache=cache, debug=debug)
+    project_phase = run_project_phase(file_phase, config=config, debug=debug)
     cache.finish()
     return ScanResult(
         root,
         config_path,
         config.enabled_rules,
-        totals.files_scanned,
-        totals.findings,
-        totals.suppressed_count,
-        totals.errors,
+        file_phase.files_scanned,
+        file_phase.findings + project_phase.findings,
+        file_phase.suppressed_count,
+        file_phase.errors + project_phase.errors,
     )
 
 
@@ -213,9 +237,16 @@ def run_file_phase(
     """
     detector_inputs = selected_detector_inputs(config)
     compiled_per_file_ignores = compile_per_file_ignores(config.per_file_ignores)
+    project_inputs: dict[str, list[LoadedFile]] = {
+        rule.id: [] for rule, _options in selected_project_rules(config)
+    }
     results: list[FileScanResult | CachedFileResult] = []
+    aborted = False
     for file in discovered.files:
         relative = file.path.relative_to(root).as_posix()
+        language = language_for(file.path)
+        # Discovery selects only files whose language an enabled rule handles.
+        assert language is not None
         # Pattern matching runs on the file's resolved location, reporting on the spelling the
         # user typed. `file.path` preserves the argument as given, so an accepted path
         # containing `..` — `src/../tests/a.py`, with both directories present — reaches
@@ -231,7 +262,7 @@ def run_file_phase(
         # per-file-ignore therefore follows the file, not the spelling that reached it.
         match_relative = file.resolved.relative_to(root).as_posix()
         file_enabled_rules, file_detector_inputs = _resolve_file_rules(
-            match_relative, config, detector_inputs, compiled_per_file_ignores
+            match_relative, language, config, detector_inputs, compiled_per_file_ignores
         )
         # The file is read exactly once per scan, here. Everything below — the cache key, the
         # detectors, and the entry written back — derives from that one buffer, so a cache entry
@@ -241,10 +272,21 @@ def run_file_phase(
             # open_source only returns a result for a process-boundary abort, which is fatal to
             # the run and never cached.
             results.append(loaded)
+            aborted = True
             break
         if isinstance(loaded, LoadFailure):
             # No `LoadedFile` means no cache key, so a load failure is reported and never cached.
             results.append(failure_result(loaded, debug=debug))
+            continue
+        # Ahead of the cache lookup and the parse: a hit has the bytes in hand, and a project rule
+        # still takes a Python file that fails to parse, since it is given bytes, not a parse.
+        for rule_id, inputs in project_inputs.items():
+            if rule_id in file_enabled_rules:
+                inputs.append(loaded)
+        # Only Python has an analysis layer, so a file in any other language gets no parsing, cache
+        # entry, file rule, or HSL900. It counts as scanned because project rules can use it.
+        if language is not Language.PYTHON:
+            results.append(FileScanResult(files_scanned=1))
             continue
         # Computed unconditionally (even under --no-cache) because `store` still writes on a miss.
         key = _cache_keys(loaded, config, file_enabled_rules)
@@ -266,6 +308,7 @@ def run_file_phase(
         if file_result.stop:
             # A stop result is a non-deterministic process-boundary failure, not a reproducible
             # scan outcome, so it must never be replayed from cache on a later hit.
+            aborted = True
             break
         cache.store(key, file_result, relative_path=relative)
     return FilePhaseResult(
@@ -273,7 +316,57 @@ def run_file_phase(
         discovered.errors + tuple(err for result in results for err in result.errors),
         sum(result.suppressed_count for result in results),
         sum(result.files_scanned for result in results),
+        {rule_id: tuple(inputs) for rule_id, inputs in project_inputs.items()},
+        aborted,
     )
+
+
+def run_project_phase(
+    file_phase: FilePhaseResult, *, config: LintConfig, debug: bool
+) -> ProjectPhaseResult:
+    """Run each enabled project rule on its files. Nothing here is cached.
+
+    An aborted file phase leaves an arbitrarily partial input, and the run is already reporting an
+    internal error, so no rule runs. A rule with no files doesn't run either: an external tool
+    handed an empty list of paths could fall back to scanning its working directory.
+
+    A `ProjectRuleFailure` costs that rule's findings and the next rule still runs. Any other
+    exception is a bug at the process boundary, so it ends the phase, keeping results so far.
+    """
+    if file_phase.aborted:
+        return ProjectPhaseResult((), ())
+    findings: list[Finding] = []
+    errors: list[LintError] = []
+    for rule, options in selected_project_rules(config):
+        files = file_phase.project_inputs[rule.id]
+        if not files:
+            continue
+        try:
+            candidates = rule.run(files, options)
+        except ProjectRuleFailure as exc:
+            errors.append(
+                error("project-rule", "project", "rule-run", f"{rule.id}: {exc}", rule_id=rule.id)
+            )
+            continue
+        except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
+            if debug:
+                traceback.print_exc(file=sys.stderr)
+            errors.append(internal_error("project", "rule-run", rule_id=rule.id))
+            break
+        findings.extend(
+            Finding(
+                candidate.rule_id,
+                location.path,
+                location.line,
+                location.column,
+                location.end_line,
+                location.end_column,
+                candidate.message,
+            )
+            for candidate in candidates
+            for location in candidate.locations
+        )
+    return ProjectPhaseResult(tuple(findings), tuple(errors))
 
 
 def _cache_keys(
@@ -293,22 +386,21 @@ def _cache_keys(
 
 def _resolve_file_rules(
     match_relative: str,
+    language: Language,
     config: LintConfig,
     detector_inputs: tuple[DetectorInput, ...],
     compiled_per_file_ignores: CompiledPerFileIgnores,
 ) -> tuple[tuple[str, ...], tuple[DetectorInput, ...]]:
-    """Return this file's (enabled_rules, detector_inputs), narrowed by per-file-ignores.
+    """Return this file's (enabled_rules, detector_inputs), narrowed to the rules that apply.
 
     Suppression handling only flags pragmas naming a disabled rule (see
     apply_suppressions/_collect_claims in suppressions.py) — it does not filter candidate
-    findings by enabled_rules. detector_inputs must be recomputed here so a per-file-ignored
-    rule's detector never runs for this file; skipping this recompute would let its findings
-    leak through unfiltered.
+    findings by enabled_rules. detector_inputs must be recomputed when the set narrows, so a rule
+    that doesn't apply to this file never runs on it; otherwise its findings would leak through
+    unfiltered.
     """
-    if not compiled_per_file_ignores:
-        return config.enabled_rules, detector_inputs
-    file_enabled_rules = per_file_enabled_rules(
-        config.enabled_rules, compiled_per_file_ignores, match_relative
+    file_enabled_rules = applicable_rules(
+        config.enabled_rules, compiled_per_file_ignores, match_relative, language
     )
     if file_enabled_rules == config.enabled_rules:
         return file_enabled_rules, detector_inputs

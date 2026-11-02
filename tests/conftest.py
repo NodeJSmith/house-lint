@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 from _source_helpers import parse_file
 
-from house_lint import config
+from house_lint import config, rule_catalog
 from house_lint.python_source import PythonSource
-from house_lint.rule_catalog import FileRule
+from house_lint.rule_catalog import FileRule, ProjectRule
 
 
 @pytest.fixture
@@ -50,6 +50,19 @@ def fail_detectors_for(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]
     def install(path: str) -> None:
         rules = {rule_id: wrap(rule, path) for rule_id, rule in config.FILE_RULES.items()}
         monkeypatch.setattr(config, "FILE_RULES", rules)
+
+    return install
+
+
+@pytest.fixture
+def register_project_rules(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
+    """Add rows to the rule table, as if they were in `PROJECT_RULES`."""
+
+    def install(*rows: ProjectRule) -> None:
+        by_id = {row.id: row for row in rows}
+        monkeypatch.setattr(config, "PROJECT_RULES", by_id)
+        monkeypatch.setattr(config, "ORDINARY_RULES", config.ORDINARY_RULES | by_id.keys())
+        monkeypatch.setattr(rule_catalog, "RULES", {**rule_catalog.RULES, **by_id})
 
     return install
 

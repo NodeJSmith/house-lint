@@ -30,6 +30,6 @@ The prefix is exactly `house-lint:`. IDs are canonical comma-separated IDs; whit
 
 ## HSL900 diagnostics
 
-`HSL900` reports every malformed pragma and each invalid listed ID. It reports when a pragma has no IDs, invalid/duplicate IDs, an invalid action or reason, wrong placement, an unknown or disabled ID, an unused ID, or a duplicate/conflicting claim on the same rule/finding. Conflicts fail closed: the original finding remains visible and every conflicting pragma is diagnosed.
+`HSL900` reports every malformed pragma and each invalid listed ID. It reports when a pragma has no IDs, invalid/duplicate IDs, an invalid action or reason, wrong placement, an unknown or disabled ID, an ID whose rule doesn't handle Python files, an unused ID, or a duplicate/conflicting claim on the same rule/finding. Conflicts fail closed: the original finding remains visible and every conflicting pragma is diagnosed.
 
 Text that resembles a pragma inside a string or docstring is not a suppression. `HSL900` itself cannot be selected, ignored, or suppressed.

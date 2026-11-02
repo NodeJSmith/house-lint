@@ -866,14 +866,14 @@ def test_check_pyproject_empty_include_suppresses_zero_file_guidance(repository:
     json_result = _run(repository, "check", "--root", str(repository), "--format", "json")
 
     assert text_result.returncode == 0
-    assert "empty scan: no Python files selected" in text_result.stdout
+    assert "empty scan: no files selected" in text_result.stdout
     assert "no config file found" not in text_result.stdout
     assert "[tool.house-lint]" not in text_result.stdout
 
     result = json.loads(json_result.stdout)
     assert json_result.returncode == 0
     assert result["files_scanned"] == 0
-    assert result["zero_file_diagnostic"] == "empty scan: no Python files selected"
+    assert result["zero_file_diagnostic"] == "empty scan: no files selected"
 
 
 def test_check_explicit_path_with_no_python_files_suppresses_zero_file_guidance(
@@ -887,13 +887,13 @@ def test_check_explicit_path_with_no_python_files_suppresses_zero_file_guidance(
     json_result = _run(repository, "check", str(empty_dir), "--format", "json")
 
     assert text_result.returncode == 0
-    assert "empty scan: no Python files selected" in text_result.stdout
+    assert "empty scan: no files selected" in text_result.stdout
     assert "no config file found" not in text_result.stdout
 
     result = json.loads(json_result.stdout)
     assert json_result.returncode == 0
     assert result["files_scanned"] == 0
-    assert result["zero_file_diagnostic"] == "empty scan: no Python files selected"
+    assert result["zero_file_diagnostic"] == "empty scan: no files selected"
 
 
 def test_check_with_no_config_and_no_python_files_shows_zero_file_guidance(
@@ -904,7 +904,7 @@ def test_check_with_no_config_and_no_python_files_shows_zero_file_guidance(
 
     assert text_result.returncode == 0
     assert (
-        "empty scan: no Python files selected; no config file found: create one with an "
+        "empty scan: no files selected; no config file found: create one with an "
         "include list, or pass explicit paths (house-lint check <path>)" in text_result.stdout
     )
 
@@ -912,7 +912,7 @@ def test_check_with_no_config_and_no_python_files_shows_zero_file_guidance(
     assert json_result.returncode == 0
     assert result["files_scanned"] == 0
     assert result["zero_file_diagnostic"] == (
-        "empty scan: no Python files selected; no config file found: create one with an "
+        "empty scan: no files selected; no config file found: create one with an "
         "include list, or pass explicit paths (house-lint check <path>)"
     )
 
@@ -921,7 +921,7 @@ def test_check_fail_on_empty_exits_nonzero_on_zero_file_scan(tmp_path: Path) -> 
     completed = _run(tmp_path, "check", "--root", str(tmp_path), "--fail-on-empty")
 
     assert completed.returncode == 1
-    assert "empty scan: no Python files selected" in completed.stdout
+    assert "empty scan: no files selected" in completed.stdout
 
 
 def test_check_fail_on_empty_does_not_affect_nonempty_scan(repository: Path) -> None:

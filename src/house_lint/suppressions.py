@@ -16,9 +16,15 @@ from house_lint.analysis import (
     statement_key,
     statement_owner_for_line,
 )
+from house_lint.language import Language
 from house_lint.python_source import PythonSource, Token
 from house_lint.results import Finding
-from house_lint.rule_catalog import ALWAYS_ON_RULE_ID, is_known_rule
+from house_lint.rule_catalog import (
+    ALWAYS_ON_RULE_ID,
+    is_known_rule,
+    is_project_rule,
+    rule_languages,
+)
 
 _ID = re.compile(r"HSL[0-9]{3}\Z")
 _PRAGMA = re.compile(r"#\s*house-lint:\s*(ignore-next|ignore-file|ignore)\[([^]]*)\] - (.+)\Z")
@@ -116,8 +122,11 @@ def _collect_claims(
 ) -> list[_Claim]:
     """Scan pragma comments and build one claim per rule ID each pragma names.
 
-    Malformed, misplaced, unknown-rule, and disabled-rule pragmas report through
+    Malformed, misplaced, unknown-rule, wrong-language, and disabled-rule pragmas report through
     `add_diagnostic` as a side effect rather than appearing in the returned claims.
+
+    A pragma naming an enabled project rule makes no claim. That rule's findings don't exist yet
+    when this file's scan runs, so the pragma can't be called unused.
     """
     claims: list[_Claim] = []
     for token in source.tokens:
@@ -136,10 +145,20 @@ def _collect_claims(
             if not is_known_rule(rule_id):
                 add_diagnostic(_diagnostic(source, token, f"unknown suppression rule {rule_id}"))
                 continue
+            # Checked first: `enabled_rules` never holds such a rule, so the disabled check below
+            # would misreport it, and enabling the rule wouldn't help. HSL900 can't reach here,
+            # since `_parse_pragma` rejects a pragma naming it.
+            if Language.PYTHON not in rule_languages(rule_id):
+                add_diagnostic(
+                    _diagnostic(source, token, f"{rule_id} does not handle Python files")
+                )
+                continue
             if rule_id not in enabled_rules:
                 add_diagnostic(
                     _diagnostic(source, token, f"unused suppression for disabled rule {rule_id}")
                 )
+                continue
+            if is_project_rule(rule_id):
                 continue
             target = _target(pragma)
             owned = tuple(
