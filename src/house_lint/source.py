@@ -53,7 +53,8 @@ class LoadedFile:
 class LoadFailure:
     """A file with no usable bytes: outside the root, non-regular, oversized, or unreadable.
 
-    With no `LoadedFile` to key on, its outcome is never cached. `debug_exception` is preserved for `--debug` output only.
+    With no `LoadedFile` to key on, its outcome is never cached. `debug_exception` is preserved
+    for `--debug` output only.
     """
 
     error: LintError

@@ -1,9 +1,9 @@
 from pathlib import Path
 
 import pytest
+from _source_helpers import assert_reported_as_error
 
 import house_lint.source
-from house_lint.results import ScanResult
 from house_lint.source import MAX_SOURCE_BYTES, LoadedFile, LoadFailure, load_file
 
 
@@ -14,9 +14,7 @@ def _load(path: Path, root: Path) -> LoadedFile | LoadFailure:
 def _failure(path: Path, root: Path) -> LoadFailure:
     failure = _load(path, root)
     assert isinstance(failure, LoadFailure)
-    result = ScanResult(root, None, (), 0, errors=(failure.error,))
-    assert not result.is_clean
-    assert result.to_dict()["summary"]["error_count"] == 1
+    assert_reported_as_error(failure.error, root)
     return failure
 
 

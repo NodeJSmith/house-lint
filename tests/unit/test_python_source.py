@@ -1,18 +1,15 @@
 import ast
 from pathlib import Path
 
-from _source_helpers import load, parse_file
+from _source_helpers import assert_reported_as_error, load, parse_file
 
 from house_lint.python_source import ParseFailure, parse_python
-from house_lint.results import ScanResult
 
 
 def _failure(path: Path, root: Path) -> ParseFailure:
     failure = parse_python(load(path, root))
     assert isinstance(failure, ParseFailure)
-    result = ScanResult(root, None, (), 0, errors=(failure.error,))
-    assert not result.is_clean
-    assert result.to_dict()["summary"]["error_count"] == 1
+    assert_reported_as_error(failure.error, root)
     return failure
 
 

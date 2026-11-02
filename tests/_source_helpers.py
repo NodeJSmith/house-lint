@@ -3,7 +3,15 @@
 from pathlib import Path
 
 from house_lint.python_source import ParseFailure, PythonSource, parse_python
+from house_lint.results import LintError, ScanResult
 from house_lint.source import LoadedFile, LoadFailure, load_file
+
+
+def assert_reported_as_error(error: LintError, root: Path) -> None:
+    """A failed file's error makes the run's result not clean."""
+    result = ScanResult(root, None, (), 0, errors=(error,))
+    assert not result.is_clean
+    assert result.to_dict()["summary"]["error_count"] == 1
 
 
 def load(path: Path, root: Path | None = None) -> LoadedFile:

@@ -83,7 +83,7 @@ class PythonSource:
 
 def parse_python(loaded: LoadedFile) -> PythonSource | ParseFailure:
     """Decode, tokenize, and parse a loaded file, in that order. The first failure is the result."""
-    path = loaded.relative_path
+    relative = loaded.relative_path
     try:
         buffer = io.BytesIO(loaded.content)
         encoding, _ = tokenize.detect_encoding(buffer.readline)
@@ -91,23 +91,24 @@ def parse_python(loaded: LoadedFile) -> PythonSource | ParseFailure:
         text = io.TextIOWrapper(buffer, encoding=encoding).read()
     except (UnicodeDecodeError, LookupError) as exc:
         return ParseFailure(
-            error("decode", "read", "bounded-read", "source could not be decoded", path=path), exc
+            error("decode", "read", "bounded-read", "source could not be decoded", path=relative),
+            exc,
         )
     except SyntaxError as exc:
         message = "source encoding declaration is invalid"
-        return ParseFailure(error("decode", "read", "bounded-read", message, path=path), exc)
+        return ParseFailure(error("decode", "read", "bounded-read", message, path=relative), exc)
     try:
         tokens = tuple(tokenize.generate_tokens(io.StringIO(text).readline))
     except (tokenize.TokenError, IndentationError) as exc:
-        return ParseFailure(error("tokenize", "analysis", "tokenize", str(exc), path=path), exc)
+        return ParseFailure(error("tokenize", "analysis", "tokenize", str(exc), path=relative), exc)
     try:
         tree = ast.parse(text, filename=str(loaded.path))
     except SyntaxError as exc:
-        return ParseFailure(_syntax_error(exc, path), exc)
-    statements = sorted(
-        (node for node in ast.walk(tree) if isinstance(node, ast.stmt)), key=_node_key
+        return ParseFailure(_syntax_error(exc, relative), exc)
+    statements = tuple(
+        sorted((node for node in ast.walk(tree) if isinstance(node, ast.stmt)), key=_node_key)
     )
-    return PythonSource(loaded.path, path, text, tokens, tree, tuple(statements))
+    return PythonSource(loaded.path, relative, text, tokens, tree, statements)
 
 
 def _syntax_error(exc: SyntaxError, path: str) -> LintError:

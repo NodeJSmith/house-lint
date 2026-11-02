@@ -79,8 +79,6 @@ def scan_source(
     """Parse a loaded file, then run detectors and suppressions on it if it parsed."""
     try:
         source = parse_python(loaded)
-        if isinstance(source, ParseFailure):
-            return failure_result(source, debug=debug)
     except Exception:  # noqa: BLE001 - this is the process-boundary internal-error path.
         if debug:
             traceback.print_exc(file=sys.stderr)
@@ -90,6 +88,8 @@ def scan_source(
             errors=(internal_error("analysis", "source-analyze", path=loaded.relative_path),),
             stop=True,
         )
+    if isinstance(source, ParseFailure):
+        return failure_result(source, debug=debug)
     return _scan_ready_source(
         source, enabled_rules=enabled_rules, detector_inputs=detector_inputs, debug=debug
     )
