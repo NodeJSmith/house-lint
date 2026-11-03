@@ -113,6 +113,8 @@ Before merging a release-please PR, review the generated changelog and manually 
 3. Group by feature area: reorganize flat lists into topic-grouped sections when a release has 5+ entries.
 4. Verify breaking change descriptions actually tell the user what to do, not just what changed internally.
 
+When the release PR merges, the workflow's `sync-release-notes` job copies the curated section into the GitHub release notes, so the CHANGELOG.md edit is the only one to make. To re-sync one release's notes later, run `gh workflow run "Release Please" -f tag_name=v<version>`, which also rebuilds that tag and re-runs the PyPI publish (a no-op for a version already uploaded).
+
 ### Do NOT edit the PR body (CRITICAL)
 
 Only edit the `CHANGELOG.md` file on the release-please branch. Never rewrite the PR description body on GitHub.
@@ -128,6 +130,6 @@ If a release-please PR is merged but no tag/release appears:
 
 1. Check the post-merge workflow run for `✖ Pull request body did not match`.
 2. Create the tag: `git tag v<version> <merge-commit-sha> && git push origin v<version>`.
-3. Create the GitHub Release: `gh release create v<version> --target <sha> --notes-file <changelog-excerpt>`.
-4. Trigger publish manually: `gh workflow run "Release Please" -f tag_name=v<version>` (the workflow's `workflow_dispatch` input, per `.github/workflows/release-please.yml`).
+3. Create the GitHub Release: `gh release create v<version> --target <sha> --generate-notes`. The next step replaces these notes with the tag's `CHANGELOG.md` section, or warns and leaves them if that section is missing.
+4. Trigger the publish and notes sync: `gh workflow run "Release Please" -f tag_name=v<version>` (the workflow's `workflow_dispatch` input, per `.github/workflows/release-please.yml`). This builds and publishes the tag, and its `sync-release-notes` job copies that version's `CHANGELOG.md` section into the release notes.
 5. Close any spurious release-please PR that was opened for the next version.

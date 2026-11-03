@@ -90,4 +90,4 @@ AskUserQuestion:
       description: "Show the full diff first, then ask again"
 ```
 
-3. Commit with `chore: rewrite changelog with user-facing descriptions` and push. This commit lives on the release-please branch, not `master`, so its type doesn't affect changelog generation either way — `chore:` just names it accurately as release-branch maintenance.
+3. Commit with `chore: rewrite changelog with user-facing descriptions` and push. When the PR merges, the release workflow's `sync-release-notes` job copies this section, minus its version heading, into the GitHub release notes, so there's no `gh release edit` to run by hand. This commit lives on the release-please branch, not `master`, so its type doesn't affect changelog generation either way — `chore:` just names it accurately as release-branch maintenance.
