@@ -130,6 +130,6 @@ If a release-please PR is merged but no tag/release appears:
 
 1. Check the post-merge workflow run for `✖ Pull request body did not match`.
 2. Create the tag: `git tag v<version> <merge-commit-sha> && git push origin v<version>`.
-3. Create the GitHub Release: `gh release create v<version> --target <sha> --generate-notes`. The next step replaces its notes.
+3. Create the GitHub Release: `gh release create v<version> --target <sha> --generate-notes`. The next step replaces these notes with the tag's `CHANGELOG.md` section, or warns and leaves them if that section is missing.
 4. Trigger the publish and notes sync: `gh workflow run "Release Please" -f tag_name=v<version>` (the workflow's `workflow_dispatch` input, per `.github/workflows/release-please.yml`). This builds and publishes the tag, and its `sync-release-notes` job copies that version's `CHANGELOG.md` section into the release notes.
 5. Close any spurious release-please PR that was opened for the next version.
