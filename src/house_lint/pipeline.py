@@ -2,8 +2,7 @@
 
 import sys
 import traceback
-from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias
@@ -44,7 +43,7 @@ from house_lint.results import (
 )
 from house_lint.scanner import FileScanResult, failure_result, open_source, scan_source
 from house_lint.source import LoadedFile, LoadFailure
-from house_lint.suppressions import project_suppressions
+from house_lint.suppressions import claims_for
 
 CacheKey: TypeAlias = tuple[str, str]
 
@@ -349,7 +348,7 @@ def run_project_phase(
     findings: list[Finding] = []
     errors: list[LintError] = []
     suppressed_count = 0
-    sources = PythonSources()
+    pragmas = PragmaClaims()
     for rule, options in selected_project_rules(config):
         files = file_phase.project_inputs[rule.id]
         if not files:
@@ -357,8 +356,11 @@ def run_project_phase(
         # The rule's run and its pragma resolution both happen inside the `try`, so a rule's bad
         # output counts as its failure and a rule that fails partway leaves no findings behind.
         try:
-            occurrences = expand_candidates(rule.id, rule.run(files, options))
-            visible = visible_occurrences(rule.id, occurrences, sources)
+            rule_findings, rule_suppressed = expand_candidates(
+                rule.id,
+                rule.run(files, options),
+                lambda location, rule_id=rule.id: pragmas.claims(rule_id, location),
+            )
         except ProjectRuleFailure as exc:
             errors.append(error("project-rule", "project", "rule-run", str(exc), rule_id=rule.id))
             continue
@@ -367,85 +369,70 @@ def run_project_phase(
                 traceback.print_exc(file=sys.stderr)
             errors.append(internal_error("project", "rule-run", rule_id=rule.id))
             break
-        findings.extend(occurrence.finding for occurrence in visible)
-        suppressed_count += len(occurrences) - len(visible)
+        findings.extend(rule_findings)
+        suppressed_count += rule_suppressed
     return ProjectPhaseResult(
         findings=tuple(findings), errors=tuple(errors), suppressed_count=suppressed_count
     )
 
 
-@dataclass(frozen=True)
-class Occurrence:
-    """One location of a project candidate: the finding it reports, and the location it came from.
+class PragmaClaims:
+    """Whether a pragma in its own Python file claims a project-rule location, for one run.
 
-    The location keeps the file's retained bytes, which pragma resolution parses.
+    Each file is parsed from its retained bytes at most once, and its pragmas are scanned at most
+    once per rule. A file in another language has no pragmas yet, and a file that doesn't parse
+    has none readable; the file phase already reported why.
     """
-
-    location: Location
-    finding: Finding
-
-
-class PythonSources:
-    """The project phase's parses of retained Python files, at most one per file per run."""
 
     def __init__(self) -> None:
-        # None marks a file that doesn't parse: it has no readable pragmas.
-        self.parsed: dict[Path, PythonSource | None] = {}
+        # None marks a file that doesn't parse.
+        self.sources: dict[Path, PythonSource | None] = {}
+        self.checks: dict[tuple[str, Path], Callable[[int | None], bool]] = {}
 
-    def get(self, file: LoadedFile) -> PythonSource | None:
-        if file.path not in self.parsed:
-            parsed = parse_python(file)
-            self.parsed[file.path] = parsed if isinstance(parsed, PythonSource) else None
-        return self.parsed[file.path]
+    def claims(self, rule_id: str, location: Location) -> bool:
+        file = location.file
+        if language_for(file.path) is not Language.PYTHON:
+            return False
+        key = (rule_id, file.path)
+        if key not in self.checks:
+            if file.path not in self.sources:
+                parsed = parse_python(file)
+                self.sources[file.path] = parsed if isinstance(parsed, PythonSource) else None
+            source = self.sources[file.path]
+            self.checks[key] = (
+                (lambda line: False) if source is None else claims_for(source, rule_id)
+            )
+        return self.checks[key](location.line)
 
 
-def expand_candidates(rule_id: str, candidates: list[ProjectCandidate]) -> list[Occurrence]:
-    """Return one occurrence per candidate location, in order.
+def expand_candidates(
+    rule_id: str, candidates: list[ProjectCandidate], claims: Callable[[Location], bool]
+) -> tuple[list[Finding], int]:
+    """Return one finding per unclaimed candidate location, in order, and the number claimed.
 
-    Each finding relates every other location of its candidate, so a suppressed location still
-    appears in its siblings' `related`.
+    Each finding relates every other location of its candidate, claimed or not.
     """
-    occurrences: list[Occurrence] = []
+    findings: list[Finding] = []
+    suppressed = 0
     for candidate in candidates:
         related = tuple(location.to_related() for location in candidate.locations)
         for index, location in enumerate(candidate.locations):
-            finding = Finding(
-                rule_id,
-                location.file.relative_path,
-                location.line,
-                location.column,
-                location.end_line,
-                location.end_column,
-                candidate.message,
-                related[:index] + related[index + 1 :],
+            if claims(location):
+                suppressed += 1
+                continue
+            findings.append(
+                Finding(
+                    rule_id,
+                    location.file.relative_path,
+                    location.line,
+                    location.column,
+                    location.end_line,
+                    location.end_column,
+                    candidate.message,
+                    related[:index] + related[index + 1 :],
+                )
             )
-            occurrences.append(Occurrence(location, finding))
-    return occurrences
-
-
-def visible_occurrences(
-    rule_id: str, occurrences: list[Occurrence], sources: PythonSources
-) -> list[Occurrence]:
-    """Return the occurrences no pragma in their own file claims, in their original order.
-
-    Only Python files have pragmas. A file that doesn't parse has none readable, so its
-    occurrences stay visible; the file phase already reported why.
-    """
-    by_file: defaultdict[Path, list[Occurrence]] = defaultdict(list)
-    for occurrence in occurrences:
-        if language_for(occurrence.location.file.path) is Language.PYTHON:
-            by_file[occurrence.location.file.path].append(occurrence)
-    # By identity: `Occurrence` compares by value, and two occurrences can be equal.
-    claimed: set[int] = set()
-    for in_file in by_file.values():
-        source = sources.get(in_file[0].location.file)
-        if source is None:
-            continue
-        locations = [occurrence.location for occurrence in in_file]
-        claimed.update(
-            id(in_file[index]) for index in project_suppressions(source, rule_id, locations)
-        )
-    return [occurrence for occurrence in occurrences if id(occurrence) not in claimed]
+    return findings, suppressed
 
 
 def _cache_keys(

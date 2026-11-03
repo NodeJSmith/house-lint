@@ -25,13 +25,13 @@ This change lets house-lint pragmas suppress individual project-rule occurrences
 5. Resolution for a rule runs inside that rule's existing `try` in `run_project_phase`. An unexpected exception there is that rule's internal error, as a crash in `rule.run` already is (spec 010's build calls). None of the rule's findings are kept, and the phase stops.
 
 **New homes:**
-- `analysis.occurrence_owner(source, line)`: D5's lookup. It returns the statement, or `None`, and sits beside `statement_owner_for_line`, which it doesn't change.
+- `analysis.occurrence_owner(source, line)`: D5's lookup. It returns the statement, or `None`, and sits beside `statement_owner_for_line`, sharing its innermost-statement choice and except-clause refinement (`analysis.innermost_owner`, `analysis.refine_to_handler`); file-rule behaviour is unchanged (ship-time challenge, Finding 8).
 - `suppressions.py` (sketch challenge, Finding 5):
   - `_collect_claims`'s pragma walk (parse, placement, rule checks) becomes a side-effect-free `scan_pragmas(source, enabled_rules)`. It returns the accepted pragmas, each with its owner key, and the HSL900 diagnostics.
   - The file phase builds claims from the accepted pragmas, skipping those that name a project rule as it does today, and reports the diagnostics.
-  - A new `project_suppressions(source, rule_id, locations)` returns which of a rule's locations in one file are claimed. It calls `scan_pragmas` with `(rule_id,)` as the enabled set and ignores the diagnostics. That enabled set is correct because a file is in rule R's input only if R applies to it (`pipeline.run_file_phase`).
+  - A new `claims_for(source, rule_id)` returns whether a pragma claims an occurrence starting on a given line (ship-time challenge, Finding 4, replacing a per-file `project_suppressions` that returned claimed indexes). It calls `scan_pragmas` with `(rule_id,)` as the enabled set and ignores the diagnostics. That enabled set is correct because a file is in rule R's input only if R applies to it (`pipeline.run_file_phase`).
   - So a pragma is accepted in one phase exactly when it is accepted in the other, and no diagnostic is reported twice.
-- Parsing, grouping a rule's findings by file, and applying the claims: `pipeline.run_project_phase`. `ProjectPhaseResult` gains a `suppressed_count`, and `run_scan` adds it to the file phase's.
+- Parsing, scanning each file's pragmas once per rule, and applying the claims: `pipeline.run_project_phase`, through a per-run `PragmaClaims`, with `expand_candidates` dropping claimed locations as it builds findings. `ProjectPhaseResult` gains a `suppressed_count`, and `run_scan` adds it to the file phase's.
 - `results.py` (D3, sketch challenge Finding 7):
   - a public location type for `related` entries: a small frozen path-plus-span dataclass that validates through `results.validate_location`
   - the `related` field on `Finding`, defaulting to empty; `Finding` keeps its flat location fields
@@ -184,8 +184,8 @@ This change lets house-lint pragmas suppress individual project-rule occurrences
 
 **Calls made during the build:**
 - `RelatedLocation` is the name of the location type for `related` entries: it says what the type is for, and `Location` is taken by `project_rule`.
-- `project_suppressions` takes the rule's `project_rule.Location`s in one file and returns the claimed indexes. An accepted `ignore-file` claims every index without an owner lookup: with `(rule_id,)` as the enabled set, every accepted pragma names that rule.
+- An accepted `ignore-file` makes `claims_for` claim every occurrence without an owner lookup: with `(rule_id,)` as the enabled set, every accepted pragma names that rule.
 - The decorated start line now has one home, `analysis.decorated_start_line`, used by `occurrence_owner` and by `suppressions.py`'s placement checks (it replaces `suppressions._statement_start_line`). The except-clause refinement moved to `analysis.refine_to_handler`, shared by both owner lookups, so the two can't drift.
-- The cache payload carries `related` and reads it back, rather than dropping it on write. File-rule findings always have it empty, but dropping it would silently lose data the day one doesn't. An entry without the key is treated as corrupted, like any other missing key; the namespace hash already retires older entries.
-- The project phase keys its per-run parse cache by `LoadedFile.path`, the file's identity, rather than by the whole `LoadedFile` with its bytes.
+- The cache payload leaves `related` out, as it leaves out the finding's own path (ship-time challenge, Finding 5). Cached results come from the file phase, whose findings can't have related locations (`CandidateFinding` has no such field), and a stored path could go stale when a content-keyed entry is replayed for a moved file.
+- `PragmaClaims` keys its parse cache by `LoadedFile.path`, the file's identity, rather than by the whole `LoadedFile` with its bytes, and its claim checks by rule and path.
 - The new whole-run pins live in `tests/integration/test_project_suppressions.py`, beside `test_project_phase.py`, which was already long.

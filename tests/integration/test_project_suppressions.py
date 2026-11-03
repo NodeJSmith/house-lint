@@ -103,6 +103,37 @@ DECORATOR_LINE_IN_CLASS = f"""\
             return 1
     """
 
+EXCEPT_LINE = f"""\
+    try:
+        run()
+    except ValueError:  # house-lint: ignore[{RULE}] - {REASON}
+        pass
+    """
+
+DECORATED_CLASS = f"""\
+    import functools
+
+
+    # house-lint: ignore-next[{RULE}] - {REASON}
+    @functools.total_ordering
+    class Builder:
+        value = 1
+    """
+
+CLASS_LINE_PRAGMA = f"""\
+    class Builder:  # house-lint: ignore[{RULE}] - {REASON}
+        value = 1
+    """
+
+DECORATED_ASYNC = f"""\
+    import functools
+
+
+    @functools.cache
+    async def build():  # house-lint: ignore[{RULE}] - {REASON}
+        return 1
+    """
+
 
 @pytest.mark.parametrize(
     ("content", "line", "suppressed"),
@@ -116,6 +147,15 @@ DECORATOR_LINE_IN_CLASS = f"""\
         pytest.param(CONTINUATION, 2, True, id="occurrence-on-continuation-line-is-its-statements"),
         pytest.param(
             DECORATOR_LINE_IN_CLASS, 5, False, id="decorator-line-pragma-in-class-misses-the-def"
+        ),
+        pytest.param(
+            EXCEPT_LINE, 3, True, id="except-line-pragma-claims-occurrence-on-except-line"
+        ),
+        pytest.param(EXCEPT_LINE, 2, False, id="except-line-pragma-misses-occurrence-in-try-body"),
+        pytest.param(DECORATED_CLASS, 5, True, id="ignore-next-above-decorated-class"),
+        pytest.param(CLASS_LINE_PRAGMA, 2, False, id="class-line-pragma-misses-occurrence-in-body"),
+        pytest.param(
+            DECORATED_ASYNC, 4, True, id="trailing-on-async-def-claims-occurrence-on-decorator"
         ),
     ],
 )
@@ -334,10 +374,10 @@ def test_a_crash_while_resolving_pragmas_is_that_rules_internal_error(
     write(tmp_path, "a.py", "value = 1\n")
     register_project_rules(row(OTHER_RULE, at_lines(("a.py", 1))), row(RULE, at_lines(("a.py", 1))))
 
-    def crash(*args: Any) -> frozenset[int]:
+    def crash(*args: Any) -> Any:
         raise RuntimeError("secret detail")
 
-    monkeypatch.setattr(pipeline_module, "project_suppressions", crash)
+    monkeypatch.setattr(pipeline_module, "claims_for", crash)
 
     code, result = scan(capsys, tmp_path, OTHER_RULE, RULE)
 
@@ -385,3 +425,24 @@ def test_text_output_names_the_other_locations_on_the_findings_own_line(
     lines = capsys.readouterr().out.splitlines()
     assert f"a.py:1:1: {RULE} duplicated block (also at b.py)" in lines
     assert f"b.py: {RULE} duplicated block (also at a.py:1:1)" in lines
+
+
+def test_a_pragma_in_a_per_file_ignored_file_is_a_disabled_rule_pragma_in_both_phases(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
+) -> None:
+    write(
+        tmp_path, "pyproject.toml", f'[tool.house-lint.per-file-ignores]\n"gen.py" = ["{RULE}"]\n'
+    )
+    write(tmp_path, "gen.py", f"# house-lint: ignore-file[{RULE}] - {REASON}\nvalue = 1\n")
+    write(tmp_path, "kept.py", "value = 1\n")
+    register_project_rules(row(RULE, at_lines(("gen.py", 2), ("kept.py", 1))))
+
+    code, result = scan(capsys, tmp_path, "HSL002", RULE)
+
+    assert code == 1
+    assert [(finding["rule_id"], finding["path"]) for finding in result["findings"]] == [
+        ("HSL900", "gen.py"),
+        (RULE, "kept.py"),
+    ]
+    assert result["findings"][0]["message"] == f"unused suppression for disabled rule {RULE}"
+    assert result["summary"]["suppressed_count"] == 0

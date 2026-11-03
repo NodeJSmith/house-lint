@@ -52,7 +52,7 @@ CI has two workflows. `.github/workflows/ci.yml` runs the tests on Python 3.11 t
 - `scanner.py`: the process boundaries around loading and parsing one file, running its detectors, and applying suppressions
 - `rule_catalog.py`: the table of rules: each rule's metadata, detector or project run, languages, and options type
 - `project_rule.py`: what a project rule returns (`ProjectCandidate`, `Location`) and how it reports failure (`ProjectRuleFailure`)
-- `suppressions.py`: pragma parsing, HSL900, and which project-rule occurrences a file's pragmas claim (`project_suppressions`)
+- `suppressions.py`: pragma parsing, HSL900, and which project-rule occurrences a file's pragmas claim (`claims_for`)
 - `cache.py`: the result cache
 - `results.py`: the result model
 - `reporters/`: text and JSON output
@@ -83,7 +83,7 @@ IDs: `HSL001`-`HSL0xx` are on by default, `HSL1xx` are opt-in, and `HSL900` is r
 
 ## Gotchas
 
-- **HSL900 can't be disabled or suppressed.** It validates the `ignore`, `ignore-next`, and `ignore-file` pragmas that silence every other rule, including flagging unused ones. A pragma naming a project rule is never called unused: that rule's findings don't exist until after the file loop.
+- **HSL900 can't be disabled or suppressed.** It validates the `ignore`, `ignore-next`, and `ignore-file` pragmas that silence every other rule, including flagging unused ones. A pragma naming a project rule is never called unused, by design (spec 010 D9): finding stale ones would mean re-reading every file with such a pragma after the rule runs, and Pylint likewise leaves `duplicate-code` out of its unused-suppression check.
 - **Inside a repo, git supplies the file list.** Discovery runs `git ls-files` per requested directory, and any git failure there stops the run. Outside a repo, or with `--no-git`, it does a plain walk that reads no ignore files. A `.git` entry at or above the directory decides which, because git's exit code can't tell "not a repo" from a `safe.directory` refusal. See `docs/configuration.md` and `design/specs/007-git-file-discovery/design.md`.
 - **Configured `exclude` is the one verdict house-lint makes itself**, through `pathspec`, without negation. A change to pattern handling needs a case in `tests/integration/test_exclude_parity.py`, which compares it against real `git check-ignore`. A case costs one `Scenario` entry with no expected values.
 - **Default scope is the whole tree** from the root, minus what git ignores and built-in excludes. `include` narrows it to literal root-relative paths.

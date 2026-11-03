@@ -4,7 +4,7 @@ import ast
 import re
 import tokenize
 from collections import defaultdict
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import TypeAlias
 
@@ -19,7 +19,6 @@ from house_lint.analysis import (
     statement_owner_for_line,
 )
 from house_lint.language import Language
-from house_lint.project_rule import Location
 from house_lint.python_source import PythonSource, Token
 from house_lint.results import Finding
 from house_lint.rule_catalog import (
@@ -136,32 +135,29 @@ def apply_suppressions(
     return result
 
 
-def project_suppressions(
-    source: PythonSource, rule_id: str, locations: Sequence[Location]
-) -> frozenset[int]:
-    """Return the indexes of `locations`, all in this file, that a pragma for `rule_id` claims.
+def claims_for(source: PythonSource, rule_id: str) -> Callable[[int | None], bool]:
+    """Return whether a pragma for project rule `rule_id` claims an occurrence starting on a line.
 
-    The pragmas are scanned with `rule_id` as the only enabled rule. `pipeline.run_file_phase`
+    The pragmas are scanned once, with `rule_id` as the only enabled rule. `pipeline.run_file_phase`
     puts a file in a rule's input only when the rule applies to it, so a pragma is accepted here
     exactly when the file phase accepted it. The diagnostics are the file phase's to report.
 
-    A pragma claims a location when it is an `ignore-file`, or when its owner is the location's
-    `occurrence_owner`. Two pragmas claiming one location both claim it; nothing is reported.
+    An `ignore-file` claims every occurrence. A statement pragma claims one whose
+    `occurrence_owner` is the pragma's owner; an occurrence with no line, or a line outside the
+    file, has no owner. Two pragmas claiming one occurrence both claim it, and nothing is reported.
     """
     accepted = [entry.pragma for entry in scan_pragmas(source, (rule_id,)).accepted]
-    if not accepted:
-        return frozenset()
     if any(pragma.action == "ignore-file" for pragma in accepted):
-        return frozenset(range(len(locations)))
+        return lambda line: True
     owners = {pragma.owner for pragma in accepted}
-    claimed: set[int] = set()
-    for index, location in enumerate(locations):
-        if location.line is None:
-            continue
-        owner = occurrence_owner(source, location.line)
-        if owner is not None and statement_key(owner) in owners:
-            claimed.add(index)
-    return frozenset(claimed)
+
+    def claims(line: int | None) -> bool:
+        if line is None or not owners:
+            return False
+        owner = occurrence_owner(source, line)
+        return owner is not None and statement_key(owner) in owners
+
+    return claims
 
 
 def scan_pragmas(source: PythonSource, enabled_rules: Collection[str]) -> PragmaScan:
@@ -211,8 +207,7 @@ def _collect_claims(scan: PragmaScan, candidates: tuple[CandidateFinding, ...]) 
     """Build one file-phase claim per accepted pragma entry.
 
     A pragma naming a project rule makes no claim here. That rule's findings don't exist yet when
-    this file's scan runs, so the pragma can't be called unused; the project phase resolves it
-    (`project_suppressions`).
+    this file's scan runs; the project phase resolves it (`claims_for`).
     """
     claims: list[_Claim] = []
     for entry in scan.accepted:
@@ -436,4 +431,4 @@ def _public(candidate: CandidateFinding) -> Finding:
     )
 
 
-__all__ = ["SuppressionResult", "apply_suppressions", "project_suppressions"]
+__all__ = ["SuppressionResult", "apply_suppressions", "claims_for"]

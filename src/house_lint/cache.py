@@ -29,7 +29,7 @@ from typing import Any, cast
 import msgspec
 
 from house_lint import __version__
-from house_lint.results import Finding, LintError, RelatedLocation
+from house_lint.results import Finding, LintError
 from house_lint.rules.options import RuleOptions
 
 CACHE_DIRNAME = ".house-lint-cache"
@@ -233,23 +233,20 @@ def _require_text(
 
 
 def _finding_to_payload(finding: Finding) -> dict[str, Any]:
+    """A cached finding's payload, without the path the caller re-attaches.
+
+    `related` is left out too: a cached result comes from the file phase, whose findings never
+    have related locations (`CandidateFinding` has no such field), and a stored path could go stale
+    once the content-keyed entry is replayed for a moved file.
+    """
     data = finding.to_dict()
     del data["path"]
+    del data["related"]
     return data
 
 
 def _finding_from_payload(data: dict[str, Any], *, path: str) -> Finding:
-    fields = dict(_require_text(data, ("rule_id", "message")))
-    related = fields.pop("related", None)
-    if not isinstance(related, list):
-        raise TypeError("related must be a list")
-    return Finding(
-        path=path,
-        related=tuple(
-            RelatedLocation(**_require_text(item, ("path",))) for item in cast(list[Any], related)
-        ),
-        **fields,
-    )
+    return Finding(path=path, **_require_text(data, ("rule_id", "message")))
 
 
 def _error_to_payload(err: LintError) -> dict[str, Any]:

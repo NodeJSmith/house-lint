@@ -36,7 +36,7 @@ A project rule compares files, so one issue it finds can occur in several places
 - `ignore[...]` and `ignore-next[...]` suppress an occurrence whose owner is the statement the pragma owns. An occurrence's owner is the innermost statement whose lines, from its first decorator to its last line, include the line the occurrence starts on. So an `ignore-next` above a decorated definition, or a trailing `ignore` on its `def` line, suppresses an occurrence starting on its decorator, and a pragma on a `def` or `class` line doesn't reach an occurrence starting inside its body.
 - An occurrence starting on a line the file doesn't have, or with no line, has no owner. Only `ignore-file` suppresses it.
 - Two pragmas that both reach one occurrence both suppress it. It counts once, and nothing is reported.
-- A pragma naming a project rule is never reported as unused, because the rule's findings don't exist yet when the file is checked.
+- A pragma naming a project rule is never reported as unused, by design. Finding stale ones would mean re-reading every file with such a pragma after the rule runs; Pylint likewise leaves `duplicate-code` out of its unused-suppression check.
 - Only pragmas in Python files are read. An occurrence in a file of another language, or in a Python file that doesn't parse, can't be suppressed.
 
 ## HSL900 diagnostics
