@@ -2,6 +2,20 @@
 
 All notable changes to `house-lint` are documented here.
 
+## [0.5.0](https://github.com/NodeJSmith/house-lint/compare/v0.4.0...v0.5.0) (2026-11-03)
+
+### Breaking Changes
+
+house-lint now discovers only files in a language that some enabled rule handles. Every shipped rule handles Python, so a config that enables at least one rule scans the same files and gets the same findings as before. (#82)
+
+- **`select = []` now scans nothing.** It is a zero-file scan, so `HSL900` no longer validates pragmas either. Enable at least one rule to keep pragma validation.
+- **An explicit path that no enabled rule handles is now an error.** With no rule enabled, the pre-commit hook exits 3 on any commit that stages a `.py` file, so don't run the hook with such a config.
+- **The zero-file summary now reads `empty scan: no files selected`.** Update anything that matches the old text.
+
+### Configuration
+
+- Invalid rule options are reported with new wording, for example ``rules.HSL102: Expected `int` >= 1 - at `$.max_lines` ``. The same configs are accepted and rejected as before. house-lint now depends on `msgspec`. (#79)
+
 ## [0.4.0](https://github.com/NodeJSmith/house-lint/compare/v0.3.0...v0.4.0) (2026-11-02)
 
 ### Breaking Changes
