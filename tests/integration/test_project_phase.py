@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from _source_helpers import PYTHON_ONLY
 
 from house_lint import cli, pipeline
 from house_lint import source as source_module
@@ -27,7 +28,6 @@ from house_lint.source import MAX_SOURCE_BYTES, LoadedFile
 
 PY_RULE = "HSL198"
 TS_RULE = "HSL199"
-PYTHON = frozenset({Language.PYTHON})
 TYPESCRIPT = frozenset({Language.TYPESCRIPT})
 CLEAN = "value = 1\n"
 LAZY_IMPORT = "def example():\n    import module\n"
@@ -62,7 +62,7 @@ class Recorder:
             raise self.raises
         if self.reports is None:
             return []
-        return [ProjectCandidate(self.reports, tuple(Location(f, *SPAN) for f in files))]
+        return [ProjectCandidate(self.reports, tuple(Location(file, *SPAN) for file in files))]
 
     @property
     def paths(self) -> list[str]:
@@ -70,7 +70,7 @@ class Recorder:
         return [file.relative_path for file in files]
 
 
-def row(rule_id: str, run: Any, languages: frozenset[Language] = PYTHON) -> ProjectRule[Any]:
+def row(rule_id: str, run: Any, languages: frozenset[Language] = PYTHON_ONLY) -> ProjectRule[Any]:
     return project_rule(rule_id, "Test rule", "Registered by a test", "opt-in", run, languages)
 
 
@@ -578,7 +578,13 @@ def test_project_rule_options_come_from_config_and_join_the_cache_key(
     run = Recorder()
     register_project_rules(
         configurable_project_rule(
-            PY_RULE, "Test rule", "Registered by a test", "opt-in", run, PYTHON, ThresholdOptions
+            PY_RULE,
+            "Test rule",
+            "Registered by a test",
+            "opt-in",
+            run,
+            PYTHON_ONLY,
+            ThresholdOptions,
         )
     )
 
@@ -605,7 +611,7 @@ def test_an_invalid_project_rule_option_is_a_config_error(
             "Registered by a test",
             "opt-in",
             Recorder(),
-            PYTHON,
+            PYTHON_ONLY,
             ThresholdOptions,
         )
     )
