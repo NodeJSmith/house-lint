@@ -4,28 +4,17 @@ All notable changes to `house-lint` are documented here.
 
 ## [0.5.0](https://github.com/NodeJSmith/house-lint/compare/v0.4.0...v0.5.0) (2026-11-03)
 
+### Breaking Changes
 
-### ⚠ BREAKING CHANGES
+house-lint now discovers only files in a language that some enabled rule handles. Every shipped rule handles Python, so a config that enables at least one rule scans the same files and gets the same findings as before. (#82)
 
-* Discovery now depends on which rules are enabled.
-    #### What changed
-    - `select = []` discovers nothing, so it is a zero-file scan with no
-    HSL900 findings. Enable a rule to keep validating pragmas.
-    - An explicit path no enabled rule handles is an error with a new
-    message. With no rule handling Python, this makes the published
-    pre-commit hook exit 3 on any commit staging a `.py` file, so such a
-    config should not run the hook.
-    - The zero-file message is now `empty scan: no files selected`. Update
-    anything matching the old text.
+- **`select = []` now scans nothing.** It is a zero-file scan, so `HSL900` no longer validates pragmas either. Enable at least one rule to keep pragma validation.
+- **An explicit path that no enabled rule handles is now an error.** With no rule enabled, the pre-commit hook exits 3 on any commit that stages a `.py` file, so don't run the hook with such a config.
+- **The zero-file summary now reads `empty scan: no files selected`.** Update anything that matches the old text.
 
-### Features
+### Configuration
 
-* add project rules and language-driven file discovery ([#82](https://github.com/NodeJSmith/house-lint/issues/82)) ([74cb46b](https://github.com/NodeJSmith/house-lint/commit/74cb46b993fdce7c2b5a28972f2a09e16a72d3f5))
-
-
-### Refactoring
-
-* validate rule options with msgspec from one rule table ([#79](https://github.com/NodeJSmith/house-lint/issues/79)) ([1fd43e1](https://github.com/NodeJSmith/house-lint/commit/1fd43e195a830d294a6874ad766c58d42941b890))
+- Invalid rule options are reported with new wording, for example ``rules.HSL102: Expected `int` >= 1 - at `$.max_lines` ``. The same configs are accepted and rejected as before. house-lint now depends on `msgspec`. (#79)
 
 ## [0.4.0](https://github.com/NodeJSmith/house-lint/compare/v0.3.0...v0.4.0) (2026-11-02)
 
