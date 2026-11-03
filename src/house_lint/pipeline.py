@@ -357,9 +357,7 @@ def run_project_phase(
         # output counts as its failure and a rule that fails partway leaves no findings behind.
         try:
             rule_findings, rule_suppressed = expand_candidates(
-                rule.id,
-                rule.run(files, options),
-                lambda location, rule_id=rule.id: pragmas.claims(rule_id, location),
+                rule.id, rule.run(files, options), pragmas
             )
         except ProjectRuleFailure as exc:
             errors.append(error("project-rule", "project", "rule-run", str(exc), rule_id=rule.id))
@@ -406,7 +404,7 @@ class PragmaClaims:
 
 
 def expand_candidates(
-    rule_id: str, candidates: list[ProjectCandidate], claims: Callable[[Location], bool]
+    rule_id: str, candidates: list[ProjectCandidate], pragmas: PragmaClaims
 ) -> tuple[list[Finding], int]:
     """Return one finding per unclaimed candidate location, in order, and the number claimed.
 
@@ -417,7 +415,7 @@ def expand_candidates(
     for candidate in candidates:
         related = tuple(location.to_related() for location in candidate.locations)
         for index, location in enumerate(candidate.locations):
-            if claims(location):
+            if pragmas.claims(rule_id, location):
                 suppressed += 1
                 continue
             findings.append(

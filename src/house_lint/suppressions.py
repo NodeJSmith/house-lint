@@ -152,7 +152,7 @@ def claims_for(source: PythonSource, rule_id: str) -> Callable[[int | None], boo
     owners = {pragma.owner for pragma in accepted}
 
     def claims(line: int | None) -> bool:
-        if line is None or not owners:
+        if line is None:
             return False
         owner = occurrence_owner(source, line)
         return owner is not None and statement_key(owner) in owners

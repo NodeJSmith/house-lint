@@ -197,20 +197,13 @@ def innermost_owner(
     """The innermost of the statements covering `line`, refined to an except clause if it's one.
 
     Innermost is the latest start, then the furthest-right column, for a statement sharing a line.
+    When that lands on a `try` itself, no body statement covers the line: an except-clause line
+    falls inside its handler's span and refines to it, while the try's other header lines
+    (`else:`, `finally:`) match no handler and keep the try.
     """
     if not candidates:
         return None
     owner = max(candidates, key=lambda statement: (start_of(statement), statement.col_offset))
-    return refine_to_handler(owner, line)
-
-
-def refine_to_handler(owner: ast.stmt, line: int) -> ast.stmt | ast.excepthandler:
-    """Refine an innermost `try` owner to the except clause whose header holds `line`.
-
-    Innermost-statement resolution landed on the try itself, so no body statement covers this
-    line. An except-clause line falls inside its handler's span and refines to it; the try's other
-    header lines (`else:`, `finally:`) match no handler and keep the try.
-    """
     if isinstance(owner, (ast.Try, ast.TryStar)):
         for handler in owner.handlers:
             if handler.lineno <= line <= (handler.end_lineno or handler.lineno):

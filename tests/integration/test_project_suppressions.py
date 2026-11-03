@@ -25,43 +25,6 @@ OTHER_RULE = "HSL197"
 REASON = "deliberate copy kept in sync"
 
 
-def at_lines(*sites: tuple[str, int | None]) -> Any:
-    """A project rule's `run`: one candidate located at each (file name, line) site it was given.
-
-    A site whose file isn't in the rule's input is skipped. A `None` line is a whole-file location.
-    """
-
-    def run(files: tuple[LoadedFile, ...], options: Any) -> list[ProjectCandidate]:
-        by_name = {file.relative_path: file for file in files}
-        locations = tuple(
-            Location(by_name[name], line, 1 if line else None, line, 2 if line else None)
-            for name, line in sites
-            if name in by_name
-        )
-        return [ProjectCandidate("duplicated block", locations)] if locations else []
-
-    return run
-
-
-def row(rule_id: str, run: Any, languages: frozenset[Language] = PYTHON_ONLY) -> ProjectRule[Any]:
-    return project_rule(rule_id, "Test rule", "Registered by a test", "opt-in", run, languages)
-
-
-def write(root: Path, name: str, content: str) -> None:
-    (root / name).write_text(textwrap.dedent(content))
-
-
-def scan(
-    capsys: pytest.CaptureFixture[str], root: Path, *select: str, **kwargs: Any
-) -> tuple[int, dict[str, Any]]:
-    code = cli.check(root=root, select=list(select), format="json", **kwargs)
-    return code, json.loads(capsys.readouterr().out)
-
-
-def sites(result: dict[str, Any]) -> list[tuple[str, int | None]]:
-    return [(finding["path"], finding["line"]) for finding in result["findings"]]
-
-
 DECORATED = f"""\
     import functools
 
@@ -133,6 +96,43 @@ DECORATED_ASYNC = f"""\
     async def build():  # house-lint: ignore[{RULE}] - {REASON}
         return 1
     """
+
+
+def at_lines(*sites: tuple[str, int | None]) -> Any:
+    """A project rule's `run`: one candidate located at each (file name, line) site it was given.
+
+    A site whose file isn't in the rule's input is skipped. A `None` line is a whole-file location.
+    """
+
+    def run(files: tuple[LoadedFile, ...], options: Any) -> list[ProjectCandidate]:
+        by_name = {file.relative_path: file for file in files}
+        locations = tuple(
+            Location(by_name[name], line, 1 if line else None, line, 2 if line else None)
+            for name, line in sites
+            if name in by_name
+        )
+        return [ProjectCandidate("duplicated block", locations)] if locations else []
+
+    return run
+
+
+def row(rule_id: str, run: Any, languages: frozenset[Language] = PYTHON_ONLY) -> ProjectRule[Any]:
+    return project_rule(rule_id, "Test rule", "Registered by a test", "opt-in", run, languages)
+
+
+def write(root: Path, name: str, content: str) -> None:
+    (root / name).write_text(textwrap.dedent(content))
+
+
+def scan(
+    capsys: pytest.CaptureFixture[str], root: Path, *select: str, **kwargs: Any
+) -> tuple[int, dict[str, Any]]:
+    code = cli.check(root=root, select=list(select), format="json", **kwargs)
+    return code, json.loads(capsys.readouterr().out)
+
+
+def sites(result: dict[str, Any]) -> list[tuple[str, int | None]]:
+    return [(finding["path"], finding["line"]) for finding in result["findings"]]
 
 
 @pytest.mark.parametrize(

@@ -189,3 +189,8 @@ This change lets house-lint pragmas suppress individual project-rule occurrences
 - The cache payload leaves `related` out, as it leaves out the finding's own path (ship-time challenge, Finding 5). Cached results come from the file phase, whose findings can't have related locations (`CandidateFinding` has no such field), and a stored path could go stale when a content-keyed entry is replayed for a moved file.
 - `PragmaClaims` keys its parse cache by `LoadedFile.path`, the file's identity, rather than by the whole `LoadedFile` with its bytes, and its claim checks by rule and path.
 - The new whole-run pins live in `tests/integration/test_project_suppressions.py`, beside `test_project_phase.py`, which was already long.
+
+## Addendum
+
+### 2026-11-03: `refine_to_handler` folded into `innermost_owner`
+The clean-code pass before the PR folded `analysis.refine_to_handler`, whose only caller was `innermost_owner`, into it. The except-clause refinement is unchanged and still shared by both owner lookups through `innermost_owner`. `expand_candidates` now takes the run's `PragmaClaims` directly instead of a callback.
