@@ -1,6 +1,6 @@
 """Flat, version-namespaced per-file result cache.
 
-House-lint is a single-file analyzer with no cross-file dependencies, so a flat cache keyed
+An entry describes one file's result, which depends on no other file, so a flat cache keyed
 by (file content hash, effective config hash) is semantically correct — unlike a dependency-
 graph cache (e.g. mypy's `.mypy_cache`), there is no invalidation-graph to track. The cache
 directory is namespaced by house-lint's own version, so an upgrade invalidates stale entries
@@ -211,7 +211,7 @@ def _require_text(
     """Reject a payload whose text fields are not strings, before it reaches a dataclass.
 
     `Finding`/`LintError` are plain dataclasses: they validate their location fields (via
-    `results._validate_location`) but accept any type for the rest. A corrupted-but-valid-JSON
+    `results.validate_location`) but accept any type for the rest. A corrupted-but-valid-JSON
     entry carrying, say, an integer `message` therefore constructs fine and only fails later,
     when `ScanResult.to_dict()` sorts findings and hits `int < str`. That happens while the
     result is being rendered — outside `check()`'s exception boundary — so the command crashes

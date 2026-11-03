@@ -1,18 +1,27 @@
+from pathlib import Path
+
 import msgspec
 import pytest
 from _source_helpers import parse_file
 
 from house_lint.config import LintConfig, selected_detector_inputs
+from house_lint.language import Language
+from house_lint.project_rule import Location, ProjectCandidate
 from house_lint.rule_catalog import (
     DEFAULT_SELECT,
     FILE_RULES,
     ORDINARY_RULES,
+    PROJECT_RULES,
     is_known_rule,
+    is_project_rule,
+    project_rule,
     rule_ids,
+    rule_languages,
     rule_metadata,
     rules_by_id,
 )
 from house_lint.rules.file_length import HSL102Options
+from house_lint.source import LoadedFile
 
 
 def test_rule_catalog_has_fixed_metadata_and_derived_selections() -> None:
@@ -38,6 +47,41 @@ def test_a_repeated_rule_id_is_an_error_naming_it() -> None:
 
     with pytest.raises(RuntimeError, match="more than one row for HSL001"):
         rules_by_id((row, FILE_RULES["HSL002"], row))
+
+
+def test_a_rule_id_repeated_across_rule_kinds_is_an_error() -> None:
+    row = project_rule(
+        "HSL001", "Name", "Description", "opt-in", lambda files, options: [], frozenset()
+    )
+
+    with pytest.raises(RuntimeError, match="more than one row for HSL001"):
+        rules_by_id((FILE_RULES["HSL001"], row))
+
+
+def test_no_shipped_rule_is_a_project_rule_and_every_file_rule_handles_python() -> None:
+    assert PROJECT_RULES == {}
+    assert not is_project_rule("HSL001")
+    for rule_id in FILE_RULES:
+        assert rule_languages(rule_id) == {Language.PYTHON}
+
+
+def test_the_always_on_rule_declares_no_languages() -> None:
+    assert rule_languages("HSL900") == frozenset()
+    assert not is_project_rule("HSL900")
+
+
+def test_a_project_candidate_needs_a_location() -> None:
+    with pytest.raises(ValueError, match="at least one location"):
+        ProjectCandidate("message", ())
+
+
+def test_a_location_is_validated_like_a_finding() -> None:
+    file = LoadedFile(Path("/root/a.py"), "a.py", b"")
+
+    with pytest.raises(ValueError, match="all null or valid"):
+        Location(file, 1, None, 1, 1)
+    with pytest.raises(ValueError, match="must not precede"):
+        Location(file, 2, 1, 1, 1)
 
 
 @pytest.mark.parametrize(

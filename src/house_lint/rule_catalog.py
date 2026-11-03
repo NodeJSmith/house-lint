@@ -1,6 +1,7 @@
 """The table of built-in rules: the single source of truth for what each rule is and how it runs.
 
-Adding a rule takes its module under `rules/` and one row here.
+Adding a rule takes its module under `rules/` and one row here. A rule is either a file rule,
+run once per scanned file, or a project rule, run once per scan on the scanned file set.
 """
 
 from collections.abc import Callable, Iterable, Mapping
@@ -11,6 +12,8 @@ from typing import Any, Generic, Literal, Protocol, TypeVar
 import msgspec
 
 from house_lint.analysis import CandidateFinding
+from house_lint.language import Language
+from house_lint.project_rule import ProjectCandidate
 from house_lint.python_source import PythonSource
 from house_lint.rules import (
     constants_position,
@@ -25,17 +28,27 @@ from house_lint.rules.exception_names import HSL103Options
 from house_lint.rules.file_length import HSL102Options
 from house_lint.rules.options import RuleOptions
 from house_lint.rules.spec_tokens import HSL101Options
+from house_lint.source import LoadedFile
 
 OptionsT = TypeVar("OptionsT")
 ConfigurableOptionsT = TypeVar("ConfigurableOptionsT", bound=RuleOptions)
 Enablement = Literal["default", "opt-in", "always"]
 OptionsT_contra = TypeVar("OptionsT_contra", contravariant=True)
+RuleT = TypeVar("RuleT", bound="Rule")
+# A file rule's detector takes a `PythonSource`, so Python is all a file rule can handle.
+_FILE_RULE_LANGUAGES = frozenset({Language.PYTHON})
 
 
 class Detector(Protocol[OptionsT_contra]):
     def __call__(
         self, source: PythonSource, options: OptionsT_contra, *, limit: int | None = None
     ) -> list[CandidateFinding]: ...
+
+
+class ProjectRun(Protocol[OptionsT_contra]):
+    def __call__(
+        self, files: tuple[LoadedFile, ...], options: OptionsT_contra
+    ) -> list[ProjectCandidate]: ...
 
 
 @dataclass(frozen=True)
@@ -53,6 +66,20 @@ class FileRule(Rule, Generic[OptionsT]):
     """A rule that runs once per scanned file. `parse_options` is None when it takes no options."""
 
     detect: Detector[OptionsT]
+    parse_options: Callable[[Any], OptionsT] | None = None
+    languages: frozenset[Language] = _FILE_RULE_LANGUAGES
+
+
+@dataclass(frozen=True)
+class ProjectRule(Rule, Generic[OptionsT]):
+    """A rule that runs once per scan, after the file loop, on the files it applies to.
+
+    `run` raises `ProjectRuleFailure` when it can't run for a reason the user can act on.
+    `parse_options` is None when it takes no options.
+    """
+
+    run: ProjectRun[OptionsT]
+    languages: frozenset[Language]
     parse_options: Callable[[Any], OptionsT] | None = None
 
 
@@ -90,9 +117,42 @@ def configurable_rule(
     )
 
 
-def rules_by_id(rows: Iterable[FileRule[Any]]) -> Mapping[str, FileRule[Any]]:
+def project_rule(
+    rule_id: str,
+    name: str,
+    description: str,
+    enablement: Enablement,
+    run: ProjectRun[None],
+    languages: frozenset[Language],
+) -> ProjectRule[Any]:
+    """Build the row for a project rule with no options."""
+    return ProjectRule(rule_id, name, description, enablement, run, languages)
+
+
+def configurable_project_rule(
+    rule_id: str,
+    name: str,
+    description: str,
+    enablement: Enablement,
+    run: ProjectRun[ConfigurableOptionsT],
+    languages: frozenset[Language],
+    options_type: type[ConfigurableOptionsT],
+) -> ProjectRule[Any]:
+    """Build the row for a project rule with options. See `configurable_rule` for why."""
+    return ProjectRule(
+        rule_id,
+        name,
+        description,
+        enablement,
+        run,
+        languages,
+        lambda raw: msgspec.convert(raw, options_type),
+    )
+
+
+def rules_by_id(rows: Iterable[RuleT]) -> Mapping[str, RuleT]:
     """Key the table's rows by ID. A repeated ID would otherwise replace the earlier rule."""
-    by_id: dict[str, FileRule[Any]] = {}
+    by_id: dict[str, RuleT] = {}
     for row in rows:
         if row.id in by_id:
             raise RuntimeError(f"rule table has more than one row for {row.id}")
@@ -148,13 +208,14 @@ FILE_RULES: Mapping[str, FileRule[Any]] = rules_by_id(
     )
 )
 
-RULES: Mapping[str, Rule] = MappingProxyType(
-    {
-        **FILE_RULES,
-        "HSL900": Rule(
-            "HSL900", "Suppression diagnostics", "Invalid suppression pragmas", "always"
-        ),
-    }
+PROJECT_RULES: Mapping[str, ProjectRule[Any]] = rules_by_id(())
+
+RULES: Mapping[str, Rule] = rules_by_id(
+    (
+        *FILE_RULES.values(),
+        *PROJECT_RULES.values(),
+        Rule("HSL900", "Suppression diagnostics", "Invalid suppression pragmas", "always"),
+    )
 )
 
 DEFAULT_SELECT: tuple[str, ...] = tuple(
@@ -179,6 +240,17 @@ def is_known_rule(rule_id: str) -> bool:
     return rule_id in RULES
 
 
+def rule_languages(rule_id: str) -> frozenset[Language]:
+    """Return the languages a known rule handles. HSL900 declares none: it never decides a scan."""
+    rule = RULES[rule_id]
+    return rule.languages if isinstance(rule, (FileRule, ProjectRule)) else frozenset()
+
+
+def is_project_rule(rule_id: str) -> bool:
+    """Return whether a known rule runs in the project phase."""
+    return isinstance(RULES[rule_id], ProjectRule)
+
+
 def rule_ids() -> tuple[str, ...]:
     """Return built-in rule IDs in their stable display order."""
     return tuple(RULES)
@@ -194,14 +266,21 @@ __all__ = [
     "DEFAULT_SELECT",
     "FILE_RULES",
     "ORDINARY_RULES",
+    "PROJECT_RULES",
     "RULES",
     "Detector",
     "FileRule",
+    "ProjectRule",
+    "ProjectRun",
     "Rule",
+    "configurable_project_rule",
     "configurable_rule",
     "file_rule",
     "is_known_rule",
+    "is_project_rule",
+    "project_rule",
     "rule_ids",
+    "rule_languages",
     "rule_metadata",
     "rules_by_id",
 ]

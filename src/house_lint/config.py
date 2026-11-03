@@ -11,12 +11,16 @@ from typing import Any, cast
 import msgspec
 from pathspec import GitIgnoreSpec
 
+from house_lint.language import Language
 from house_lint.rule_catalog import (
     ALWAYS_ON_RULE_ID,
     DEFAULT_SELECT,
     FILE_RULES,
     ORDINARY_RULES,
+    PROJECT_RULES,
     FileRule,
+    ProjectRule,
+    rule_languages,
 )
 from house_lint.rules.options import RuleOptions
 
@@ -42,7 +46,7 @@ class LintConfig:
     include: tuple[str, ...] = DEFAULT_INCLUDE
     exclude: tuple[str, ...] = ()
     enabled_rules: tuple[str, ...] = (*DEFAULT_SELECT, ALWAYS_ON_RULE_ID)
-    # Every file rule's resolved options by ID, None for a rule that takes none.
+    # Every rule's resolved options by ID, None for a rule that takes none.
     rule_options: Mapping[str, RuleOptions | None] = field(
         default_factory=lambda: _rule_options({})
     )
@@ -52,6 +56,7 @@ class LintConfig:
 
 
 DetectorInput = tuple[FileRule[Any], RuleOptions | None]
+ProjectRuleInput = tuple[ProjectRule[Any], RuleOptions | None]
 
 
 def selected_detector_inputs(
@@ -60,13 +65,22 @@ def selected_detector_inputs(
     """Return enabled file rules with their already-validated options.
 
     `enabled_rules` overrides `config.enabled_rules` when given, for callers that resolved a
-    per-file effective rule set (see `per_file_enabled_rules`) rather than the global one.
+    per-file effective rule set (see `applicable_rules`) rather than the global one.
     """
     rules = config.enabled_rules if enabled_rules is None else enabled_rules
     return tuple(
         (FILE_RULES[rule_id], config.rule_options[rule_id])
         for rule_id in rules
         if rule_id in FILE_RULES
+    )
+
+
+def selected_project_rules(config: LintConfig) -> tuple[ProjectRuleInput, ...]:
+    """Return enabled project rules with their options, in `enabled_rules` order."""
+    return tuple(
+        (PROJECT_RULES[rule_id], config.rule_options[rule_id])
+        for rule_id in config.enabled_rules
+        if rule_id in PROJECT_RULES
     )
 
 
@@ -90,20 +104,40 @@ def compile_per_file_ignores(
     )
 
 
-def per_file_enabled_rules(
+def applicable_rules(
     base_enabled_rules: tuple[str, ...],
     compiled_per_file_ignores: CompiledPerFileIgnores,
     relative_path: str,
+    language: Language,
 ) -> tuple[str, ...]:
-    """Return `base_enabled_rules` minus any rules whose Git-ignore-style glob pattern matches
-    this root-relative file path."""
+    """Return the rules in `base_enabled_rules` that apply to this one file.
+
+    A rule drops out when a per-file-ignores pattern matches this root-relative path, or when it
+    doesn't handle the file's language. The always-on rule validates pragmas rather than handling
+    a language, and per-file-ignores can't name it, so it stays.
+
+    Detector dispatch, the cache key, each project rule's input, and HSL900 all read this result.
+    Discovery runs before there are files to ask about, so it reads `discovered_languages` instead.
+    """
     ignored: set[str] = set()
     for spec, rule_ids in compiled_per_file_ignores:
         if spec.match_file(relative_path):
             ignored |= rule_ids
-    if not ignored:
-        return base_enabled_rules
-    return tuple(rule_id for rule_id in base_enabled_rules if rule_id not in ignored)
+    return tuple(
+        rule_id
+        for rule_id in base_enabled_rules
+        if rule_id not in ignored
+        and (rule_id == ALWAYS_ON_RULE_ID or language in rule_languages(rule_id))
+    )
+
+
+def discovered_languages(enabled_rules: tuple[str, ...]) -> frozenset[Language]:
+    """Return the languages to discover: those the enabled rules handle.
+
+    This reads the same `languages` field as `applicable_rules`, without its per-file-ignores: a
+    file every rule ignores is still scanned, counted, and has its pragmas validated.
+    """
+    return frozenset(language for rule_id in enabled_rules for language in rule_languages(rule_id))
 
 
 def default_config(
@@ -247,9 +281,10 @@ def _strict_keys(table: dict[str, Any], allowed: set[str], name: str) -> None:
 
 def _rule_options(raw: dict[str, Any]) -> Mapping[str, RuleOptions | None]:
     rules = _table(raw.get("rules", {}), "rules")
-    _strict_keys(rules, {rule.id for rule in FILE_RULES.values() if rule.parse_options}, "rules")
+    rows = (*FILE_RULES.values(), *PROJECT_RULES.values())
+    _strict_keys(rules, {rule.id for rule in rows if rule.parse_options}, "rules")
     options: dict[str, RuleOptions | None] = {}
-    for rule in FILE_RULES.values():
+    for rule in rows:
         if rule.parse_options is None:
             options[rule.id] = None
             continue

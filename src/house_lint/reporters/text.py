@@ -2,10 +2,10 @@
 
 from pathlib import Path
 
-from house_lint.config import config_table_name, is_standalone_config
+from house_lint.config import config_table_name, discovered_languages, is_standalone_config
 from house_lint.results import RuleList, ScanResult
 
-EMPTY_SCAN_MESSAGE = "empty scan: no Python files selected"
+EMPTY_SCAN_MESSAGE = "empty scan: no files selected"
 """The base zero-file-scan sentence, before `zero_file_guidance`'s clause is appended.
 
 Single source of truth for callers building a `zero_file_note` (`cli.py`, and tests asserting
@@ -45,7 +45,12 @@ def zero_file_guidance(
     `DEFAULT_INCLUDE` is never empty, so a bare `not include` check only ever fires for an
     explicit `include = []`; a typo'd non-empty explicit `include` (FR#8's most common real
     trigger) is untouched by this check and still gets guidance.
+
+    With no language to discover, that is the reason whatever `include` says. The suppressed cases
+    are about an empty scan being intended, not its cause, so this check comes first.
     """
+    if not discovered_languages(result.enabled_rules):
+        return "; no enabled rule handles any language: check select and ignore"
     if explicit_paths or not include:
         return ""
     config = result.config

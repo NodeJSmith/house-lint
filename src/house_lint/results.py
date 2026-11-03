@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-def _validate_location(
+def validate_location(
     line: int | None, column: int | None, end_line: int | None, end_column: int | None
 ) -> None:
     location = (line, column, end_line, end_column)
@@ -33,7 +33,7 @@ class Finding:
     message: str
 
     def __post_init__(self) -> None:
-        _validate_location(self.line, self.column, self.end_line, self.end_column)
+        validate_location(self.line, self.column, self.end_line, self.end_column)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,7 +62,7 @@ class LintError:
     message: str
 
     def __post_init__(self) -> None:
-        _validate_location(self.line, self.column, self.end_line, self.end_column)
+        validate_location(self.line, self.column, self.end_line, self.end_column)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -81,16 +81,25 @@ class LintError:
 
 
 def error(
-    kind: str, phase: str, operation: str, message: str, *, path: str | None = None
+    kind: str,
+    phase: str,
+    operation: str,
+    message: str,
+    *,
+    path: str | None = None,
+    rule_id: str | None = None,
 ) -> LintError:
     return LintError(
-        f"{kind}-error", kind, path, None, None, None, None, phase, operation, None, message
+        f"{kind}-error", kind, path, None, None, None, None, phase, operation, rule_id, message
     )
 
 
-def internal_error(phase: str, operation: str, *, path: str | None = None) -> LintError:
+def internal_error(
+    phase: str, operation: str, *, path: str | None = None, rule_id: str | None = None
+) -> LintError:
     """Create a stable public error without exposing exception details."""
-    return error("internal", phase, operation, "an unexpected internal error occurred", path=path)
+    message = "an unexpected internal error occurred"
+    return error("internal", phase, operation, message, path=path, rule_id=rule_id)
 
 
 @dataclass(frozen=True)

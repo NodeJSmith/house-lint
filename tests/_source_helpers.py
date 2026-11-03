@@ -2,9 +2,12 @@
 
 from pathlib import Path
 
+from house_lint.language import Language
 from house_lint.python_source import ParseFailure, PythonSource, parse_python
 from house_lint.results import LintError, ScanResult
 from house_lint.source import LoadedFile, LoadFailure, load_file
+
+PYTHON_ONLY = frozenset({Language.PYTHON})
 
 
 def assert_reported_as_error(error: LintError, root: Path) -> None:

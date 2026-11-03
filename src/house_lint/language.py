@@ -6,9 +6,14 @@ from pathlib import Path
 
 class Language(Enum):
     PYTHON = "python"
+    TYPESCRIPT = "typescript"
 
 
-_LANGUAGE_BY_SUFFIX = {".py": Language.PYTHON}
+_LANGUAGE_BY_SUFFIX = {
+    ".py": Language.PYTHON,
+    ".ts": Language.TYPESCRIPT,
+    ".tsx": Language.TYPESCRIPT,
+}
 
 
 def language_for(path: Path) -> Language | None:
