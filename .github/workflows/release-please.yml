@@ -8,7 +8,9 @@ name: Release Please
 # pull_request-triggered checks. When a release is created, the build job builds
 # the tagged version and the publish-pypi job uploads it to PyPI via Trusted
 # Publishing (OIDC) — no API token stored in the repo. PyPI must have a publisher
-# configured for this repo + workflow + the `pypi` environment. Publisher config:
+# configured for this repo + workflow + the `pypi` environment. The
+# sync-release-notes job then replaces the generated release body with the
+# version's curated CHANGELOG.md section. Publisher config:
 # PyPI project `house-lint`, owner `NodeJSmith`, repo `house-lint`, workflow
 # `release-please.yml`, environment `pypi`.
 #
@@ -191,9 +193,64 @@ jobs:
                   name: pypi-dists
                   path: dist/
 
+    # GitHub creates the release body from release-please's generated notes, not
+    # from CHANGELOG.md, so a changelog curated on the release PR never reaches
+    # the release page on its own. This copies the version's CHANGELOG.md section
+    # over the body. It depends only on release-please, so a failed build or
+    # publish still leaves the curated notes in place. always() is needed because
+    # release-please is skipped on workflow_dispatch. The `release` event is
+    # left out because the push run that created the release already covers it.
+    sync-release-notes:
+        needs: release-please
+        if: >-
+            always()
+            && (
+              (github.event_name == 'push' && needs.release-please.outputs.release_created == 'true')
+              || github.event_name == 'workflow_dispatch'
+            )
+        runs-on: ubuntu-latest
+        timeout-minutes: 5
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+              with:
+                  ref: ${{ needs.release-please.outputs.tag_name || inputs.tag_name }}
+                  persist-credentials: false
+
+            # github.token is enough: editing the body needs contents: write, and
+            # nothing has to react to the edit.
+            - name: Copy the CHANGELOG.md section into the release notes
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  GH_REPO: ${{ github.repository }}
+                  TAG_NAME: ${{ needs.release-please.outputs.tag_name || inputs.tag_name }}
+              run: |
+                  set -euo pipefail
+                  version="${TAG_NAME#v}"
+                  notes_file="$(mktemp)"
+                  # The section runs from "## [<version>]" to the next "## [" heading.
+                  # It contains "###" and "####" headings, so only "## [" ends it.
+                  awk -v heading="## [${version}]" '
+                      /^## \[/ {
+                          if (found) exit
+                          if (index($0, heading) == 1) found = 1
+                          next
+                      }
+                      found { print }
+                  ' CHANGELOG.md > "$notes_file"
+                  if ! grep -q '[^[:space:]]' "$notes_file"; then
+                      echo "::warning::CHANGELOG.md has no section for ${version}; leaving the release notes unchanged"
+                      exit 0
+                  fi
+                  gh release edit "$TAG_NAME" --notes-file "$notes_file"
+
     publish-pypi:
         needs: build
-        if: needs.build.result == 'success'
+        # always() because build's own needs (release-please) is skipped on the
+        # release and workflow_dispatch events, and without it that skip would
+        # skip this job too.
+        if: always() && needs.build.result == 'success'
         runs-on: ubuntu-latest
         timeout-minutes: 15
         environment:
