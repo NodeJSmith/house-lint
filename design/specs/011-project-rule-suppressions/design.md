@@ -1,7 +1,7 @@
 # Design: Suppressions and multi-location findings for project rules
 
 **Date:** 2026-11-03
-**Status:** ratified
+**Status:** built
 **Mode:** sketch
 **Issues:** #60
 **Parent:** design/specs/005-cross-file-rules-and-duplicate-code/design.md
@@ -180,7 +180,7 @@ This change lets house-lint pragmas suppress individual project-rule occurrences
 
 - [x] Implementation and tests committed
 - [x] Docs
-- [ ] Ship-time challenge
+- [x] Ship-time challenge
 
 **Calls made during the build:**
 - `RelatedLocation` is the name of the location type for `related` entries: it says what the type is for, and `Location` is taken by `project_rule`.
