@@ -2,11 +2,23 @@ from pathlib import Path
 
 import pytest
 
-from house_lint.results import Finding, LintError, RuleInfo, RuleList, ScanResult
+from house_lint.results import Finding, LintError, RelatedLocation, RuleInfo, RuleList, ScanResult
 
 
 def test_finding_and_error_serialize_their_exact_schema_fields():
-    finding = Finding("HSL001", "src/app.py", 3, 5, 3, 12, "message")
+    finding = Finding(
+        "HSL001",
+        "src/app.py",
+        3,
+        5,
+        3,
+        12,
+        "message",
+        (
+            RelatedLocation("src/other.py", 7, 1, 9, 4),
+            RelatedLocation("gen.py", None, None, None, None),
+        ),
+    )
     error = LintError(
         "syntax-error",
         "syntax",
@@ -29,6 +41,10 @@ def test_finding_and_error_serialize_their_exact_schema_fields():
         "end_line": 3,
         "end_column": 12,
         "message": "message",
+        "related": [
+            {"path": "src/other.py", "line": 7, "column": 1, "end_line": 9, "end_column": 4},
+            {"path": "gen.py", "line": None, "column": None, "end_line": None, "end_column": None},
+        ],
     }
     assert error.to_dict() == {
         "code": "syntax-error",
@@ -51,6 +67,8 @@ def test_finding_and_error_serialize_their_exact_schema_fields():
         (lambda: Finding("HSL001", "src/app.py", 1, None, 1, 2, "message"), "all null"),
         (lambda: Finding("HSL001", "src/app.py", True, 1, 1, 2, "message"), "all null"),
         (lambda: Finding("HSL001", "src/app.py", 1.5, 1, 1, 2, "message"), "all null"),
+        (lambda: RelatedLocation("src/app.py", 1, None, 1, 2), "all null"),
+        (lambda: RelatedLocation("src/app.py", 2, 1, 1, 1), "precede"),
         (
             lambda: Finding("HSL001", "src/app.py", 2, 1, 1, 2, "message"),
             "end must not precede",
@@ -155,7 +173,7 @@ def test_scan_result_serializes_schema_v1_with_nulls_and_sorted_values(tmp_path)
     )
 
     assert result.to_dict() == {
-        "schema_version": 2,
+        "schema_version": 3,
         "root": str(tmp_path),
         "config": None,
         "enabled_rules": ["HSL001", "HSL002"],
@@ -169,6 +187,7 @@ def test_scan_result_serializes_schema_v1_with_nulls_and_sorted_values(tmp_path)
                 "end_line": None,
                 "end_column": None,
                 "message": "filename",
+                "related": [],
             },
             {
                 "rule_id": "HSL002",
@@ -178,6 +197,7 @@ def test_scan_result_serializes_schema_v1_with_nulls_and_sorted_values(tmp_path)
                 "end_line": 2,
                 "end_column": 10,
                 "message": "later",
+                "related": [],
             },
         ],
         "errors": [

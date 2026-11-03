@@ -4,7 +4,7 @@ import ast
 import re
 import tokenize
 from collections import defaultdict
-from collections.abc import Callable, Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
@@ -13,10 +13,13 @@ from house_lint.analysis import (
     CandidateFinding,
     SourceKind,
     StatementKey,
+    decorated_start_line,
+    occurrence_owner,
     statement_key,
     statement_owner_for_line,
 )
 from house_lint.language import Language
+from house_lint.project_rule import Location
 from house_lint.python_source import PythonSource, Token
 from house_lint.results import Finding
 from house_lint.rule_catalog import (
@@ -58,6 +61,22 @@ class _Pragma:
 
 
 @dataclass(frozen=True)
+class AcceptedPragma:
+    """One rule ID a well-formed, well-placed pragma names, after the rule checks pass."""
+
+    pragma: _Pragma
+    rule_id: str
+
+
+@dataclass(frozen=True)
+class PragmaScan:
+    """Every pragma in one file: what each accepted pragma names, and the HSL900 diagnostics."""
+
+    accepted: tuple[AcceptedPragma, ...]
+    diagnostics: tuple[CandidateFinding, ...]
+
+
+@dataclass(frozen=True)
 class _Claim:
     pragma: _Pragma
     rule_id: str
@@ -85,7 +104,10 @@ def apply_suppressions(
             return
         diagnostics.append(candidate)
 
-    claims = _collect_claims(source, candidates, enabled_rules, add_diagnostic)
+    scan = scan_pragmas(source, enabled_rules)
+    for diagnostic in scan.diagnostics:
+        add_diagnostic(diagnostic)
+    claims = _collect_claims(scan, candidates)
     conflicts = _conflicting_claims(claims)
     for index, claim in enumerate(claims):
         if index in conflicts:
@@ -114,59 +136,95 @@ def apply_suppressions(
     return result
 
 
-def _collect_claims(
-    source: PythonSource,
-    candidates: tuple[CandidateFinding, ...],
-    enabled_rules: Collection[str],
-    add_diagnostic: Callable[[CandidateFinding], None],
-) -> list[_Claim]:
-    """Scan pragma comments and build one claim per rule ID each pragma names.
+def project_suppressions(
+    source: PythonSource, rule_id: str, locations: Sequence[Location]
+) -> frozenset[int]:
+    """Return the indexes of `locations`, all in this file, that a pragma for `rule_id` claims.
 
-    Malformed, misplaced, unknown-rule, wrong-language, and disabled-rule pragmas report through
-    `add_diagnostic` as a side effect rather than appearing in the returned claims.
+    The pragmas are scanned with `rule_id` as the only enabled rule. `pipeline.run_file_phase`
+    puts a file in a rule's input only when the rule applies to it, so a pragma is accepted here
+    exactly when the file phase accepted it. The diagnostics are the file phase's to report.
 
-    A pragma naming an enabled project rule makes no claim. That rule's findings don't exist yet
-    when this file's scan runs, so the pragma can't be called unused.
+    A pragma claims a location when it is an `ignore-file`, or when its owner is the location's
+    `occurrence_owner`. Two pragmas claiming one location both claim it; nothing is reported.
     """
-    claims: list[_Claim] = []
+    accepted = [entry.pragma for entry in scan_pragmas(source, (rule_id,)).accepted]
+    if not accepted:
+        return frozenset()
+    if any(pragma.action == "ignore-file" for pragma in accepted):
+        return frozenset(range(len(locations)))
+    owners = {pragma.owner for pragma in accepted}
+    claimed: set[int] = set()
+    for index, location in enumerate(locations):
+        if location.line is None:
+            continue
+        owner = occurrence_owner(source, location.line)
+        if owner is not None and statement_key(owner) in owners:
+            claimed.add(index)
+    return frozenset(claimed)
+
+
+def scan_pragmas(source: PythonSource, enabled_rules: Collection[str]) -> PragmaScan:
+    """Check every pragma comment, returning one accepted entry per rule ID that passes.
+
+    Malformed, misplaced, unknown-rule, wrong-language, and disabled-rule pragmas become HSL900
+    diagnostics, in source order, rather than accepted entries.
+    """
+    accepted: list[AcceptedPragma] = []
+    diagnostics: list[CandidateFinding] = []
     for token in source.tokens:
         if token.type != tokenize.COMMENT or not _is_pragma(token):
             continue
         pragma, message = _parse_pragma(source, token)
         if pragma is None:
-            add_diagnostic(_diagnostic(source, token, message))
+            diagnostics.append(_diagnostic(source, token, message))
             continue
         owner, placement_error = _owner_for_pragma(source, pragma)
         if placement_error is not None:
-            add_diagnostic(_diagnostic(source, token, placement_error))
+            diagnostics.append(_diagnostic(source, token, placement_error))
             continue
         pragma = _Pragma(pragma.action, pragma.ids, pragma.token, owner)
         for rule_id in pragma.ids:
             if not is_known_rule(rule_id):
-                add_diagnostic(_diagnostic(source, token, f"unknown suppression rule {rule_id}"))
+                diagnostics.append(
+                    _diagnostic(source, token, f"unknown suppression rule {rule_id}")
+                )
                 continue
             # Checked first: `enabled_rules` never holds such a rule, so the disabled check below
             # would misreport it, and enabling the rule wouldn't help. HSL900 can't reach here,
             # since `_parse_pragma` rejects a pragma naming it.
             if Language.PYTHON not in rule_languages(rule_id):
-                add_diagnostic(
+                diagnostics.append(
                     _diagnostic(source, token, f"{rule_id} does not handle Python files")
                 )
                 continue
             if rule_id not in enabled_rules:
-                add_diagnostic(
+                diagnostics.append(
                     _diagnostic(source, token, f"unused suppression for disabled rule {rule_id}")
                 )
                 continue
-            if is_project_rule(rule_id):
-                continue
-            target = _target(pragma)
-            owned = tuple(
-                index
-                for index, candidate in enumerate(candidates)
-                if candidate.rule_id == rule_id and _owns(pragma, target[0], candidate)
-            )
-            claims.append(_Claim(pragma, rule_id, target, owned))
+            accepted.append(AcceptedPragma(pragma, rule_id))
+    return PragmaScan(tuple(accepted), tuple(diagnostics))
+
+
+def _collect_claims(scan: PragmaScan, candidates: tuple[CandidateFinding, ...]) -> list[_Claim]:
+    """Build one file-phase claim per accepted pragma entry.
+
+    A pragma naming a project rule makes no claim here. That rule's findings don't exist yet when
+    this file's scan runs, so the pragma can't be called unused; the project phase resolves it
+    (`project_suppressions`).
+    """
+    claims: list[_Claim] = []
+    for entry in scan.accepted:
+        if is_project_rule(entry.rule_id):
+            continue
+        target = _target(entry.pragma)
+        owned = tuple(
+            index
+            for index, candidate in enumerate(candidates)
+            if candidate.rule_id == entry.rule_id and _owns(entry.pragma, target[0], candidate)
+        )
+        claims.append(_Claim(entry.pragma, entry.rule_id, target, owned))
     return claims
 
 
@@ -220,35 +278,17 @@ def _next_owner(source: PythonSource, token: Token) -> StatementKey | None:
     line, column = token.start
     if source.lines[line - 1][:column].strip():
         return None
+    # Placement compares against the decorated start, so an `ignore-next` above a decorator is
+    # accepted and one between a decorator and its `def` is not. The key it resolves to still
+    # comes from `statement_key`, which starts at the `def` line, the same key candidates use.
     for suite in _suites(source.tree):
         for statement in suite:
-            start = _statement_start_line(statement)
+            start = decorated_start_line(statement)
             if start <= line or statement.col_offset != column:
                 continue
             if _comments_or_blanks_only(source, line + 1, start - 1):
                 return statement_key(statement)
     return None
-
-
-def _statement_start_line(statement: ast.stmt) -> int:
-    """The statement's first physical line, counting its decorators.
-
-    `FunctionDef`/`ClassDef.lineno` is the `def`/`class` line, but the statement's source begins
-    at its first decorator. Placement checks comparing against "where the statement starts" must
-    use the decorated start: otherwise an `ignore-next` above the decorator is rejected as
-    misplaced (the decorator line defeats the blanks check), while an `ignore-file` sandwiched
-    between decorator and `def` slips past the before-the-first-statement rule.
-
-    Placement-only, deliberately: the `StatementKey` an accepted `ignore-next` resolves to still
-    comes from `statement_key` (analysis.py), whose span starts at the undecorated `lineno` —
-    the same span candidates are keyed by, so ownership matching is untouched.
-    """
-    if (
-        isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        and statement.decorator_list
-    ):
-        return min(decorator.lineno for decorator in statement.decorator_list)
-    return statement.lineno
 
 
 def _suites(tree: ast.Module) -> tuple[tuple[ast.stmt, ...], ...]:
@@ -298,7 +338,7 @@ def _is_file_prologue(source: PythonSource, token: Token) -> bool:
     for index, statement in enumerate(source.tree.body):
         if _prologue_statement(statement, is_module_docstring=index == 0):
             continue
-        return token.start[0] < _statement_start_line(statement)
+        return token.start[0] < decorated_start_line(statement)
     return True
 
 
@@ -336,7 +376,7 @@ def _owns(pragma: _Pragma, owner: _Owner, candidate: CandidateFinding) -> bool:
     bare line-range comparison below is only safe because everything from the pragma's own line
     through the gap was already verified comment-or-blank-only by `_next_owner` — it would
     otherwise risk reaching into unrelated code. For a decorated `def`/`class`, `owner.start_line`
-    is the undecorated line (see `_statement_start_line`), so the window can extend into the
+    is the undecorated line (see `analysis.decorated_start_line`), so the window can extend into the
     decorator lines themselves; that stays safe because Python's grammar allows nothing there but
     decorator expressions, comments, and blank lines — never another statement.
 
@@ -396,4 +436,4 @@ def _public(candidate: CandidateFinding) -> Finding:
     )
 
 
-__all__ = ["SuppressionResult", "apply_suppressions"]
+__all__ = ["SuppressionResult", "apply_suppressions", "project_suppressions"]

@@ -28,8 +28,19 @@ The prefix is exactly `house-lint:`. IDs are canonical comma-separated IDs; whit
 - A statement pragma consumes every owned finding for each listed rule. A file pragma consumes every listed rule's findings in its file.
 - File-length `HSL102` findings have no statement owner and require `ignore-file[HSL102]`.
 
+## Project rules
+
+A project rule compares files, so one issue it finds can occur in several places. Each place is its own finding, and a pragma in that place's file suppresses that finding alone. The other places stay visible, and each still lists the suppressed one in its `related` locations.
+
+- `ignore-file[...]` suppresses every occurrence of the listed rule in its file, including an occurrence with no line.
+- `ignore[...]` and `ignore-next[...]` suppress an occurrence whose owner is the statement the pragma owns. An occurrence's owner is the innermost statement whose lines, from its first decorator to its last line, include the line the occurrence starts on. So an `ignore-next` above a decorated definition, or a trailing `ignore` on its `def` line, suppresses an occurrence starting on its decorator, and a pragma on a `def` or `class` line doesn't reach an occurrence starting inside its body.
+- An occurrence starting on a line the file doesn't have, or with no line, has no owner. Only `ignore-file` suppresses it.
+- Two pragmas that both reach one occurrence both suppress it. It counts once, and nothing is reported.
+- A pragma naming a project rule is never reported as unused, because the rule's findings don't exist yet when the file is checked.
+- Only pragmas in Python files are read. An occurrence in a file of another language, or in a Python file that doesn't parse, can't be suppressed.
+
 ## HSL900 diagnostics
 
-`HSL900` reports every malformed pragma and each invalid listed ID. It reports when a pragma has no IDs, invalid/duplicate IDs, an invalid action or reason, wrong placement, an unknown or disabled ID, an ID whose rule doesn't handle Python files, an unused ID, or a duplicate/conflicting claim on the same rule/finding. Conflicts fail closed: the original finding remains visible and every conflicting pragma is diagnosed.
+`HSL900` reports every malformed pragma and each invalid listed ID. It reports when a pragma has no IDs, invalid/duplicate IDs, an invalid action or reason, wrong placement, an unknown or disabled ID, an ID whose rule doesn't handle Python files, an unused ID, or a duplicate/conflicting claim on the same rule/finding. For project rules, it checks the pragma itself but reports neither unused IDs nor overlapping claims. Conflicts fail closed: the original finding remains visible and every conflicting pragma is diagnosed.
 
 Text that resembles a pragma inside a string or docstring is not a suppression. `HSL900` itself cannot be selected, ignored, or suppressed.

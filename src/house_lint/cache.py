@@ -29,7 +29,7 @@ from typing import Any, cast
 import msgspec
 
 from house_lint import __version__
-from house_lint.results import Finding, LintError
+from house_lint.results import Finding, LintError, RelatedLocation
 from house_lint.rules.options import RuleOptions
 
 CACHE_DIRNAME = ".house-lint-cache"
@@ -239,7 +239,17 @@ def _finding_to_payload(finding: Finding) -> dict[str, Any]:
 
 
 def _finding_from_payload(data: dict[str, Any], *, path: str) -> Finding:
-    return Finding(path=path, **_require_text(data, ("rule_id", "message")))
+    fields = dict(_require_text(data, ("rule_id", "message")))
+    related = fields.pop("related", None)
+    if not isinstance(related, list):
+        raise TypeError("related must be a list")
+    return Finding(
+        path=path,
+        related=tuple(
+            RelatedLocation(**_require_text(item, ("path",))) for item in cast(list[Any], related)
+        ),
+        **fields,
+    )
 
 
 def _error_to_payload(err: LintError) -> dict[str, Any]:

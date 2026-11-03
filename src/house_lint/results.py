@@ -23,7 +23,36 @@ def validate_location(
 
 
 @dataclass(frozen=True)
+class RelatedLocation:
+    """Another place the issue behind a finding occurs, keyed like `Finding`'s location."""
+
+    path: str
+    line: int | None
+    column: int | None
+    end_line: int | None
+    end_column: int | None
+
+    def __post_init__(self) -> None:
+        validate_location(self.line, self.column, self.end_line, self.end_column)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "line": self.line,
+            "column": self.column,
+            "end_line": self.end_line,
+            "end_column": self.end_column,
+        }
+
+
+@dataclass(frozen=True)
 class Finding:
+    """One reported occurrence. `related` lists the issue's other occurrences, if it has any.
+
+    A project rule's candidate becomes one finding per location, each relating every other
+    location of that candidate, including suppressed ones. A file rule's findings relate nothing.
+    """
+
     rule_id: str
     path: str
     line: int | None
@@ -31,6 +60,7 @@ class Finding:
     end_line: int | None
     end_column: int | None
     message: str
+    related: tuple[RelatedLocation, ...] = ()
 
     def __post_init__(self) -> None:
         validate_location(self.line, self.column, self.end_line, self.end_column)
@@ -44,6 +74,7 @@ class Finding:
             "end_line": self.end_line,
             "end_column": self.end_column,
             "message": self.message,
+            "related": [location.to_dict() for location in self.related],
         }
 
 
@@ -141,7 +172,7 @@ class ScanResult:
             self.errors, key=lambda item: (item.path or "", item.line or 0, item.kind, item.message)
         )
         return {
-            "schema_version": 2,
+            "schema_version": 3,
             "root": str(self.root) if self.root is not None else None,
             "config": str(self.config) if self.config is not None else None,
             "enabled_rules": sorted(self.enabled_rules),

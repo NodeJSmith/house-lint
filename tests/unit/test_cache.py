@@ -23,7 +23,7 @@ from house_lint.cache import (
     write_cached_result,
 )
 from house_lint.config import LintConfig
-from house_lint.results import Finding, LintError
+from house_lint.results import Finding, LintError, RelatedLocation
 from house_lint.rules.file_length import HSL102Options
 from house_lint.rules.spec_tokens import HSL101Options, TokenFamily
 
@@ -36,6 +36,7 @@ _FINDING = {
     "end_line": 1,
     "end_column": 20,
     "message": "import inside function",
+    "related": [],
 }
 _ERROR = {
     "code": "read-error",
@@ -132,7 +133,18 @@ def test_write_then_read_round_trips_and_reattaches_the_caller_supplied_path(
     cache_dir = tmp_path / "cache"
     prepare_cache_dir(cache_dir, self_ignore=False, reporter=CacheReporter())
     result = CachedFileResult(
-        findings=(Finding("HSL002", "wrong/path.py", 1, 5, 1, 20, "import inside function"),),
+        findings=(
+            Finding(
+                "HSL002",
+                "wrong/path.py",
+                1,
+                5,
+                1,
+                20,
+                "import inside function",
+                (RelatedLocation("other.py", 3, 1, 3, 9),),
+            ),
+        ),
         errors=(
             LintError(
                 "read-error",
@@ -170,7 +182,16 @@ def test_write_then_read_round_trips_and_reattaches_the_caller_supplied_path(
 
     assert cached is not None
     assert cached.findings == (
-        Finding("HSL002", "actual/path.py", 1, 5, 1, 20, "import inside function"),
+        Finding(
+            "HSL002",
+            "actual/path.py",
+            1,
+            5,
+            1,
+            20,
+            "import inside function",
+            (RelatedLocation("other.py", 3, 1, 3, 9),),
+        ),
     )
     assert cached.errors == (
         LintError(

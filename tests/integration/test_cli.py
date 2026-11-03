@@ -282,6 +282,7 @@ def test_cache_is_populated_and_reused_across_runs(repository: Path) -> None:
                 "end_line": 1,
                 "end_column": 2,
                 "message": "poisoned cache entry",
+                "related": [],
             }
         ],
         "errors": [],

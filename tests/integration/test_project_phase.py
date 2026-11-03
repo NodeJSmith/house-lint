@@ -107,8 +107,9 @@ def test_a_project_rule_gets_the_scanned_files_and_reports_one_finding_per_locat
             "end_line": 1,
             "end_column": 5,
             "message": "duplicated block",
+            "related": [{"path": other, "line": 1, "column": 1, "end_line": 1, "end_column": 5}],
         }
-        for path in ("a.py", "b.py")
+        for path, other in (("a.py", "b.py"), ("b.py", "a.py"))
     ]
     assert result["files_scanned"] == 2
 
