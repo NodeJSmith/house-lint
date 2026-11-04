@@ -109,24 +109,23 @@ Define it in README's JSON paragraph when an outside consumer appears.
 Acceptance criteria:
 - README states what `summary.suppressed_count` counts.
 
-## KI-006: Same-location findings keep the rule's output order, and text `(also at ...)` isn't delimited
+## KI-006: Text `(also at ...)` isn't delimited
 
 Status: open
 Recorded: 2026-11-03 (60)
 Source: ship-challenge
 Reason not fixed now: accepted-limitation
 Affected files:
-- src/house_lint/results.py
 - src/house_lint/reporters/text.py
 
 Issue:
-`ScanResult.to_dict` sorts findings by path, line, column, rule ID, and message, not `related`, so two findings that differ only in `related` keep the rule's output order. The text reporter appends `(also at ...)` after a free-text message, so a script can't reliably split it off.
+The text reporter appends `(also at ...)` after a free-text message, so a script can't reliably split it off.
 
 Why deferred:
-Project rules run in a fixed order, a deterministic rule keeps JSON deterministic, and text output is for people.
+Text output is for people; scripts read the JSON reporter, which carries `related` as structured data.
 
 Recommended follow-up:
-Add `related` to the sort key if #39's wrapper emits candidates in a non-deterministic order.
+Delimit the suffix if a consumer starts parsing text output.
 
 Acceptance criteria:
-- JSON output is identical across runs regardless of candidate order, pinned by a test.
+- A script can separate a text finding's message from its `(also at ...)` suffix.

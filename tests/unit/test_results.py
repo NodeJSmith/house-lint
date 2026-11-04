@@ -247,3 +247,22 @@ def test_rule_list_serializes_schema_v1():
             {"id": "HSL001", "name": "Cruft", "description": "description", "enablement": "default"}
         ],
     }
+
+
+def test_findings_that_differ_only_in_related_serialize_in_a_stable_order(tmp_path):
+    first = Finding("HSL001", "a.py", 1, 1, 1, 2, "same", (RelatedLocation("b.py", 5, 1, 5, 2),))
+    second = Finding("HSL001", "a.py", 1, 1, 1, 2, "same", (RelatedLocation("b.py", 3, 1, 3, 2),))
+
+    def serialize(findings: tuple[Finding, ...]) -> dict[str, object]:
+        return ScanResult(
+            root=tmp_path,
+            config=None,
+            enabled_rules=("HSL001",),
+            files_scanned=2,
+            findings=findings,
+        ).to_dict()
+
+    forward = serialize((first, second))
+
+    assert forward == serialize((second, first))
+    assert [finding["related"][0]["line"] for finding in forward["findings"]] == [3, 5]

@@ -111,6 +111,16 @@ class LintError:
         }
 
 
+def location_sort_key(location: Finding | RelatedLocation) -> tuple[str, int, int, int, int]:
+    return (
+        location.path,
+        location.line or 0,
+        location.column or 0,
+        location.end_line or 0,
+        location.end_column or 0,
+    )
+
+
 def error(
     kind: str,
     phase: str,
@@ -161,11 +171,10 @@ class ScanResult:
         findings = sorted(
             self.findings,
             key=lambda item: (
-                item.path,
-                item.line or 0,
-                item.column or 0,
+                location_sort_key(item),
                 item.rule_id,
                 item.message,
+                tuple(location_sort_key(location) for location in item.related),
             ),
         )
         errors = sorted(
