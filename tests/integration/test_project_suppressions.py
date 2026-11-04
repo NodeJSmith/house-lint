@@ -306,7 +306,7 @@ def test_a_file_that_fails_to_parse_keeps_its_occurrences_visible(
 
     assert code == 3
     assert sites(result) == [("a.py", 2)]
-    assert [error["path"] for error in result["errors"]] == ["a.py"]
+    assert [(error["path"], error["kind"]) for error in result["errors"]] == [("a.py", "tokenize")]
 
 
 def test_a_typescript_occurrence_is_not_suppressed(
