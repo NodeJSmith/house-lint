@@ -2,7 +2,7 @@
 
 import sys
 import traceback
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias
@@ -32,10 +32,18 @@ from house_lint.config import (
 )
 from house_lint.discovery import DiscoveryError, DiscoveryResult, discover_files
 from house_lint.language import Language, language_for
-from house_lint.project_rule import ProjectRuleFailure
-from house_lint.results import Finding, LintError, ScanResult, error, internal_error
+from house_lint.project_rule import Location, ProjectCandidate, ProjectRuleFailure
+from house_lint.python_source import PythonSource, parse_python
+from house_lint.results import (
+    Finding,
+    LintError,
+    ScanResult,
+    error,
+    internal_error,
+)
 from house_lint.scanner import FileScanResult, failure_result, open_source, scan_source
 from house_lint.source import LoadedFile, LoadFailure
+from house_lint.suppressions import claims_for
 
 CacheKey: TypeAlias = tuple[str, str]
 
@@ -63,6 +71,7 @@ class ProjectPhaseResult:
 
     findings: tuple[Finding, ...]
     errors: tuple[LintError, ...]
+    suppressed_count: int
 
 
 class RunCache:
@@ -217,7 +226,7 @@ def run_scan(
         config.enabled_rules,
         file_phase.files_scanned,
         file_phase.findings + project_phase.findings,
-        file_phase.suppressed_count,
+        file_phase.suppressed_count + project_phase.suppressed_count,
         file_phase.errors + project_phase.errors,
     )
 
@@ -324,39 +333,32 @@ def run_file_phase(
 def run_project_phase(
     file_phase: FilePhaseResult, *, config: LintConfig, debug: bool
 ) -> ProjectPhaseResult:
-    """Run each enabled project rule on its files. Nothing here is cached.
+    """Run each enabled project rule on its files, then apply pragmas. Nothing here is cached.
 
     An aborted file phase leaves an arbitrarily partial input, and the run is already reporting an
     internal error, so no rule runs. A rule with no files doesn't run either: an external tool
     handed an empty list of paths could fall back to scanning its working directory.
 
     A `ProjectRuleFailure` costs that rule's findings and the next rule still runs. Any other
-    exception is a bug at the process boundary, so it ends the phase, keeping results so far.
+    exception, from the rule or from resolving its pragmas, is a bug at the process boundary, so it
+    ends the phase, keeping results so far.
     """
     if file_phase.aborted:
-        return ProjectPhaseResult((), ())
+        return ProjectPhaseResult(findings=(), errors=(), suppressed_count=0)
     findings: list[Finding] = []
     errors: list[LintError] = []
+    suppressed_count = 0
+    pragmas = PragmaClaims()
     for rule, options in selected_project_rules(config):
         files = file_phase.project_inputs[rule.id]
         if not files:
             continue
-        # Built whole inside the `try`, so a rule's bad output counts as its failure and a rule that
-        # fails partway leaves none of its findings behind.
+        # The rule's run and its pragma resolution both happen inside the `try`, so a rule's bad
+        # output counts as its failure and a rule that fails partway leaves no findings behind.
         try:
-            rule_findings = [
-                Finding(
-                    rule.id,
-                    location.file.relative_path,
-                    location.line,
-                    location.column,
-                    location.end_line,
-                    location.end_column,
-                    candidate.message,
-                )
-                for candidate in rule.run(files, options)
-                for location in candidate.locations
-            ]
+            rule_findings, rule_suppressed = expand_candidates(
+                rule.id, rule.run(files, options), pragmas
+            )
         except ProjectRuleFailure as exc:
             errors.append(error("project-rule", "project", "rule-run", str(exc), rule_id=rule.id))
             continue
@@ -366,7 +368,69 @@ def run_project_phase(
             errors.append(internal_error("project", "rule-run", rule_id=rule.id))
             break
         findings.extend(rule_findings)
-    return ProjectPhaseResult(tuple(findings), tuple(errors))
+        suppressed_count += rule_suppressed
+    return ProjectPhaseResult(
+        findings=tuple(findings), errors=tuple(errors), suppressed_count=suppressed_count
+    )
+
+
+class PragmaClaims:
+    """Whether a pragma in its own Python file claims a project-rule location, for one run.
+
+    Each file is parsed from its retained bytes at most once, and its pragmas are scanned at most
+    once per rule. A file in another language has no pragmas yet, and a file that doesn't parse
+    has none readable; the file phase already reported why.
+    """
+
+    def __init__(self) -> None:
+        # None marks a file that doesn't parse.
+        self.sources: dict[Path, PythonSource | None] = {}
+        self.checks: dict[tuple[str, Path], Callable[[int | None], bool]] = {}
+
+    def claims(self, rule_id: str, location: Location) -> bool:
+        file = location.file
+        if language_for(file.path) is not Language.PYTHON:
+            return False
+        key = (rule_id, file.path)
+        if key not in self.checks:
+            if file.path not in self.sources:
+                parsed = parse_python(file)
+                self.sources[file.path] = parsed if isinstance(parsed, PythonSource) else None
+            source = self.sources[file.path]
+            self.checks[key] = (
+                (lambda line: False) if source is None else claims_for(source, rule_id)
+            )
+        return self.checks[key](location.line)
+
+
+def expand_candidates(
+    rule_id: str, candidates: list[ProjectCandidate], pragmas: PragmaClaims
+) -> tuple[list[Finding], int]:
+    """Return one finding per unclaimed candidate location, in order, and the number claimed.
+
+    Each finding relates every other location of its candidate, claimed or not.
+    """
+    findings: list[Finding] = []
+    suppressed = 0
+    for candidate in candidates:
+        related = tuple(location.to_related() for location in candidate.locations)
+        for index, location in enumerate(candidate.locations):
+            if pragmas.claims(rule_id, location):
+                suppressed += 1
+                continue
+            findings.append(
+                Finding(
+                    rule_id,
+                    location.file.relative_path,
+                    location.line,
+                    location.column,
+                    location.end_line,
+                    location.end_column,
+                    candidate.message,
+                    related[:index] + related[index + 1 :],
+                )
+            )
+    return findings, suppressed
 
 
 def _cache_keys(

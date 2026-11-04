@@ -151,7 +151,9 @@ A cache failure never fails a scan. house-lint prints one warning for the first 
 
 ## Output and exit codes
 
-`--format json` prints one schema-versioned JSON object to stdout (`schema_version` 2) with the root, config, enabled rules, file counts, findings, errors, and summary. Match on rule IDs, locations, and error `code` values. Finding `message` text is for people and may change.
+`--format json` prints one schema-versioned JSON object to stdout (`schema_version` 3) with the root, config, enabled rules, file counts, findings, errors, and summary. Match on rule IDs, locations, and error `code` values. Finding `message` text is for people and may change.
+
+Each finding has a `related` list of the other places the same issue occurs, including ones a pragma suppressed, each with `path`, `line`, `column`, `end_line`, and `end_column`. It is empty for findings from single-file rules. Text output appends the same locations to the finding's line, as `(also at b.py:10:1, c.py)`.
 
 | Exit | Meaning |
 | ---: | --- |

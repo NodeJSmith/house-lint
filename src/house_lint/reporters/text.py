@@ -1,6 +1,7 @@
 """Human-readable deterministic result reporters."""
 
 from pathlib import Path
+from typing import Any
 
 from house_lint.config import config_table_name, discovered_languages, is_standalone_config
 from house_lint.results import RuleList, ScanResult
@@ -92,12 +93,11 @@ def render_text(
     if zero_file_note is not None:
         lines.append(zero_file_note)
     for finding in data["findings"]:
-        location = (
-            f"{finding['path']}:{finding['line']}:{finding['column']}:"
-            if finding["line"] is not None
-            else f"{finding['path']}:"
-        )
-        lines.append(f"{location} {finding['rule_id']} {finding['message']}")
+        line = f"{text_location(finding)}: {finding['rule_id']} {finding['message']}"
+        if finding["related"]:
+            others = ", ".join(text_location(location) for location in finding["related"])
+            line += f" (also at {others})"
+        lines.append(line)
     summary = data["summary"]
     lines.append(
         "summary: "
@@ -105,6 +105,13 @@ def render_text(
         f"{summary['suppressed_count']} suppressed"
     )
     return "\n".join(lines)
+
+
+def text_location(location: dict[str, Any]) -> str:
+    """Render a finding's or related location's `path:line:col`, or `path` when it has no line."""
+    if location["line"] is None:
+        return location["path"]
+    return f"{location['path']}:{location['line']}:{location['column']}"
 
 
 def render_rule_list_text(rules: RuleList) -> str:

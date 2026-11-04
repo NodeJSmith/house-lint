@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from house_lint.results import validate_location
+from house_lint.results import RelatedLocation, validate_location
 from house_lint.source import LoadedFile
 
 
@@ -23,12 +23,19 @@ class Location:
     def __post_init__(self) -> None:
         validate_location(self.line, self.column, self.end_line, self.end_column)
 
+    def to_related(self) -> RelatedLocation:
+        return RelatedLocation(
+            self.file.relative_path, self.line, self.column, self.end_line, self.end_column
+        )
+
 
 @dataclass(frozen=True)
 class ProjectCandidate:
     """One issue a project rule found, at locations that are equals: none of them is the primary.
 
-    The project phase reports one finding per location, under the ID of the rule that ran.
+    The project phase reports one finding per location, under the ID of the rule that ran. Each
+    finding lists the candidate's other locations in `related`, and a pragma in a location's own
+    file can suppress that location's finding alone.
     """
 
     message: str

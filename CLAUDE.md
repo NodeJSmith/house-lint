@@ -52,7 +52,7 @@ CI has two workflows. `.github/workflows/ci.yml` runs the tests on Python 3.11 t
 - `scanner.py`: the process boundaries around loading and parsing one file, running its detectors, and applying suppressions
 - `rule_catalog.py`: the table of rules: each rule's metadata, detector or project run, languages, and options type
 - `project_rule.py`: what a project rule returns (`ProjectCandidate`, `Location`) and how it reports failure (`ProjectRuleFailure`)
-- `suppressions.py`: pragma parsing and HSL900
+- `suppressions.py`: pragma parsing, HSL900, and which project-rule occurrences a file's pragmas claim (`claims_for`)
 - `cache.py`: the result cache
 - `results.py`: the result model
 - `reporters/`: text and JSON output
@@ -77,18 +77,18 @@ A file rule is a detector `(source: PythonSource, options, *, limit=None) -> lis
 
 If a step here doesn't match the code, the code wins; fix this list in the same PR.
 
-A project rule is `(files: tuple[LoadedFile, ...], options) -> list[ProjectCandidate]`, with a `project_rule(...)` or `configurable_project_rule(...)` row in `PROJECT_RULES` that declares its languages. It runs once per scan, after the file loop, and raises `ProjectRuleFailure` for a failure the user can act on. `tests/integration/test_project_phase.py` shows how to test one with `register_project_rules`.
+A project rule is `(files: tuple[LoadedFile, ...], options) -> list[ProjectCandidate]`, with a `project_rule(...)` or `configurable_project_rule(...)` row in `PROJECT_RULES` that declares its languages. It runs once per scan, after the file loop, and raises `ProjectRuleFailure` for a failure the user can act on. Each candidate location becomes its own finding, listing the others in `related`, and a pragma in that location's Python file can suppress it. `tests/integration/test_project_phase.py` and `test_project_suppressions.py` show how to test one with `register_project_rules`.
 
 IDs: `HSL001`-`HSL0xx` are on by default, `HSL1xx` are opt-in, and `HSL900` is reserved.
 
 ## Gotchas
 
-- **HSL900 can't be disabled or suppressed.** It validates the `ignore`, `ignore-next`, and `ignore-file` pragmas that silence every other rule, including flagging unused ones.
+- **HSL900 can't be disabled or suppressed.** It validates the `ignore`, `ignore-next`, and `ignore-file` pragmas that silence every other rule, including flagging unused ones. A pragma naming a project rule is never called unused, by design (spec 010 D9): finding stale ones would mean re-reading every file with such a pragma after the rule runs, and Pylint likewise leaves `duplicate-code` out of its unused-suppression check.
 - **Inside a repo, git supplies the file list.** Discovery runs `git ls-files` per requested directory, and any git failure there stops the run. Outside a repo, or with `--no-git`, it does a plain walk that reads no ignore files. A `.git` entry at or above the directory decides which, because git's exit code can't tell "not a repo" from a `safe.directory` refusal. See `docs/configuration.md` and `design/specs/007-git-file-discovery/design.md`.
 - **Configured `exclude` is the one verdict house-lint makes itself**, through `pathspec`, without negation. A change to pattern handling needs a case in `tests/integration/test_exclude_parity.py`, which compares it against real `git check-ignore`. A case costs one `Scenario` entry with no expected values.
 - **Default scope is the whole tree** from the root, minus what git ignores and built-in excludes. `include` narrows it to literal root-relative paths.
 - **Only a file in an enabled project rule's input outlives its loop iteration.** With no project rule enabled, no file's bytes are kept. Project-phase results are never cached.
-- **Only Python has an analysis layer.** A file in any other language is loaded for the project rules that asked for it and counted, but never parsed, cached, or checked by `HSL900`. The skip is in `run_file_phase`.
+- **Only Python has an analysis layer.** A file in any other language is loaded for the project rules that asked for it and counted, but never parsed, cached, or checked by `HSL900`. The skip is in `run_file_phase`. A Python file with a project-rule finding is parsed a second time in the project phase, from its retained bytes, to read its pragmas; that parse is never cached.
 - **Each scanned file is read exactly once**, by `source.load_file`. The cache key comes from that same buffer (`LoadedFile.content` → `cache.hash_source_content`), so a cache entry can never describe content other than what was scanned. A second read of a scanned path lets the file change between the read that was parsed and the read that was hashed, so a cache entry could describe the wrong content. `test_each_scanned_file_is_read_exactly_once` catches it, and you should not weaken that test. A rule that reads files outside `load_file`, such as an external tool given paths, must either not be cached or hash what it reads.
 - **A load failure is never cached; a parse failure is.** A `LoadFailure` has no `LoadedFile` to key on. A `ParseFailure` follows from the bytes, so it's stored like any other result, and a cache hit never decodes. A rule is only ever handed a `PythonSource` that parsed, so it needs no failure checks.
 - **The cache is per-file and namespaced** by `<version>-<hash of house-lint's own sources>`, so editing rule code invalidates it without a version bump. Its key includes the Python version. house-lint writes a self-ignoring `.gitignore` only into its default cache directory, never into a user-supplied `--cache-dir`.

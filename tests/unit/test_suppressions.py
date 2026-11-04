@@ -1,12 +1,27 @@
+import pytest
+from _source_helpers import PYTHON_ONLY
+
 from house_lint.analysis import CandidateFinding, SourceKind, statement_key
 from house_lint.python_source import PythonSource
+from house_lint.rule_catalog import project_rule
 from house_lint.rules.exception_names import HSL103Options
 from house_lint.rules.exception_names import detect as detect_exception_names
 from house_lint.rules.lazy_imports import detect as detect_lazy_imports
 from house_lint.rules.llm_cruft import detect as detect_llm_cruft
 from house_lint.rules.spec_tokens import HSL101Options, TokenFamily
 from house_lint.rules.spec_tokens import detect as detect_spec_tokens
-from house_lint.suppressions import apply_suppressions
+from house_lint.suppressions import apply_suppressions, scan_pragmas
+
+PARITY_RULE = "HSL198"
+PARITY_SAMPLES = [
+    f"value = 1  # house-lint: ignore[{PARITY_RULE}] - deliberate copy\n",
+    f"value = 1  # house-lint: ignore[HSL002,{PARITY_RULE}] - deliberate copy\n",
+    f"# house-lint: ignore-next[{PARITY_RULE}] - deliberate copy\nvalue = 1\n",
+    f"# house-lint: ignore-file[{PARITY_RULE}] - generated module\nvalue = 1\n",
+    f"value = 1\n# house-lint: ignore-file[{PARITY_RULE}] - misplaced here\n",
+    f"value = 1  # house-lint: ignore[{PARITY_RULE}] - x\n",
+    f"value = 1  # house-lint: ignore[{PARITY_RULE},HSL900] - deliberate copy\n",
+]
 
 
 def _candidate(
@@ -374,3 +389,25 @@ def test_ignore_file_between_decorator_and_def_is_misplaced(parse_sample) -> Non
         finding.rule_id == "HSL900" and "misplaced ignore-file" in finding.message
         for finding in result.findings
     )
+
+
+@pytest.mark.parametrize("content", PARITY_SAMPLES)
+def test_the_project_phase_accepts_exactly_the_pragmas_the_file_phase_accepts(
+    parse_sample, register_project_rules, content: str
+) -> None:
+    register_project_rules(
+        project_rule(
+            PARITY_RULE, "Test rule", "Registered by a test", "opt-in", lambda *_: [], PYTHON_ONLY
+        )
+    )
+    source = parse_sample(content)
+
+    def accepted(enabled_rules: tuple[str, ...]) -> list[tuple[int, str]]:
+        return [
+            (entry.pragma.token.start[0], entry.pragma.action)
+            for entry in scan_pragmas(source, enabled_rules).accepted
+            if entry.rule_id == PARITY_RULE
+        ]
+
+    file_phase = accepted(("HSL001", "HSL002", PARITY_RULE))
+    assert accepted((PARITY_RULE,)) == file_phase
