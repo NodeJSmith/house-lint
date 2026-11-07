@@ -1,5 +1,5 @@
 [tools]
-prek = "0.5.9"
+prek = "0.5.10"
 
 [tasks."worktree:setup"]
 description = "Set up a new worktree (venv + deps)"
