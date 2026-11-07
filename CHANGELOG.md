@@ -2,6 +2,17 @@
 
 All notable changes to `house-lint` are documented here.
 
+## [0.6.0](https://github.com/NodeJSmith/house-lint/compare/v0.5.0...v0.6.0) (2026-11-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* JSON output moves to `schema_version` 3. Every finding now has a `related` list of the other places the same issue occurs (empty for single-file rules), and text output appends `(also at ...)` to a project-rule finding's line. A consumer that checks `schema_version == 2` must accept 3; otherwise the change is additive. `summary.suppressed_count` now also counts project-rule occurrences a pragma suppressed.
+
+### Features
+
+* let pragmas suppress project-rule findings and list related locations ([#84](https://github.com/NodeJSmith/house-lint/issues/84)) ([87eea01](https://github.com/NodeJSmith/house-lint/commit/87eea01cd06693e7e1486093d331e127118d1be7))
+
 ## [0.5.0](https://github.com/NodeJSmith/house-lint/compare/v0.4.0...v0.5.0) (2026-11-03)
 
 ### Breaking Changes
