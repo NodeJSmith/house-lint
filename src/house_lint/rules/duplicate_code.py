@@ -17,16 +17,14 @@ from house_lint.source import LoadedFile
 DEFAULT_MIN_TOKENS = 30
 DEFAULT_MIN_LINES = 5
 DEFAULT_MIN_OCCURRENCES = 3
-# Far past any real block, so a bound only catches a typo'd value.
-MAX_MIN_TOKENS = 100_000
-MAX_MIN_LINES = 100_000
-MAX_MIN_OCCURRENCES = 100_000
+# Far past any real block, so the bound only catches a typo'd value.
+MAX_OPTION_VALUE = 100_000
 
 
 class HSL104Options(RuleOptions, frozen=True):
-    min_tokens: Annotated[int, Meta(ge=1, le=MAX_MIN_TOKENS)] = DEFAULT_MIN_TOKENS
-    min_lines: Annotated[int, Meta(ge=1, le=MAX_MIN_LINES)] = DEFAULT_MIN_LINES
-    min_occurrences: Annotated[int, Meta(ge=2, le=MAX_MIN_OCCURRENCES)] = DEFAULT_MIN_OCCURRENCES
+    min_tokens: Annotated[int, Meta(ge=1, le=MAX_OPTION_VALUE)] = DEFAULT_MIN_TOKENS
+    min_lines: Annotated[int, Meta(ge=1, le=MAX_OPTION_VALUE)] = DEFAULT_MIN_LINES
+    min_occurrences: Annotated[int, Meta(ge=2, le=MAX_OPTION_VALUE)] = DEFAULT_MIN_OCCURRENCES
 
 
 @dataclass(frozen=True)
@@ -76,7 +74,7 @@ def run(
         if len(cluster) >= options.min_occurrences
     ]
     found.sort(key=lambda cluster: reported_order(cluster[0]))
-    return [candidate(cluster, by_path) for cluster in found]
+    return [build_candidate(cluster, by_path) for cluster in found]
 
 
 def clusters(pairs: Iterable[ClonePair]) -> list[list[Occurrence]]:
@@ -115,8 +113,8 @@ def clusters(pairs: Iterable[ClonePair]) -> list[list[Occurrence]]:
 def merge_fragments(fragments: Iterable[Fragment]) -> dict[Path, list[Occurrence]]:
     """Merge each file's fragments whose line ranges overlap, keyed by path, in position order.
 
-    Overlap is decided by lines alone, as in the tuning pass's grouping, so fragments sharing a
-    line merge even when their columns don't meet. An occurrence spans from its earliest fragment
+    Overlap is decided by lines alone, so fragments sharing a line merge even when their columns
+    don't meet. An occurrence spans from its earliest fragment
     start to its latest fragment end. The result's spans in one file never overlap, which is what
     lets `occurrence_of` find a fragment's occurrence by its start line.
     """
@@ -151,9 +149,12 @@ def occurrence_of(fragment: Fragment, occurrences: list[Occurrence]) -> Occurren
     raise AssertionError(f"no merged occurrence holds {fragment}")
 
 
-def candidate(cluster: list[Occurrence], by_path: dict[Path, LoadedFile]) -> ProjectCandidate:
-    """One candidate per cluster. The message counts places, not copies of one block, because
-    overlapping fragments can join two different blocks into one cluster."""
+def build_candidate(cluster: list[Occurrence], by_path: dict[Path, LoadedFile]) -> ProjectCandidate:
+    """Build one cluster's candidate.
+
+    The message counts places, not copies of one block, because overlapping fragments can join two
+    different blocks into one cluster.
+    """
     counts = sorted({occurrence.line_count for occurrence in cluster})
     lines = str(counts[0]) if len(counts) == 1 else f"{counts[0]}-{counts[-1]}"
     return ProjectCandidate(

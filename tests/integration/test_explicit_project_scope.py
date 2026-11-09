@@ -22,7 +22,6 @@ from house_lint.rule_catalog import project_rule
 from house_lint.source import LoadedFile, LoadFailure
 
 RULE = "HSL198"
-OTHER_RULE = "HSL197"
 CLEAN = "value = 1\n"
 LAZY_IMPORT = "def example():\n    import module\n"  # an HSL002 finding
 SPAN = (1, 1, 1, 5)

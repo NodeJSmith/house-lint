@@ -8,7 +8,14 @@ from _source_helpers import load
 
 from house_lint.jscpd import ClonePair, Fragment
 from house_lint.project_rule import ProjectRuleFailure
-from house_lint.rules.duplicate_code import HSL104Options, Occurrence, clusters, run
+from house_lint.rules.duplicate_code import (
+    MAX_OPTION_VALUE,
+    HSL104Options,
+    Occurrence,
+    clusters,
+    run,
+)
+from house_lint.source import LoadedFile
 
 A, B, C = Path("/p/a.py"), Path("/p/b.py"), Path("/p/c.py")
 BLOCK = """\
@@ -40,7 +47,10 @@ def pair(first: tuple[Path, int, int], second: tuple[Path, int, int]) -> ClonePa
 
 
 def spans(found: list[list[Occurrence]]) -> list[set[tuple[str, int, int]]]:
-    return [{(o.path.name, o.line, o.end_line) for o in cluster} for cluster in found]
+    return [
+        {(occurrence.path.name, occurrence.line, occurrence.end_line) for occurrence in cluster}
+        for cluster in found
+    ]
 
 
 def test_star_shaped_pairs_form_one_cluster_of_three() -> None:
@@ -92,7 +102,7 @@ def write(directory: Path, name: str, content: str) -> Path:
     return path
 
 
-def copies(directory: Path, *names: str) -> tuple:
+def copies(directory: Path, *names: str) -> tuple[LoadedFile, ...]:
     return tuple(
         load(write(directory, f"{name}.py", f"def handle_{name}(value, other, third):\n{BLOCK}"))
         for name in names
@@ -181,7 +191,7 @@ def test_a_symlinked_spelling_of_a_file_is_not_a_copy_of_itself(tmp_path: Path) 
         {"min_occurrences": 1},
         {"min_tokens": 0},
         {"min_lines": 0},
-        {"min_tokens": 100_001},
+        {"min_tokens": MAX_OPTION_VALUE + 1},
         {"timeout_seconds": 5},  # the timeout is a constant, not an option
     ],
 )

@@ -126,14 +126,12 @@ def find_clones(paths: Sequence[Path], *, min_tokens: int, min_lines: int) -> Cl
     given = {str(path): path for path in paths}
     with tempfile.TemporaryDirectory(prefix="house-lint-jscpd-") as workdir:
         output = Path(workdir)
-        config = output / "jscpd.json"
-        config.write_text(
+        config_path = output / "jscpd.json"
+        config_path.write_text(
             json.dumps(
                 {
                     "path": list(given),
-                    # house-lint's discovery already decided the file set. jscpd 5.4.1 compares a
-                    # listed file even when gitignored; this keeps that so if a later version
-                    # changes it.
+                    # house-lint's discovery already decided the file set; jscpd mustn't re-filter.
                     "gitignore": False,
                     # Full names, so each maps back to the path it was given as.
                     "absolute": True,
@@ -152,11 +150,11 @@ def find_clones(paths: Sequence[Path], *, min_tokens: int, min_lines: int) -> Cl
         # `-c` replaces any `.jscpd.json` in the project, and the temporary working directory keeps
         # jscpd from finding one there either.
         try:
-            run_jscpd([binary, "-c", str(config)], cwd=output, timeout=TIMEOUT_SECONDS)
+            run_jscpd([binary, "-c", str(config_path)], cwd=output, timeout=TIMEOUT_SECONDS)
         except JscpdTimeout as exc:
             raise ProjectRuleFailure(
                 f"{exc} on {len(given)} files; the limit is fixed, so exclude generated or "
-                "vendored code, or turn HSL104 off for this scope"
+                "vendored code from the scope"
             ) from exc
         except JscpdRunError as exc:
             # The version check passed, so the install is sound: no install hint here.
@@ -169,15 +167,17 @@ def find_clones(paths: Sequence[Path], *, min_tokens: int, min_lines: int) -> Cl
         decoded = msgspec.json.decode(raw, type=JscpdReport)
     except msgspec.DecodeError as exc:
         raise install_failure(f"jscpd's report could not be read: {exc}") from exc
-    python = decoded.statistics.formats.get(PYTHON_FORMAT)
+    python_statistics = decoded.statistics.formats.get(PYTHON_FORMAT)
+    analyzed = python_statistics.sources if python_statistics is not None else 0
     return CloneReport(
         [
             ClonePair(
-                report_fragment(dup.first_file, given), report_fragment(dup.second_file, given)
+                report_fragment(duplicate.first_file, given),
+                report_fragment(duplicate.second_file, given),
             )
-            for dup in decoded.duplicates
+            for duplicate in decoded.duplicates
         ],
-        python.sources if python is not None else 0,
+        analyzed,
     )
 
 

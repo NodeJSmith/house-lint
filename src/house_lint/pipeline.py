@@ -381,6 +381,13 @@ def widen_project_inputs(
     if not widened:
         return ProjectInputs(named_inputs)
     reportable = frozenset(file.path for files in named_inputs.values() for file in files)
+
+    def blocked(errors: tuple[LintError, ...]) -> ProjectInputs:
+        # No project rule runs, and `errors` says why.
+        return ProjectInputs(
+            {rule_id: () for rule_id in named_inputs}, reportable=reportable, errors=errors
+        )
+
     try:
         discovered = discover_files(
             root,
@@ -394,9 +401,7 @@ def widen_project_inputs(
             error("project-rule", "project", "discovery", exc.error.message, rule_id=rule.id)
             for rule in widened
         )
-        return ProjectInputs(
-            {rule_id: () for rule_id in named_inputs}, reportable=reportable, errors=errors
-        )
+        return blocked(errors)
     compiled_per_file_ignores = compile_per_file_ignores(config.per_file_ignores)
     inputs = {rule_id: list(files) for rule_id, files in named_inputs.items()}
     for file in discovered.files:
@@ -416,11 +421,7 @@ def widen_project_inputs(
         loaded = open_source(file.path, root=root, resolved_path=file.resolved, debug=debug)
         if isinstance(loaded, FileScanResult):
             # A process-boundary failure, already printed under --debug: no project rule runs.
-            return ProjectInputs(
-                {rule_id: () for rule_id in named_inputs},
-                reportable=reportable,
-                errors=loaded.errors,
-            )
+            return blocked(loaded.errors)
         if isinstance(loaded, LoadFailure):
             if debug:
                 print(
@@ -517,7 +518,7 @@ def expand_candidates(
     candidates: list[ProjectCandidate],
     pragmas: PragmaClaims,
     *,
-    reportable: frozenset[Path] | None = None,
+    reportable: frozenset[Path] | None,
 ) -> tuple[list[Finding], int]:
     """Return one finding per unclaimed candidate location, in order, and the number claimed.
 
