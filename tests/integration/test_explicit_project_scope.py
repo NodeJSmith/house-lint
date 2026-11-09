@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from _source_helpers import PYTHON_ONLY
+from _source_helpers import PYTHON_ONLY, write_file
 
 from house_lint import cli, pipeline
 from house_lint import scanner as scanner_module
@@ -59,9 +59,7 @@ def scan(capsys: pytest.CaptureFixture[str], root: Path, *paths: str, **kwargs: 
 
 def write(root: Path, *names: str, content: str = CLEAN) -> None:
     for name in names:
-        path = root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        write_file(root, name, content)
 
 
 def reported(result: dict[str, Any]) -> list[tuple[str, list[str]]]:
@@ -258,7 +256,11 @@ def test_a_failed_widening_pass_is_an_error_for_each_rule_and_file_rules_still_r
     assert everywhere.calls == []
     assert [finding["rule_id"] for finding in result["findings"]] == ["HSL002"]
     [failure] = result["errors"]
-    assert (failure["rule_id"], failure["message"]) == (RULE, "git broke")
+    assert (failure["code"], failure["rule_id"], failure["message"]) == (
+        "project-rule-error",
+        RULE,
+        "git broke",
+    )
 
 
 def test_hsl104_on_a_named_file_reports_its_copy_of_unnamed_files(
@@ -302,5 +304,6 @@ def test_hsl104_without_jscpd_fails_loudly_and_other_rules_still_report(
     assert code == 3
     assert [finding["rule_id"] for finding in result["findings"]] == ["HSL002"]
     [failure] = result["errors"]
+    assert failure["code"] == "project-rule-error"
     assert failure["rule_id"] == "HSL104"
     assert "house-lint[duplicates]" in failure["message"]

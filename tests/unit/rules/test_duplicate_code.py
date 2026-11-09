@@ -4,7 +4,7 @@ from pathlib import Path
 
 import msgspec
 import pytest
-from _source_helpers import load
+from _source_helpers import load, write_file
 
 from house_lint.jscpd import ClonePair, Fragment
 from house_lint.project_rule import ProjectRuleFailure
@@ -96,15 +96,11 @@ def test_unrelated_pairs_stay_separate_clusters() -> None:
     ]
 
 
-def write(directory: Path, name: str, content: str) -> Path:
-    path = directory / name
-    path.write_text(content)
-    return path
-
-
 def copies(directory: Path, *names: str) -> tuple[LoadedFile, ...]:
     return tuple(
-        load(write(directory, f"{name}.py", f"def handle_{name}(value, other, third):\n{BLOCK}"))
+        load(
+            write_file(directory, f"{name}.py", f"def handle_{name}(value, other, third):\n{BLOCK}")
+        )
         for name in names
     )
 
@@ -131,9 +127,13 @@ def test_a_cluster_under_the_occurrence_minimum_is_dropped(tmp_path: Path) -> No
 
 def test_copies_of_different_lengths_report_a_line_range(tmp_path: Path) -> None:
     files = (
-        load(write(tmp_path, "a.py", f"def handle_a(value, other, third):\n{BLOCK}\n{SECOND}")),
-        load(write(tmp_path, "b.py", f"def handle_b(value, other, third):\n{BLOCK}\n{SECOND}")),
-        load(write(tmp_path, "c.py", f"x = 0\n\n\n{SECOND}")),
+        load(
+            write_file(tmp_path, "a.py", f"def handle_a(value, other, third):\n{BLOCK}\n{SECOND}")
+        ),
+        load(
+            write_file(tmp_path, "b.py", f"def handle_b(value, other, third):\n{BLOCK}\n{SECOND}")
+        ),
+        load(write_file(tmp_path, "c.py", f"x = 0\n\n\n{SECOND}")),
     )
 
     [candidate] = run(files, HSL104Options(), debug=False)
@@ -150,7 +150,10 @@ def test_copies_of_different_lengths_report_a_line_range(tmp_path: Path) -> None
 
 
 def test_no_copies_gives_no_candidates(tmp_path: Path) -> None:
-    files = (load(write(tmp_path, "a.py", "value = 1\n")), load(write(tmp_path, "b.py", SECOND)))
+    files = (
+        load(write_file(tmp_path, "a.py", "value = 1\n")),
+        load(write_file(tmp_path, "b.py", SECOND)),
+    )
 
     assert run(files, HSL104Options(min_occurrences=2), debug=False) == []
 
@@ -158,7 +161,7 @@ def test_no_copies_gives_no_candidates(tmp_path: Path) -> None:
 def test_debug_reports_how_many_files_jscpd_analyzed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    files = (*copies(tmp_path, "a", "b"), load(write(tmp_path, "tiny.py", "value = 1\n")))
+    files = (*copies(tmp_path, "a", "b"), load(write_file(tmp_path, "tiny.py", "value = 1\n")))
 
     run(files, HSL104Options(), debug=True)
 
@@ -170,7 +173,7 @@ def test_a_py_symlink_to_a_file_without_the_suffix_fails_loudly(
     tmp_path: Path, target: str
 ) -> None:
     files = copies(tmp_path, "a", "b")
-    write(tmp_path, target, f"def handle_c(value, other, third):\n{BLOCK}")
+    write_file(tmp_path, target, f"def handle_c(value, other, third):\n{BLOCK}")
     (tmp_path / "c.py").symlink_to(tmp_path / target)
 
     with pytest.raises(ProjectRuleFailure, match=f"read .*{target} as Python"):

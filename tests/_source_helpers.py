@@ -1,5 +1,6 @@
 """Build the objects a rule test needs from a file on disk."""
 
+import textwrap
 from pathlib import Path
 
 from house_lint.language import Language
@@ -29,3 +30,11 @@ def parse_file(path: Path, root: Path | None = None) -> PythonSource:
     source = parse_python(load(path, root))
     assert not isinstance(source, ParseFailure), source.error
     return source
+
+
+def write_file(root: Path, name: str, content: str) -> Path:
+    """Write dedented content to `root / name`, creating parent directories."""
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(textwrap.dedent(content))
+    return path
