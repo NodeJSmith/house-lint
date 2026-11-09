@@ -51,7 +51,9 @@ Both use tokens or the immediate sibling, not a statement taxonomy.
 ### Pattern 3: Region or block scoping
 
 **Used by:**
-- ESLint `disable`/`enable` and Biome `biome-ignore-start`/`end`: matched by span overlap.
+- ESLint `disable`/`enable`: the region between the markers, matched on the diagnostic's start position (`applyDirectives` compares each directive's location with the problem's start line and column).
+- oxlint block `disable`: matched by span overlap. Its line directives match on the start only.
+- Biome `biome-ignore-start`/`end`: the region between the markers.
 - jscpd `jscpd:ignore-start`/`end` and PMD CPD `CPD-OFF`/`CPD-ON`: matched by markers.
 - Pylint: the block of the def, class, or module whose opening line carries `disable=`. Pylint is the only peer with real AST block scoping, and only for those three constructs.
 
@@ -77,7 +79,7 @@ Both use tokens or the immediate sibling, not a statement taxonomy.
 
 ## Anti-Patterns
 
-- **Matching by overlap with an enclosing node.** oxlint rejects this explicitly. A statement-containment rule has the same risk unless the owner is the innermost node and matching is by equality, as house-lint's Python rule is.
+- **Matching by overlap with an enclosing node.** oxlint rejects this explicitly for line directives. A statement-containment rule has the same risk unless the owner is the innermost node and matching is by equality, as house-lint's Python rule is.
 - **A suppression that silently does nothing.** This is the reported failure in Biome #9469 and react-doctor #158. An unused-suppression check is the mitigation; HSL900 already plays that role for file rules.
 
 ## Gaps
