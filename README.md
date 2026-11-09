@@ -14,7 +14,7 @@ Reviewers stop reading comments that all sound the same, and nobody notices the 
 
 It complements Ruff rather than replacing it. A check belongs here when it targets a pattern AI-assisted code produces and Ruff and the type checker don't already catch it. The rules are opinionated, and you choose which ones to enable. They started as scripts in one project and now live here, so every project gets the same checks from one versioned tool.
 
-Today every rule analyzes one Python file at a time. Next come checks that compare files across a project, starting with duplicate-code detection ([#39](https://github.com/NodeJSmith/house-lint/issues/39)), then complexity and dead code ([#53](https://github.com/NodeJSmith/house-lint/issues/53)).
+Every rule but one analyzes one Python file at a time. The exception is `HSL104`, which finds code copied across a project. More cross-file checks come next: complexity and dead code ([#53](https://github.com/NodeJSmith/house-lint/issues/53)).
 
 ## Quick start
 
