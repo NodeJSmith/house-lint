@@ -74,6 +74,21 @@ class ProjectPhaseResult:
     suppressed_count: int
 
 
+@dataclass(frozen=True)
+class ProjectInputs:
+    """What each enabled project rule analyzes, and which of those files it may report on.
+
+    `reportable` is None when every input file is reportable. With explicit paths, it holds the
+    `LoadedFile.path` of each named file in some project rule's input, so only findings in the
+    named files report. One set serves every rule, since a rule can only locate a finding in its
+    own input. `errors` holds what kept the widening step from finishing.
+    """
+
+    files: Mapping[str, tuple[LoadedFile, ...]]
+    reportable: frozenset[Path] | None = None
+    errors: tuple[LintError, ...] = ()
+
+
 class RunCache:
     """One run's use of the cache: when it reads, when it writes, and when it cleans up.
 
@@ -218,7 +233,19 @@ def run_scan(
         # a cache directory in the project nor reports on one it was never going to use.
         cache.prepare()
     file_phase = run_file_phase(discovered, root=root, config=config, cache=cache, debug=debug)
-    project_phase = run_project_phase(file_phase, config=config, debug=debug)
+    project_inputs = ProjectInputs(file_phase.project_inputs)
+    if paths and not file_phase.aborted:
+        project_inputs = widen_project_inputs(
+            file_phase.project_inputs,
+            frozenset(file.resolved for file in discovered.files),
+            root=root,
+            config=config,
+            use_git=use_git,
+            debug=debug,
+        )
+    project_phase = run_project_phase(
+        project_inputs, aborted=file_phase.aborted, config=config, debug=debug
+    )
     cache.finish()
     return ScanResult(
         root,
@@ -330,8 +357,88 @@ def run_file_phase(
     )
 
 
+def widen_project_inputs(
+    named_inputs: Mapping[str, tuple[LoadedFile, ...]],
+    named_resolved: frozenset[Path],
+    *,
+    root: Path,
+    config: LintConfig,
+    use_git: bool,
+    debug: bool,
+) -> ProjectInputs:
+    """Add the rest of the configured scope to each project rule a named file reached.
+
+    With explicit paths, a project rule still analyzes the whole scope, so a hook run finds the
+    same copies a full run does, and reports only those in the named files. A rule no named file
+    reached keeps its empty input and doesn't run.
+
+    The extra files get no file rules, cache entry, HSL900, or count in `files_scanned`. A named
+    file is skipped by its resolved path, so each file is still read once. An extra file that fails
+    to load is left out, as it would be from a full run's input, and a failed discovery pass becomes
+    an error for each rule that would have run.
+    """
+    widened = [rule for rule, _ in selected_project_rules(config) if named_inputs[rule.id]]
+    if not widened:
+        return ProjectInputs(named_inputs)
+    reportable = frozenset(file.path for files in named_inputs.values() for file in files)
+
+    def blocked(errors: tuple[LintError, ...]) -> ProjectInputs:
+        # No project rule runs, and `errors` says why.
+        return ProjectInputs(
+            {rule_id: () for rule_id in named_inputs}, reportable=reportable, errors=errors
+        )
+
+    try:
+        discovered = discover_files(
+            root,
+            frozenset(language for rule in widened for language in rule.languages),
+            include=config.include,
+            excludes=config.exclude,
+            use_git=use_git,
+        )
+    except DiscoveryError as exc:
+        errors = tuple(
+            error("project-rule", "project", "discovery", exc.error.message, rule_id=rule.id)
+            for rule in widened
+        )
+        return blocked(errors)
+    compiled_per_file_ignores = compile_per_file_ignores(config.per_file_ignores)
+    inputs = {rule_id: list(files) for rule_id, files in named_inputs.items()}
+    for file in discovered.files:
+        if file.resolved in named_resolved:
+            continue
+        language = language_for(file.path)
+        assert language is not None
+        applicable = applicable_rules(
+            config.enabled_rules,
+            compiled_per_file_ignores,
+            file.resolved.relative_to(root).as_posix(),
+            language,
+        )
+        targets = [rule.id for rule in widened if rule.id in applicable]
+        if not targets:
+            continue
+        loaded = open_source(file.path, root=root, resolved_path=file.resolved, debug=debug)
+        if isinstance(loaded, FileScanResult):
+            # A process-boundary failure, already printed under --debug: no project rule runs.
+            return blocked(loaded.errors)
+        if isinstance(loaded, LoadFailure):
+            if debug:
+                print(
+                    f"house-lint: debug: left out of project rules: {loaded.error.path}: "
+                    f"{loaded.error.message}",
+                    file=sys.stderr,
+                )
+            continue
+        for rule_id in targets:
+            inputs[rule_id].append(loaded)
+    return ProjectInputs(
+        {rule_id: tuple(files) for rule_id, files in inputs.items()}, reportable=reportable
+    )
+
+
 def run_project_phase(
-    file_phase: FilePhaseResult, *, config: LintConfig, debug: bool
+    inputs: ProjectInputs, *, aborted: bool, config: LintConfig, debug: bool
 ) -> ProjectPhaseResult:
     """Run each enabled project rule on its files, then apply pragmas. Nothing here is cached.
 
@@ -343,21 +450,24 @@ def run_project_phase(
     exception, from the rule or from resolving its pragmas, is a bug at the process boundary, so it
     ends the phase, keeping results so far.
     """
-    if file_phase.aborted:
+    if aborted:
         return ProjectPhaseResult(findings=(), errors=(), suppressed_count=0)
     findings: list[Finding] = []
-    errors: list[LintError] = []
+    errors: list[LintError] = list(inputs.errors)
     suppressed_count = 0
     pragmas = PragmaClaims()
     for rule, options in selected_project_rules(config):
-        files = file_phase.project_inputs[rule.id]
+        files = inputs.files[rule.id]
         if not files:
             continue
         # The rule's run and its pragma resolution both happen inside the `try`, so a rule's bad
         # output counts as its failure and a rule that fails partway leaves no findings behind.
         try:
             rule_findings, rule_suppressed = expand_candidates(
-                rule.id, rule.run(files, options), pragmas
+                rule.id,
+                rule.run(files, options, debug=debug),
+                pragmas,
+                reportable=inputs.reportable,
             )
         except ProjectRuleFailure as exc:
             errors.append(error("project-rule", "project", "rule-run", str(exc), rule_id=rule.id))
@@ -404,17 +514,25 @@ class PragmaClaims:
 
 
 def expand_candidates(
-    rule_id: str, candidates: list[ProjectCandidate], pragmas: PragmaClaims
+    rule_id: str,
+    candidates: list[ProjectCandidate],
+    pragmas: PragmaClaims,
+    *,
+    reportable: frozenset[Path] | None,
 ) -> tuple[list[Finding], int]:
     """Return one finding per unclaimed candidate location, in order, and the number claimed.
 
-    Each finding relates every other location of its candidate, claimed or not.
+    Each finding relates every other location of its candidate, claimed, unreportable, or not. A
+    location whose file isn't in `reportable` (None means every file is) gets no finding, no pragma
+    check, and no suppressed count.
     """
     findings: list[Finding] = []
     suppressed = 0
     for candidate in candidates:
         related = tuple(location.to_related() for location in candidate.locations)
         for index, location in enumerate(candidate.locations):
+            if reportable is not None and location.file.path not in reportable:
+                continue
             if pragmas.claims(rule_id, location):
                 suppressed += 1
                 continue

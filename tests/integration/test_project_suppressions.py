@@ -1,16 +1,15 @@
 """Whole-run pins for pragmas that suppress project-rule findings, and for `related`.
 
-No shipped rule is a project rule yet, so `register_project_rules` adds a stand-in rule that reports
-one candidate at fixed lines. Everything else runs for real through `cli.check`.
+`register_project_rules` adds a stand-in rule that reports one candidate at fixed lines, so these
+pin the engine apart from HSL104 and jscpd. Everything else runs for real through `cli.check`.
 """
 
 import json
-import textwrap
 from pathlib import Path
 from typing import Any
 
 import pytest
-from _source_helpers import PYTHON_ONLY
+from _source_helpers import PYTHON_ONLY, write_file
 
 from house_lint import cli
 from house_lint import pipeline as pipeline_module
@@ -104,7 +103,7 @@ def at_lines(*sites: tuple[str, int | None]) -> Any:
     A site whose file isn't in the rule's input is skipped. A `None` line is a whole-file location.
     """
 
-    def run(files: tuple[LoadedFile, ...], options: Any) -> list[ProjectCandidate]:
+    def run(files: tuple[LoadedFile, ...], options: Any, *, debug: bool) -> list[ProjectCandidate]:
         by_name = {file.relative_path: file for file in files}
         locations = tuple(
             Location(by_name[name], line, 1 if line else None, line, 2 if line else None)
@@ -118,10 +117,6 @@ def at_lines(*sites: tuple[str, int | None]) -> Any:
 
 def row(rule_id: str, run: Any, languages: frozenset[Language] = PYTHON_ONLY) -> ProjectRule[Any]:
     return project_rule(rule_id, "Test rule", "Registered by a test", "opt-in", run, languages)
-
-
-def write(root: Path, name: str, content: str) -> None:
-    (root / name).write_text(textwrap.dedent(content))
 
 
 def scan(
@@ -167,7 +162,7 @@ def test_a_statement_pragma_claims_an_occurrence_through_its_owner(
     line: int,
     suppressed: bool,
 ) -> None:
-    write(tmp_path, "a.py", content)
+    write_file(tmp_path, "a.py", content)
     register_project_rules(row(RULE, at_lines(("a.py", line))))
 
     code, result = scan(capsys, tmp_path, RULE)
@@ -180,7 +175,7 @@ def test_a_statement_pragma_claims_an_occurrence_through_its_owner(
 def test_a_decorator_line_pragma_at_module_level_is_misplaced_and_claims_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
-    write(
+    write_file(
         tmp_path,
         "a.py",
         f"""\
@@ -207,7 +202,7 @@ def test_a_decorator_line_pragma_at_module_level_is_misplaced_and_claims_nothing
 def test_an_occurrence_past_the_end_of_the_file_stays_visible(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
-    write(tmp_path, "a.py", f"value = 1  # house-lint: ignore[{RULE}] - {REASON}\n")
+    write_file(tmp_path, "a.py", f"value = 1  # house-lint: ignore[{RULE}] - {REASON}\n")
     register_project_rules(row(RULE, at_lines(("a.py", 40))))
 
     code, result = scan(capsys, tmp_path, RULE)
@@ -220,8 +215,8 @@ def test_an_occurrence_past_the_end_of_the_file_stays_visible(
 def test_ignore_file_claims_every_occurrence_in_its_file_only(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
-    write(tmp_path, "a.py", f"# house-lint: ignore-file[{RULE}] - {REASON}\nvalue = 1\n")
-    write(tmp_path, "b.py", "value = 1\n")
+    write_file(tmp_path, "a.py", f"# house-lint: ignore-file[{RULE}] - {REASON}\nvalue = 1\n")
+    write_file(tmp_path, "b.py", "value = 1\n")
     register_project_rules(row(RULE, at_lines(("a.py", 2), ("a.py", None), ("b.py", 1))))
 
     code, result = scan(capsys, tmp_path, RULE)
@@ -234,7 +229,7 @@ def test_ignore_file_claims_every_occurrence_in_its_file_only(
 def test_a_whole_file_occurrence_needs_ignore_file(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
-    write(tmp_path, "a.py", f"value = 1  # house-lint: ignore[{RULE}] - {REASON}\n")
+    write_file(tmp_path, "a.py", f"value = 1  # house-lint: ignore[{RULE}] - {REASON}\n")
     register_project_rules(row(RULE, at_lines(("a.py", None))))
 
     code, result = scan(capsys, tmp_path, RULE)
@@ -246,7 +241,7 @@ def test_a_whole_file_occurrence_needs_ignore_file(
 def test_a_pragma_claims_only_occurrences_of_the_rules_it_names(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
-    write(tmp_path, "a.py", f"value = 1  # house-lint: ignore[{OTHER_RULE}] - {REASON}\n")
+    write_file(tmp_path, "a.py", f"value = 1  # house-lint: ignore[{OTHER_RULE}] - {REASON}\n")
     register_project_rules(row(RULE, at_lines(("a.py", 1))), row(OTHER_RULE, at_lines(("a.py", 1))))
 
     code, result = scan(capsys, tmp_path, RULE, OTHER_RULE)
@@ -259,7 +254,7 @@ def test_a_pragma_claims_only_occurrences_of_the_rules_it_names(
 def test_two_pragmas_claiming_one_occurrence_hide_it_once_with_no_diagnostic(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
-    write(
+    write_file(
         tmp_path,
         "a.py",
         f"""\
@@ -280,7 +275,7 @@ def test_two_pragmas_claiming_one_occurrence_hide_it_once_with_no_diagnostic(
 def test_project_suppressions_join_file_suppressions_in_the_count(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
-    write(
+    write_file(
         tmp_path,
         "a.py",
         f"""\
@@ -299,7 +294,7 @@ def test_project_suppressions_join_file_suppressions_in_the_count(
 def test_a_file_that_fails_to_parse_keeps_its_occurrences_visible(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
-    write(tmp_path, "a.py", f"# house-lint: ignore-file[{RULE}] - {REASON}\ndef broken(\n")
+    write_file(tmp_path, "a.py", f"# house-lint: ignore-file[{RULE}] - {REASON}\ndef broken(\n")
     register_project_rules(row(RULE, at_lines(("a.py", 2))))
 
     code, result = scan(capsys, tmp_path, RULE)
@@ -312,7 +307,7 @@ def test_a_file_that_fails_to_parse_keeps_its_occurrences_visible(
 def test_a_typescript_occurrence_is_not_suppressed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
-    write(tmp_path, "b.ts", f"// house-lint: ignore-file[{RULE}] - {REASON}\nconst a = 1;\n")
+    write_file(tmp_path, "b.ts", f"// house-lint: ignore-file[{RULE}] - {REASON}\nconst a = 1;\n")
     register_project_rules(row(RULE, at_lines(("b.ts", 2)), frozenset({Language.TYPESCRIPT})))
 
     code, result = scan(capsys, tmp_path, RULE)
@@ -329,8 +324,8 @@ def test_suppression_reads_each_file_once_and_works_on_a_cache_hit(
     register_project_rules,
     cache_state: str,
 ) -> None:
-    write(tmp_path, "a.py", f"value = 1  # house-lint: ignore[{RULE}] - {REASON}\n")
-    write(tmp_path, "b.py", "value = 1\n")
+    write_file(tmp_path, "a.py", f"value = 1  # house-lint: ignore[{RULE}] - {REASON}\n")
+    write_file(tmp_path, "b.py", "value = 1\n")
     register_project_rules(
         row(RULE, at_lines(("a.py", 1), ("b.py", 1))),
         row(OTHER_RULE, at_lines(("a.py", 1))),
@@ -371,7 +366,7 @@ def test_a_crash_while_resolving_pragmas_is_that_rules_internal_error(
     capsys: pytest.CaptureFixture[str],
     register_project_rules,
 ) -> None:
-    write(tmp_path, "a.py", "value = 1\n")
+    write_file(tmp_path, "a.py", "value = 1\n")
     register_project_rules(row(OTHER_RULE, at_lines(("a.py", 1))), row(RULE, at_lines(("a.py", 1))))
 
     def crash(*args: Any) -> Any:
@@ -390,9 +385,9 @@ def test_a_crash_while_resolving_pragmas_is_that_rules_internal_error(
 def test_each_finding_relates_every_other_location_of_its_candidate_including_suppressed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
-    write(tmp_path, "a.py", "value = 1\n")
-    write(tmp_path, "b.py", f"value = 1  # house-lint: ignore[{RULE}] - {REASON}\n")
-    write(tmp_path, "c.py", "value = 1\n")
+    write_file(tmp_path, "a.py", "value = 1\n")
+    write_file(tmp_path, "b.py", f"value = 1  # house-lint: ignore[{RULE}] - {REASON}\n")
+    write_file(tmp_path, "c.py", "value = 1\n")
     register_project_rules(row(RULE, at_lines(("c.py", 1), ("a.py", 1), ("b.py", 1))))
 
     code, result = scan(capsys, tmp_path, RULE)
@@ -416,8 +411,8 @@ def test_each_finding_relates_every_other_location_of_its_candidate_including_su
 def test_text_output_names_the_other_locations_on_the_findings_own_line(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
-    write(tmp_path, "a.py", "value = 1\n")
-    write(tmp_path, "b.py", "value = 1\n")
+    write_file(tmp_path, "a.py", "value = 1\n")
+    write_file(tmp_path, "b.py", "value = 1\n")
     register_project_rules(row(RULE, at_lines(("a.py", 1), ("b.py", None))))
 
     assert cli.check(root=tmp_path, select=[RULE], format="text") == 1
@@ -430,11 +425,11 @@ def test_text_output_names_the_other_locations_on_the_findings_own_line(
 def test_a_pragma_in_a_per_file_ignored_file_is_a_disabled_rule_pragma_in_both_phases(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
-    write(
+    write_file(
         tmp_path, "pyproject.toml", f'[tool.house-lint.per-file-ignores]\n"gen.py" = ["{RULE}"]\n'
     )
-    write(tmp_path, "gen.py", f"# house-lint: ignore-file[{RULE}] - {REASON}\nvalue = 1\n")
-    write(tmp_path, "kept.py", "value = 1\n")
+    write_file(tmp_path, "gen.py", f"# house-lint: ignore-file[{RULE}] - {REASON}\nvalue = 1\n")
+    write_file(tmp_path, "kept.py", "value = 1\n")
     register_project_rules(row(RULE, at_lines(("gen.py", 2), ("kept.py", 1))))
 
     code, result = scan(capsys, tmp_path, "HSL002", RULE)

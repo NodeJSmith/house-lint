@@ -56,6 +56,7 @@ def test_console_and_module_have_equivalent_rule_listing(repository: Path) -> No
         "HSL101",
         "HSL102",
         "HSL103",
+        "HSL104",
         "HSL900",
     ]
 
@@ -70,6 +71,7 @@ def test_console_and_module_have_equivalent_rule_listing(repository: Path) -> No
         "HSL101",
         "HSL102",
         "HSL103",
+        "HSL104",
         "HSL900",
     ]
     assert "[default]" in text.stdout

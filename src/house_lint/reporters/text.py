@@ -6,6 +6,9 @@ from typing import Any
 from house_lint.config import config_table_name, discovered_languages, is_standalone_config
 from house_lint.results import RuleList, ScanResult
 
+# A text finding names at most this many related locations, so a line stays readable for a large
+# cluster of copies. JSON lists every one.
+MAX_TEXT_RELATED = 3
 EMPTY_SCAN_MESSAGE = "empty scan: no files selected"
 """The base zero-file-scan sentence, before `zero_file_guidance`'s clause is appended.
 
@@ -95,8 +98,7 @@ def render_text(
     for finding in data["findings"]:
         line = f"{text_location(finding)}: {finding['rule_id']} {finding['message']}"
         if finding["related"]:
-            others = ", ".join(text_location(location) for location in finding["related"])
-            line += f" (also at {others})"
+            line += f" (also at {related_text(finding['related'])})"
         lines.append(line)
     summary = data["summary"]
     lines.append(
@@ -105,6 +107,13 @@ def render_text(
         f"{summary['suppressed_count']} suppressed"
     )
     return "\n".join(lines)
+
+
+def related_text(related: list[dict[str, Any]]) -> str:
+    """Render up to `MAX_TEXT_RELATED` related locations, then how many more there are."""
+    shown = ", ".join(text_location(location) for location in related[:MAX_TEXT_RELATED])
+    hidden = len(related) - MAX_TEXT_RELATED
+    return f"{shown}, and {hidden} more" if hidden > 0 else shown
 
 
 def text_location(location: dict[str, Any]) -> str:

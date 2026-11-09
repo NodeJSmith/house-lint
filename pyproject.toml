@@ -25,6 +25,9 @@ dependencies = [
     "pathspec>=1.0,<2",
 ]
 
+[project.optional-dependencies]
+duplicates = ["jscpd==5.4.1"]
+
 [project.scripts]
 house-lint = "house_lint.cli:main"
 
@@ -34,6 +37,8 @@ dev = [
   "ruff>=0.9",
   "pyright>=1.1",
   "pyyaml>=6.0",
+  # Matches the `duplicates` extra's pin: HSL104's tests run the real tool.
+  "jscpd==5.4.1",
 ]
 
 [build-system]

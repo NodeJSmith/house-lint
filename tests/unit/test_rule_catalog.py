@@ -33,6 +33,7 @@ def test_rule_catalog_has_fixed_metadata_and_derived_selections() -> None:
         "HSL101",
         "HSL102",
         "HSL103",
+        "HSL104",
         "HSL900",
     )
     assert rule_metadata("HSL900").enablement == "always"
@@ -51,15 +52,17 @@ def test_a_repeated_rule_id_is_an_error_naming_it() -> None:
 
 def test_a_rule_id_repeated_across_rule_kinds_is_an_error() -> None:
     row = project_rule(
-        "HSL001", "Name", "Description", "opt-in", lambda files, options: [], frozenset()
+        "HSL001", "Name", "Description", "opt-in", lambda files, options, *, debug: [], frozenset()
     )
 
     with pytest.raises(RuntimeError, match="more than one row for HSL001"):
         rules_by_id((FILE_RULES["HSL001"], row))
 
 
-def test_no_shipped_rule_is_a_project_rule_and_every_file_rule_handles_python() -> None:
-    assert PROJECT_RULES == {}
+def test_hsl104_is_the_only_project_rule_and_every_rule_handles_python() -> None:
+    assert list(PROJECT_RULES) == ["HSL104"]
+    assert is_project_rule("HSL104")
+    assert rule_languages("HSL104") == {Language.PYTHON}
     assert not is_project_rule("HSL001")
     for rule_id in FILE_RULES:
         assert rule_languages(rule_id) == {Language.PYTHON}
