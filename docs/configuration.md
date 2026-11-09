@@ -151,7 +151,7 @@ min_lines = 5
 min_occurrences = 3
 ```
 
-`HSL104.min_tokens` is the fewest tokens a match needs, and `min_lines` the line count a match must exceed: with the default 5, a match spans at least 6 lines. Both go to jscpd unchanged and must be integers from 1 through 100,000. `min_occurrences` is the fewest copies a group needs to report, an integer from 2 through 100,000. Raise `min_tokens` if repeated short test setups are noise in your project, and set `min_occurrences = 2` to flag a block copied even once.
+`HSL104.min_tokens` is the fewest tokens a match needs, and `min_lines` the line count a match must exceed: with the default 5, a match spans at least 6 lines. Both go to jscpd unchanged and must be integers from 1 through 100,000. `min_occurrences` is the fewest places a group needs to report, an integer from 2 through 100,000. Raise `min_tokens` if repeated short test setups are noise in your project, and set `min_occurrences = 2` to flag a block copied even once.
 
 `HSL102.max_lines` must be an integer from 1 through 10,000,000. `HSL103.allowed` must be a non-empty unique array of identifiers or patterns containing exactly one leading `*` followed by an identifier suffix.
 

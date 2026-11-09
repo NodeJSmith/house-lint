@@ -53,7 +53,9 @@ class Recorder:
     order: list[str] | None = None
     rule_id: str = ""
 
-    def __call__(self, files: tuple[LoadedFile, ...], options: Any) -> list[ProjectCandidate]:
+    def __call__(
+        self, files: tuple[LoadedFile, ...], options: Any, *, debug: bool
+    ) -> list[ProjectCandidate]:
         self.calls.append(files)
         self.options.append(options)
         if self.order is not None:

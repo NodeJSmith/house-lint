@@ -463,7 +463,10 @@ def run_project_phase(
         # output counts as its failure and a rule that fails partway leaves no findings behind.
         try:
             rule_findings, rule_suppressed = expand_candidates(
-                rule.id, rule.run(files, options), pragmas, reportable=inputs.reportable
+                rule.id,
+                rule.run(files, options, debug=debug),
+                pragmas,
+                reportable=inputs.reportable,
             )
         except ProjectRuleFailure as exc:
             errors.append(error("project-rule", "project", "rule-run", str(exc), rule_id=rule.id))

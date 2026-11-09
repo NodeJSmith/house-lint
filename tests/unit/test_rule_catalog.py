@@ -52,7 +52,7 @@ def test_a_repeated_rule_id_is_an_error_naming_it() -> None:
 
 def test_a_rule_id_repeated_across_rule_kinds_is_an_error() -> None:
     row = project_rule(
-        "HSL001", "Name", "Description", "opt-in", lambda files, options: [], frozenset()
+        "HSL001", "Name", "Description", "opt-in", lambda files, options, *, debug: [], frozenset()
     )
 
     with pytest.raises(RuntimeError, match="more than one row for HSL001"):

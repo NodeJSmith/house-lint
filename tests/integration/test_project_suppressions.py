@@ -104,7 +104,7 @@ def at_lines(*sites: tuple[str, int | None]) -> Any:
     A site whose file isn't in the rule's input is skipped. A `None` line is a whole-file location.
     """
 
-    def run(files: tuple[LoadedFile, ...], options: Any) -> list[ProjectCandidate]:
+    def run(files: tuple[LoadedFile, ...], options: Any, *, debug: bool) -> list[ProjectCandidate]:
         by_name = {file.relative_path: file for file in files}
         locations = tuple(
             Location(by_name[name], line, 1 if line else None, line, 2 if line else None)

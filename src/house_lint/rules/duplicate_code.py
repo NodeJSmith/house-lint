@@ -1,5 +1,6 @@
 """HSL104: code copied across a project, found by jscpd and grouped into clusters of copies."""
 
+import sys
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -46,14 +47,23 @@ class Occurrence:
         return self.end_line - self.line + 1
 
 
-def run(files: tuple[LoadedFile, ...], options: HSL104Options) -> list[ProjectCandidate]:
+def run(
+    files: tuple[LoadedFile, ...], options: HSL104Options, *, debug: bool
+) -> list[ProjectCandidate]:
     """Report each cluster of at least `min_occurrences` copies as one candidate."""
     # jscpd is given resolved paths, so a `..` or symlinked spelling can't make a file a copy of
     # itself; each finding is still reported against the input record's own spelling.
     by_path: dict[Path, LoadedFile] = {}
     for file in files:
         by_path.setdefault(file.path.resolve(), file)
-    pairs = find_clones(tuple(by_path), min_tokens=options.min_tokens, min_lines=options.min_lines)
+    report = find_clones(tuple(by_path), min_tokens=options.min_tokens, min_lines=options.min_lines)
+    if debug:
+        # A first clue when a known copy isn't reported: jscpd names no file it skipped.
+        print(
+            f"house-lint: debug: HSL104: jscpd analyzed {report.analyzed} of {len(by_path)} files "
+            f"(a file under min_tokens={options.min_tokens} tokens isn't counted)",
+            file=sys.stderr,
+        )
 
     def reported_order(occurrence: Occurrence) -> tuple[str, int, int]:
         return (by_path[occurrence.path].relative_path, occurrence.line, occurrence.column)
@@ -62,7 +72,7 @@ def run(files: tuple[LoadedFile, ...], options: HSL104Options) -> list[ProjectCa
     # output is deterministic.
     found = [
         sorted(cluster, key=reported_order)
-        for cluster in clusters(pairs)
+        for cluster in clusters(report.pairs)
         if len(cluster) >= options.min_occurrences
     ]
     found.sort(key=lambda cluster: reported_order(cluster[0]))
@@ -142,10 +152,12 @@ def occurrence_of(fragment: Fragment, occurrences: list[Occurrence]) -> Occurren
 
 
 def candidate(cluster: list[Occurrence], by_path: dict[Path, LoadedFile]) -> ProjectCandidate:
+    """One candidate per cluster. The message counts places, not copies of one block, because
+    overlapping fragments can join two different blocks into one cluster."""
     counts = sorted({occurrence.line_count for occurrence in cluster})
     lines = str(counts[0]) if len(counts) == 1 else f"{counts[0]}-{counts[-1]}"
     return ProjectCandidate(
-        f"duplicated block of {lines} lines, {len(cluster)} copies",
+        f"duplicated code of {lines} lines in {len(cluster)} places",
         tuple(
             Location(
                 by_path[occurrence.path],

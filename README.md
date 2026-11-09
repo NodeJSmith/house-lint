@@ -149,6 +149,8 @@ repos:
         additional_dependencies: ["jscpd==5.4.1"]
 ```
 
+Turn `HSL104` on with `--select` in the pre-push hook, not with `extend-select` in `pyproject.toml`: config selection also applies to the commit-stage `house-lint` hook, whose environment has no jscpd, so every commit would fail with a `project-rule-error`.
+
 ## Caching
 
 `check` caches each file's result under `<root>/.house-lint-cache/`. The key covers the file's content, the rules and rule options in effect, and the Python version; [configuration](docs/configuration.md#caching) lists every input. A hit skips parsing and rule execution.

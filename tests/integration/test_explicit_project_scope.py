@@ -34,7 +34,9 @@ class Everywhere:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
 
-    def __call__(self, files: tuple[LoadedFile, ...], options: Any) -> list[ProjectCandidate]:
+    def __call__(
+        self, files: tuple[LoadedFile, ...], options: Any, *, debug: bool
+    ) -> list[ProjectCandidate]:
         self.calls.append([file.relative_path for file in files])
         return [ProjectCandidate("everywhere", tuple(Location(file, *SPAN) for file in files))]
 
@@ -282,7 +284,7 @@ def test_hsl104_on_a_named_file_reports_its_copy_of_unnamed_files(
     assert result["errors"] == []
     [finding] = result["findings"]
     assert (finding["path"], finding["line"], finding["column"]) == ("b.py", 1, 13)
-    assert finding["message"] == "duplicated block of 8 lines, 3 copies"
+    assert finding["message"] == "duplicated code of 8 lines in 3 places"
     assert [location["path"] for location in finding["related"]] == ["a.py", "c.py"]
     assert result["files_scanned"] == 1
 

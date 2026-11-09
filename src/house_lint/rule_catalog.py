@@ -49,7 +49,7 @@ class Detector(Protocol[OptionsT_contra]):
 
 class ProjectRun(Protocol[OptionsT_contra]):
     def __call__(
-        self, files: tuple[LoadedFile, ...], options: OptionsT_contra
+        self, files: tuple[LoadedFile, ...], options: OptionsT_contra, *, debug: bool
     ) -> list[ProjectCandidate]: ...
 
 

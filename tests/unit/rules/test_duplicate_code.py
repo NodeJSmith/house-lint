@@ -7,6 +7,7 @@ import pytest
 from _source_helpers import load
 
 from house_lint.jscpd import ClonePair, Fragment
+from house_lint.project_rule import ProjectRuleFailure
 from house_lint.rules.duplicate_code import HSL104Options, Occurrence, clusters, run
 
 A, B, C = Path("/p/a.py"), Path("/p/b.py"), Path("/p/c.py")
@@ -101,9 +102,9 @@ def copies(directory: Path, *names: str) -> tuple:
 def test_a_cluster_becomes_one_candidate_located_at_every_copy(tmp_path: Path) -> None:
     files = copies(tmp_path, "c", "a", "b")
 
-    [candidate] = run(files, HSL104Options())
+    [candidate] = run(files, HSL104Options(), debug=False)
 
-    assert candidate.message == "duplicated block of 8 lines, 3 copies"
+    assert candidate.message == "duplicated code of 8 lines in 3 places"
     assert [
         (loc.file.relative_path, loc.line, loc.column, loc.end_line, loc.end_column)
         for loc in candidate.locations
@@ -114,8 +115,8 @@ def test_a_cluster_becomes_one_candidate_located_at_every_copy(tmp_path: Path) -
 def test_a_cluster_under_the_occurrence_minimum_is_dropped(tmp_path: Path) -> None:
     files = copies(tmp_path, "a", "b")
 
-    assert run(files, HSL104Options()) == []
-    assert len(run(files, HSL104Options(min_occurrences=2))) == 1
+    assert run(files, HSL104Options(), debug=False) == []
+    assert len(run(files, HSL104Options(min_occurrences=2), debug=False)) == 1
 
 
 def test_copies_of_different_lengths_report_a_line_range(tmp_path: Path) -> None:
@@ -125,7 +126,7 @@ def test_copies_of_different_lengths_report_a_line_range(tmp_path: Path) -> None
         load(write(tmp_path, "c.py", f"x = 0\n\n\n{SECOND}")),
     )
 
-    [candidate] = run(files, HSL104Options())
+    [candidate] = run(files, HSL104Options(), debug=False)
 
     counts = sorted(
         location.end_line - location.line + 1
@@ -133,7 +134,7 @@ def test_copies_of_different_lengths_report_a_line_range(tmp_path: Path) -> None
         if location.line is not None and location.end_line is not None
     )
     assert counts[0] < counts[-1]
-    assert candidate.message == f"duplicated block of {counts[0]}-{counts[-1]} lines, 3 copies"
+    assert candidate.message == f"duplicated code of {counts[0]}-{counts[-1]} lines in 3 places"
     c_location = next(loc for loc in candidate.locations if loc.file.relative_path == "c.py")
     assert c_location.line == 4
 
@@ -141,7 +142,29 @@ def test_copies_of_different_lengths_report_a_line_range(tmp_path: Path) -> None
 def test_no_copies_gives_no_candidates(tmp_path: Path) -> None:
     files = (load(write(tmp_path, "a.py", "value = 1\n")), load(write(tmp_path, "b.py", SECOND)))
 
-    assert run(files, HSL104Options(min_occurrences=2)) == []
+    assert run(files, HSL104Options(min_occurrences=2), debug=False) == []
+
+
+def test_debug_reports_how_many_files_jscpd_analyzed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    files = (*copies(tmp_path, "a", "b"), load(write(tmp_path, "tiny.py", "value = 1\n")))
+
+    run(files, HSL104Options(), debug=True)
+
+    assert "HSL104: jscpd analyzed 2 of 3 files" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("target", ["c.txt", "c.foo", "cnoext"])
+def test_a_py_symlink_to_a_file_without_the_suffix_fails_loudly(
+    tmp_path: Path, target: str
+) -> None:
+    files = copies(tmp_path, "a", "b")
+    write(tmp_path, target, f"def handle_c(value, other, third):\n{BLOCK}")
+    (tmp_path / "c.py").symlink_to(tmp_path / target)
+
+    with pytest.raises(ProjectRuleFailure, match=f"read .*{target} as Python"):
+        run((*files, load(tmp_path / "c.py")), HSL104Options(), debug=False)
 
 
 def test_a_symlinked_spelling_of_a_file_is_not_a_copy_of_itself(tmp_path: Path) -> None:
@@ -149,7 +172,7 @@ def test_a_symlinked_spelling_of_a_file_is_not_a_copy_of_itself(tmp_path: Path) 
     (tmp_path / "link.py").symlink_to(tmp_path / "a.py")
     link = load(tmp_path / "link.py")
 
-    assert run((real, link), HSL104Options(min_occurrences=2)) == []
+    assert run((real, link), HSL104Options(min_occurrences=2), debug=False) == []
 
 
 @pytest.mark.parametrize(

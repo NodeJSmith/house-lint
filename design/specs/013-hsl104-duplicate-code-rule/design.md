@@ -1,7 +1,7 @@
 # Design: HSL104 duplicate-code rule
 
 **Date:** 2026-11-09
-**Status:** ratified
+**Status:** built
 **Mode:** sketch
 **Issues:** #39
 **Parent:** design/specs/005-cross-file-rules-and-duplicate-code/design.md
@@ -47,7 +47,7 @@ Out of scope:
 
 ## Posture
 
-- **Failure handling:** fail loudly, carried from the parent posture. When `HSL104` is enabled and jscpd is missing, the wrong version, times out, exits non-zero, or emits output that doesn't parse, the rule raises `ProjectRuleFailure` with a message naming the `house-lint[duplicates]` extra. Other rules' findings still report, and the run fails. There are no retries and no fallback detector, and the subprocess has an explicit timeout.
+- **Failure handling:** fail loudly, carried from the parent posture. When `HSL104` is enabled and jscpd is missing, the wrong version, times out, exits non-zero, or emits output that doesn't parse, the rule raises `ProjectRuleFailure`. A missing or wrong binary, a failed version check, or an unusable report names the `house-lint[duplicates]` extra; a timeout or crash of the analysis run, after the version check passed, names the limit or jscpd's error instead (amended at the ship-time challenge, Finding 3). Other rules' findings still report, and the run fails. There are no retries and no fallback detector, and the subprocess has an explicit timeout.
 - **Compatibility:** break freely, though this change is additive: an opt-in rule and an optional extra. The JSON schema doesn't change, since `related` already ships and there is no group id. Projects that don't enable `HSL104` see identical findings, file counts, and messages.
 - **Scope:** parent Breakdown item 7 (the runner and its `duplicates` extra, the rule, the full-scope pass for explicit paths, and docs), plus one addition ratified at the sketch challenge: the text reporter's cap on related locations (D9). The tuning pass ran during the sketch (D8). Nothing beyond that (see Summary, out of scope).
 - **Rollout:** ship outright. The rule is opt-in, so no flag or staging is needed.
@@ -173,7 +173,7 @@ Copies of one cluster can differ in length (partial copies, D1), so N is this oc
 **Recommendation:** A. It reports what jscpd matched, and the message stays meaningful for merged occurrences.
 **Pick B instead if** mid-line starts look wrong in your editor. **Pick C instead if** you'd rather report token counts and accept that merged occurrences have none.
 **Reversibility:** easy
-**Ratified:** Chose the exact jscpd span converted to 1-based, with the message `duplicated block of N lines, M copies`, over whole-line spans or a token-count message, so the editor lands on the matched code and the message holds for merged copies, accepting that a span can start mid-line. Amended at build: a `ProjectCandidate` carries one message for all its locations, so N can't be each copy's own count. N is the shared line count when every copy has the same length, and a `min-max` range (`duplicated block of 5-8 lines, 3 copies`) when they differ, chosen by the user over the longest copy's count, a per-location message (an engine change), or dropping N.
+**Ratified:** Chose the exact jscpd span converted to 1-based, with the message `duplicated block of N lines, M copies`, over whole-line spans or a token-count message, so the editor lands on the matched code and the message holds for merged copies, accepting that a span can start mid-line. Amended at build: a `ProjectCandidate` carries one message for all its locations, so N can't be each copy's own count. N is the shared line count when every copy has the same length, and a `min-max` range (`duplicated block of 5-8 lines, 3 copies`) when they differ, chosen by the user over the longest copy's count, a per-location message (an engine change), or dropping N. Amended again at the ship-time challenge (Finding 1): the message counts places, `duplicated code of N lines in M places`, chosen over column-aware merging, counting only direct pair partners, or keeping "M copies", because D1's overlap merge can join two different blocks into one cluster, so "M copies" of one block can be false.
 
 ### D6: What is the jscpd timeout?
 
@@ -285,19 +285,23 @@ Facts about the code and the tool:
 
 - [x] Implementation and tests committed
 - [x] Docs
-- [ ] Ship-time challenge
+- [x] Ship-time challenge
 
 **Calls made during the build:**
-- D5's message: amended by the user at build time to a `min-max` line range when copies differ (see D5), because a `ProjectCandidate` has one message for every location.
+- Known issues: `known-issues.md` holds KI-001 (resolved) and KI-002 to KI-007, the rare-case challenge findings the user accepted (Findings 6 and 8-12).
+- D5's message: amended by the user at build time to a `min-max` line range when copies differ, and at the ship-time challenge to count places (see D5).
 - Option upper bounds: 100,000 for each of `min_tokens`, `min_lines`, and `min_occurrences`, in `rules/duplicate_code.py`, well past any real block while still catching a typo'd value.
 - `min_lines` semantics: probed and pinned (`test_a_block_must_span_more_than_min_lines`): jscpd's floor is exclusive, so a match must span more than `min_lines` lines. The docs say so.
-- Every failure message, including the timeout, a non-zero exit, and an unknown name in the report, ends with the install hint naming the extra, as the posture lists. jscpd's last stderr line goes into the non-zero-exit message.
-- The version check runs `jscpd --version` on every HSL104 run, a second short subprocess with the same timeout.
+- Failure messages: every failure of the version check, a missing binary, a missing or unparsable report, and an unknown name in the report end with the install hint. The analysis run's timeout gives the file count and says the limit is fixed, and its non-zero exit carries jscpd's last stderr line, neither with the hint (ship-time challenge, Finding 3).
+- The version check runs `jscpd --version` on every HSL104 run, a second short subprocess.
 - The reportable set (D3 point 6) is keyed by `LoadedFile.path` rather than the `LoadedFile` objects: `LoadedFile` hashes its bytes, and an extra file can't share a path with a named one, since named files are skipped by resolved path.
 - The widening step returns a `ProjectInputs` (files, reportable set, widening errors) that `run_project_phase` takes in place of the `FilePhaseResult`; `FilePhaseResult` itself doesn't change. A failed widening pass reports a `project-rule-error` with operation `discovery` per widened rule, carrying the discovery error's message.
 - The extra files' per-file applies-check runs before the load, so a file no widened rule takes is never read.
 - Text cap format: `(also at a, b, c, and N more)`.
 - jscpd's `maxSize` is set to house-lint's `MAX_SOURCE_BYTES` (as a byte-count string). jscpd's default of 1 MB otherwise drops larger files from the comparison with no error. Found by the pre-commit code review, probed, and pinned with a >1 MiB fixture.
 - Extra files load through `scanner.open_source`, the same process boundary as the file phase: an unexpected exception loading one becomes an internal error, and no project rule runs.
+- Config-key pins (ship-time challenge, Finding 4): `test_copies_differing_only_in_comments_still_match` fails if `"mode": "weak"` is changed to `mild` (mutation-checked). `"gitignore": false` can't be pinned: probed, jscpd 5.4.1 compares an explicitly listed file even when it is gitignored inside a git repo with `gitignore: true`. The key stays as a guard against a later version, and the project-config test pins the user-visible behaviour only.
 - The jscpd version pin appears in the extra, the dev group, and the README's hook example. `test_the_pinned_version_matches_the_extra_the_dev_group_and_the_docs` keeps them equal to `JSCPD_VERSION`.
-- Known issue KI-001: a `.py` symlink to a non-`.py` target is skipped by jscpd, since D3 hands it resolved paths.
+- Known issue KI-001: a `.py` symlink to a non-`.py` target dropped out of jscpd's comparison silently, since D3 hands jscpd resolved paths. Resolved at ship time (next bullet).
+- Skipped-file detection (ship-time challenge, Finding 5, chosen by the user over a debug count alone or accepting): jscpd's report lists no analyzed file outside a clone, so the adapter fails before running jscpd when any resolved path lacks a `.py` suffix, since jscpd picks the language from the suffix and drops unknown ones without counting them. A check on the report's per-format counts was built first and replaced, because a probe showed it misses unknown and missing suffixes. Under `--debug`, the rule prints `jscpd analyzed N of M files` from the report's Python count; files under `min_tokens` tokens aren't counted, so a shortfall is a clue, not proof. Printing it needed `debug` on project rules: `ProjectRun` gains a required keyword-only `debug`, which the pipeline passes.
+- The version check has its own 10-second timeout, `VERSION_TIMEOUT_SECONDS` (ship-time challenge, Finding 7), so a hang there no longer waits out the analysis limit.
