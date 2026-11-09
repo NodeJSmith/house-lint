@@ -11,7 +11,7 @@ Guidance for Claude Code when working in this repository.
 
 ## What this project is
 
-`house-lint` flags habits AI assistants leave in code: filler phrases in comments, function-local imports, constants defined below the first function, runaway file length, and leaked planning tokens. Duplicate-code detection is planned (#39). It started as a port of hassette's ad hoc lint scripts so the maintainer's other projects could share them, and that remains its main audience. It flags patterns, not provenance: never infer or report whether code was AI-written.
+`house-lint` flags habits AI assistants leave in code: filler phrases in comments, function-local imports, constants defined below the first function, runaway file length, leaked planning tokens, and code copied across a project. It started as a port of hassette's ad hoc lint scripts so the maintainer's other projects could share them, and that remains its main audience. It flags patterns, not provenance: never infer or report whether code was AI-written.
 
 Before adding a rule, ask two questions:
 1. Can you name where AI assistants produce this pattern, ideally with an instance from a real repo?
@@ -19,7 +19,7 @@ Before adding a rule, ask two questions:
 
 If the answer to 2 is yes, configure or wrap that tool instead of reimplementing it. If the answer to 1 is no, it's a general style preference and doesn't belong here. Generating a plausible-sounding rule is cheap, so the bar is evidence that the pattern recurs. Rules are opinionated, not a general plugin framework.
 
-Every shipped rule today is a Python, single-file detector. The engine also has a project phase for rules that take the scanned file set, but no shipped rule uses it yet. Cross-file checks (duplicate code #39, complexity and dead code #53) are in scope. TypeScript is not: a TypeScript rule belongs in a JavaScript-native tool, such as an ESLint or oxlint plugin, which gets parsing and disable comments for free (`design/specs/012-typescript-analysis-and-pragmas/design.md`, Addendum). The ratified plan for the engine work is the milestone ledger at `design/specs/005-cross-file-rules-and-duplicate-code/design.md`, as amended by that addendum.
+Every shipped rule is Python-only. All but one are single-file detectors; `HSL104` (duplicate code) is a project rule, run once on the scanned file set, and wraps jscpd. More cross-file checks (complexity and dead code, #53) are in scope. TypeScript is not: a TypeScript rule belongs in a JavaScript-native tool, such as an ESLint or oxlint plugin, which gets parsing and disable comments for free (`design/specs/012-typescript-analysis-and-pragmas/design.md`, Addendum). The ratified plan for the engine work is the milestone ledger at `design/specs/005-cross-file-rules-and-duplicate-code/design.md`, as amended by that addendum.
 
 When a concrete rule or a ratified spec needs the engine to grow, grow the engine, and don't reject an approach because it breaks a single-file assumption. For unrelated changes, keep the diff small. Prefer wrapping a proven external tool over hand-building a complex analyzer.
 
@@ -48,6 +48,7 @@ CI has two workflows. `.github/workflows/ci.yml` runs the tests on Python 3.11 t
 - `discovery.py`: file discovery through `git ls-files` or a plain walk, and configured excludes
 - `language.py`: the `Language` enum and `language_for(path)`, the one place a file's language is decided
 - `source.py`: `load_file`, the one read path every language shares, giving a `LoadedFile` (path and bytes) or a `LoadFailure`
+- `jscpd.py`: finds, version-checks, and runs jscpd, the external tool behind `HSL104`, and parses its report into clone pairs
 - `python_source.py`: `parse_python`, which decodes, tokenizes, and parses a `LoadedFile`, giving a `PythonSource` or a `ParseFailure`
 - `scanner.py`: the process boundaries around loading and parsing one file, running its detectors, and applying suppressions
 - `rule_catalog.py`: the table of rules: each rule's metadata, detector or project run, languages, and options type
@@ -77,7 +78,7 @@ A file rule is a detector `(source: PythonSource, options, *, limit=None) -> lis
 
 If a step here doesn't match the code, the code wins; fix this list in the same PR.
 
-A project rule is `(files: tuple[LoadedFile, ...], options) -> list[ProjectCandidate]`, with a `project_rule(...)` or `configurable_project_rule(...)` row in `PROJECT_RULES` that declares its languages. It runs once per scan, after the file loop, and raises `ProjectRuleFailure` for a failure the user can act on. Each candidate location becomes its own finding, listing the others in `related`, and a pragma in that location's Python file can suppress it. `tests/integration/test_project_phase.py` and `test_project_suppressions.py` show how to test one with `register_project_rules`.
+A project rule is `(files: tuple[LoadedFile, ...], options) -> list[ProjectCandidate]`, with a `project_rule(...)` or `configurable_project_rule(...)` row in `PROJECT_RULES` that declares its languages. It runs once per scan, after the file loop, and raises `ProjectRuleFailure` for a failure the user can act on. Each candidate location becomes its own finding, listing the others in `related`, and a pragma in that location's Python file can suppress it. With explicit paths, the pipeline widens each project rule a named file reached to the whole configured scope (`pipeline.widen_project_inputs`) and reports only locations in the named files; the extra files get no file rules, cache entry, or count. `tests/integration/test_project_phase.py`, `test_project_suppressions.py`, and `test_explicit_project_scope.py` show how to test one with `register_project_rules`. `HSL104`'s tests run the real jscpd from the `dev` group, and a fake binary for its failure paths (`tests/unit/test_jscpd.py`).
 
 IDs: `HSL001`-`HSL0xx` are on by default, `HSL1xx` are opt-in, and `HSL900` is reserved.
 

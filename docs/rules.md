@@ -1,6 +1,6 @@
 # Rules
 
-`house-lint` has fixed rule IDs. Four rules are enabled by default, three are opt-in, and `HSL900` is always enabled.
+`house-lint` has fixed rule IDs. Four rules are enabled by default, four are opt-in, and `HSL900` is always enabled.
 
 Finding messages are human-readable display text and may change. Machine consumers should identify findings by rule ID and location rather than message text.
 
@@ -13,6 +13,7 @@ Finding messages are human-readable display text and may change. Machine consume
 | `HSL101` | Opt-in | Flags built-in and/or configured token families in comments, docstrings, and/or filename segments. Ordinary strings are excluded. |
 | `HSL102` | Opt-in | Flags a file when `len(text.splitlines())` is strictly greater than `max_lines`. |
 | `HSL103` | Opt-in | Flags `except … as name` bindings outside the configured exact/suffix policy. |
+| `HSL104` | Opt-in | Flags each copy of a block of code that appears at least three times across the project. Needs the `duplicates` extra. |
 | `HSL900` | Always | Reports invalid suppression pragmas. It cannot be selected, ignored, or suppressed. |
 
 ## Default rules
@@ -46,6 +47,19 @@ Select `HSL101` to detect its three built-in token families (`AC`/`FR`/`NFR`/`WP
 ### HSL103 — Exception names
 
 `allowed` defaults to `['exc', '*_exc']`. Exact names and a single leading suffix wildcard are supported. Configure it only when your project adopts this naming policy.
+
+### HSL104 — Duplicate code
+
+Flags code copied across the project, the kind a fixture, helper, or `parametrize` would remove. It runs [jscpd](https://github.com/kucherenko/jscpd) 5.4.1 over every Python file in scope, so it needs the `duplicates` extra (`uv add --dev 'house-lint[duplicates]'`, or `uvx --from 'house-lint[duplicates]' house-lint check`). It refuses any other jscpd version. When jscpd is missing, the wrong version, fails, or takes more than two minutes, the run reports a `project-rule-error` naming the extra, and every other rule still reports.
+
+- **What matches.** Exact token sequences, with comments ignored. Docstrings count as code, and identifiers and literals must match exactly, so a copy with a renamed variable is two shorter matches or none. A match needs at least `min_tokens` tokens (default 30) and must span more than `min_lines` lines (default 5).
+- **Copies.** A block copied N times is one group of N copies, and each copy is its own finding, listing the others as `related`. A partial copy joins its group, and overlapping matches in one file count as one copy. Only groups of at least `min_occurrences` copies (default 3) report, so a block copied once is left alone unless you set it to 2.
+- **The message** is `duplicated block of N lines, M copies`, or a range such as `5-8 lines` when the copies differ in length. The location spans from the first matched token to the end of the last.
+- **Suppressing.** A pragma suppresses only the copy in its own file, and that copy still counts toward `min_occurrences`. For generated files, use `exclude` or `per-file-ignores`; a file per-file-ignored for `HSL104` is left out of its comparison entirely.
+- **Explicit paths.** `house-lint check a.py` still compares `a.py` against the whole configured scope, but reports only copies in `a.py`, and `files scanned` counts only the files named. A named file outside `include` is compared too. See [pre-commit](../README.md#pre-commit) for running it before a push.
+- **Every run.** Nothing `HSL104` finds is cached: jscpd runs on every scan that enables it.
+
+jscpd's own `jscpd:ignore` comments are not supported; use house-lint pragmas.
 
 ## Source compatibility matrix
 

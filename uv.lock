@@ -59,8 +59,14 @@ dependencies = [
     { name = "pathspec" },
 ]
 
+[package.optional-dependencies]
+duplicates = [
+    { name = "jscpd" },
+]
+
 [package.dev-dependencies]
 dev = [
+    { name = "jscpd" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pyyaml" },
@@ -70,12 +76,15 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cyclopts", specifier = ">=3.0" },
+    { name = "jscpd", marker = "extra == 'duplicates'", specifier = "==5.4.1" },
     { name = "msgspec", specifier = ">=0.22,<0.23" },
     { name = "pathspec", specifier = ">=1.0,<2" },
 ]
+provides-extras = ["duplicates"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "jscpd", specifier = "==5.4.1" },
     { name = "pyright", specifier = ">=1.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pyyaml", specifier = ">=6.0" },
@@ -89,6 +98,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
+]
+
+[[package]]
+name = "jscpd"
+version = "5.4.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/37/ec72271a6cbc338f1ee40ee0ea996fb2a81a860d5870d44e1afe45f14e34/jscpd-5.4.1-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:eb2a2a05fde9e80a8e36f2773c04abfc747fb974a7000b8940afd9f13acb6563", size = 16612185, upload-time = "2026-10-09T11:39:20.519Z" },
+    { url = "https://files.pythonhosted.org/packages/55/82/61a5f08995122c7d1b2d34668f7d709fac4faaebdd06bd17e0f9c1109736/jscpd-5.4.1-py3-none-macosx_11_0_arm64.whl", hash = "sha256:b561bb670703128dd3aec506d3b9142c3c16e7c5d70dbd40eb9cf1ac4fe24645", size = 16047996, upload-time = "2026-10-09T11:39:23.081Z" },
+    { url = "https://files.pythonhosted.org/packages/61/ce/ebec3fcd4c5472535f3fe6cd233958b4c80c62cd197e57149f30ed1fe4d9/jscpd-5.4.1-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:4ccdba98e13defb62bf19ef928dc2736da7f284345f762a5ed4543c229045703", size = 17579577, upload-time = "2026-10-09T11:39:25.624Z" },
+    { url = "https://files.pythonhosted.org/packages/4c/e1/7b60e0940530c189fe16b35cb59d4172f1288dcf4cc9e38ea83b0c2d33e1/jscpd-5.4.1-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:a3fb1d80c0b40ea72825619b94bd1730d507b05043a84bd813ade66fed96aefc", size = 18416497, upload-time = "2026-10-09T11:39:28.552Z" },
+    { url = "https://files.pythonhosted.org/packages/95/85/84623940b55089d1d89670d1372d4de618b1027fa9f4a3e3856cccfacfef/jscpd-5.4.1-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:061f0fb5bae507994d69fbe97a0936d9252d26740ab00e8b4df11ff0171d70ac", size = 17440402, upload-time = "2026-10-09T11:39:31.249Z" },
+    { url = "https://files.pythonhosted.org/packages/19/7b/53207ef2fd542c5c4f5888d1b43844e55c9d0b1941232aecf375965a741f/jscpd-5.4.1-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:48a1da125cab7f1a2f316002ef22ab65edc1363a2542682f2f2356077efd6d45", size = 18751573, upload-time = "2026-10-09T11:39:34.091Z" },
+    { url = "https://files.pythonhosted.org/packages/58/e3/b8a0bb62fc2917dbee5a57603f9d6d27370a554927495b565c27fe4bd2e3/jscpd-5.4.1-py3-none-win_amd64.whl", hash = "sha256:443f639758c3c99da3664dd26f85d103a38732798cc705b07c3c3dd375cabff9", size = 16509792, upload-time = "2026-10-09T11:39:36.947Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/53/9c84d27de8bfaca486d3efff8de3cdc191bed1960be915fa473e80a6608c/jscpd-5.4.1-py3-none-win_arm64.whl", hash = "sha256:df259a482fc8a0dd44c8eaf268ded5250bd16a9d44fc91d199bcd90d9c2817fe", size = 15805343, upload-time = "2026-10-09T11:39:39.53Z" },
 ]
 
 [[package]]

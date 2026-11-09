@@ -44,6 +44,7 @@ uv run house-lint check
 | `HSL101` | Off | Planning and spec tokens (built-in families like `AC1`, `T05`, `KI-001`, plus your own such as `JIRA-123`) in comments, docstrings, and filenames |
 | `HSL102` | Off | Files longer than a configured line limit (default 800) |
 | `HSL103` | Off | Bound exception names outside an allowed policy (default `exc` or `*_exc`) |
+| `HSL104` | Off | Code copied three or more times across the project, found with jscpd (needs `house-lint[duplicates]`) |
 | `HSL900` | Always | Invalid, unused, conflicting, or malformed suppressions; cannot be disabled |
 
 `house-lint rules --format json` prints the installed rule metadata. The [rule reference](docs/rules.md) describes exactly what each rule flags and what it leaves alone.
@@ -138,6 +139,16 @@ repos:
         require_serial: true
 ```
 
+`HSL104` compares files with jscpd, which takes a few seconds on a large project, so run it before a push rather than on every commit. Given staged files, it still compares them against the whole configured scope and reports only copies in those files. pre-commit installs the hook in its own environment, so it needs jscpd added there:
+
+```yaml
+      - id: house-lint
+        name: house-lint duplicates
+        args: [--select, HSL104]
+        stages: [pre-push]
+        additional_dependencies: ["jscpd==5.4.1"]
+```
+
 ## Caching
 
 `check` caches each file's result under `<root>/.house-lint-cache/`. The key covers the file's content, the rules and rule options in effect, and the Python version; [configuration](docs/configuration.md#caching) lists every input. A hit skips parsing and rule execution.
@@ -153,7 +164,7 @@ A cache failure never fails a scan. house-lint prints one warning for the first 
 
 `--format json` prints one schema-versioned JSON object to stdout (`schema_version` 3) with the root, config, enabled rules, file counts, findings, errors, and summary. Match on rule IDs, locations, and error `code` values. Finding `message` text is for people and may change.
 
-Each finding has a `related` list of the other places the same issue occurs, including ones a pragma suppressed, each with `path`, `line`, `column`, `end_line`, and `end_column`. It is empty for findings from single-file rules. Text output appends the same locations to the finding's line, as `(also at b.py:10:1, c.py)`.
+Each finding has a `related` list of the other places the same issue occurs, including ones a pragma suppressed, each with `path`, `line`, `column`, `end_line`, and `end_column`. It is empty for findings from single-file rules. Text output appends the same locations to the finding's line, as `(also at b.py:10:1, c.py)`, naming at most three and then `and N more`.
 
 | Exit | Meaning |
 | ---: | --- |

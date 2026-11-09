@@ -1,7 +1,7 @@
 """Whole-run pins for pragmas that suppress project-rule findings, and for `related`.
 
-No shipped rule is a project rule yet, so `register_project_rules` adds a stand-in rule that reports
-one candidate at fixed lines. Everything else runs for real through `cli.check`.
+`register_project_rules` adds a stand-in rule that reports one candidate at fixed lines, so these
+pin the engine apart from HSL104 and jscpd. Everything else runs for real through `cli.check`.
 """
 
 import json

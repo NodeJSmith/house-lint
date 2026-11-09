@@ -11,7 +11,7 @@ from house_lint.reporters import (
     shadowed_config_note,
     zero_file_guidance,
 )
-from house_lint.results import Finding, LintError, RuleInfo, RuleList, ScanResult
+from house_lint.results import Finding, LintError, RelatedLocation, RuleInfo, RuleList, ScanResult
 
 
 def _zero_file_note(
@@ -216,3 +216,33 @@ def test_zero_file_guidance_names_a_custom_config_file(tmp_path: Path) -> None:
 
     assert "custom.toml's [tool.house-lint] table" in guidance
     assert "pyproject.toml" not in guidance
+
+
+def _finding_relating(count: int) -> Finding:
+    related = tuple(
+        RelatedLocation(f"copy{index}.py", index, 1, index, 5) for index in range(1, count + 1)
+    )
+    return Finding("HSL104", "a.py", 1, 1, 2, 1, "duplicated block", related)
+
+
+def test_text_reporter_lists_up_to_three_related_locations_unchanged(tmp_path: Path) -> None:
+    result = ScanResult(tmp_path, None, ("HSL104",), 1, (_finding_relating(3),))
+
+    rendered = render_text(result, zero_file_note=None).splitlines()
+
+    assert rendered[4] == (
+        "a.py:1:1: HSL104 duplicated block (also at copy1.py:1:1, copy2.py:2:1, copy3.py:3:1)"
+    )
+
+
+def test_text_reporter_caps_related_locations_while_json_keeps_them_all(tmp_path: Path) -> None:
+    result = ScanResult(tmp_path, None, ("HSL104",), 1, (_finding_relating(20),))
+
+    rendered = render_text(result, zero_file_note=None).splitlines()
+
+    assert rendered[4] == (
+        "a.py:1:1: HSL104 duplicated block "
+        "(also at copy1.py:1:1, copy2.py:2:1, copy3.py:3:1, and 17 more)"
+    )
+    [finding] = json.loads(render_json(result, zero_file_note=None))["findings"]
+    assert len(finding["related"]) == 20

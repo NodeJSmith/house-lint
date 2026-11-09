@@ -1,7 +1,7 @@
 """Whole-run pins for project rules, using rules registered by the test.
 
-No shipped rule is a project rule yet, so `register_project_rules` adds rows to the table. Everything
-else runs for real through `cli.check`.
+`register_project_rules` replaces the project-rule table with stand-in rows, so these pin the engine
+apart from HSL104 and jscpd. Everything else runs for real through `cli.check`.
 """
 
 import gc

@@ -16,7 +16,8 @@ from house_lint.config import (
     load_config,
 )
 from house_lint.language import Language
-from house_lint.rule_catalog import FILE_RULES
+from house_lint.rule_catalog import FILE_RULES, PROJECT_RULES
+from house_lint.rules.duplicate_code import HSL104Options
 from house_lint.rules.exception_names import HSL103Options
 from house_lint.rules.file_length import HSL102Options
 from house_lint.rules.spec_tokens import (
@@ -453,8 +454,8 @@ def test_token_family_constraints_are_config_errors(
         load_config(path)
 
 
-def test_rule_options_hold_a_value_for_every_file_rule() -> None:
-    assert set(LintConfig().rule_options) == set(FILE_RULES)
+def test_rule_options_hold_a_value_for_every_rule() -> None:
+    assert set(LintConfig().rule_options) == set(FILE_RULES) | set(PROJECT_RULES)
 
 
 def test_an_empty_config_resolves_to_the_same_options_as_the_defaults(tmp_path: Path) -> None:
@@ -469,6 +470,7 @@ def test_rule_options_defaults_keep_their_values() -> None:
     assert HSL101Options().max_findings_per_file == 200
     assert HSL102Options().max_lines == 800
     assert HSL103Options().allowed == ("exc", "*_exc")
+    assert HSL104Options() == HSL104Options(min_tokens=30, min_lines=5, min_occurrences=3)
 
 
 def test_a_configured_rule_table_replaces_only_its_own_options(tmp_path: Path) -> None:

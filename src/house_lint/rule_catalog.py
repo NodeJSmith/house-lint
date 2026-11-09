@@ -17,6 +17,7 @@ from house_lint.project_rule import ProjectCandidate
 from house_lint.python_source import PythonSource
 from house_lint.rules import (
     constants_position,
+    duplicate_code,
     exception_names,
     file_length,
     lazy_imports,
@@ -24,6 +25,7 @@ from house_lint.rules import (
     spec_tokens,
     type_checking_position,
 )
+from house_lint.rules.duplicate_code import HSL104Options
 from house_lint.rules.exception_names import HSL103Options
 from house_lint.rules.file_length import HSL102Options
 from house_lint.rules.options import RuleOptions
@@ -208,7 +210,19 @@ FILE_RULES: Mapping[str, FileRule[Any]] = rules_by_id(
     )
 )
 
-PROJECT_RULES: Mapping[str, ProjectRule[Any]] = rules_by_id(())
+PROJECT_RULES: Mapping[str, ProjectRule[Any]] = rules_by_id(
+    (
+        configurable_project_rule(
+            "HSL104",
+            "Duplicate code",
+            "Code copied across the project",
+            "opt-in",
+            duplicate_code.run,
+            frozenset({Language.PYTHON}),
+            HSL104Options,
+        ),
+    )
+)
 
 RULES: Mapping[str, Rule] = rules_by_id(
     (

@@ -173,7 +173,7 @@ Copies of one cluster can differ in length (partial copies, D1), so N is this oc
 **Recommendation:** A. It reports what jscpd matched, and the message stays meaningful for merged occurrences.
 **Pick B instead if** mid-line starts look wrong in your editor. **Pick C instead if** you'd rather report token counts and accept that merged occurrences have none.
 **Reversibility:** easy
-**Ratified:** Chose the exact jscpd span converted to 1-based, with the message `duplicated block of N lines, M copies`, over whole-line spans or a token-count message, so the editor lands on the matched code and the message holds for merged copies, accepting that a span can start mid-line.
+**Ratified:** Chose the exact jscpd span converted to 1-based, with the message `duplicated block of N lines, M copies`, over whole-line spans or a token-count message, so the editor lands on the matched code and the message holds for merged copies, accepting that a span can start mid-line. Amended at build: a `ProjectCandidate` carries one message for all its locations, so N can't be each copy's own count. N is the shared line count when every copy has the same length, and a `min-max` range (`duplicated block of 5-8 lines, 3 copies`) when they differ, chosen by the user over the longest copy's count, a per-location message (an engine change), or dropping N.
 
 ### D6: What is the jscpd timeout?
 
@@ -283,8 +283,21 @@ Facts about the code and the tool:
 
 ## Build
 
-- [ ] Implementation and tests committed
-- [ ] Docs
+- [x] Implementation and tests committed
+- [x] Docs
 - [ ] Ship-time challenge
 
 **Calls made during the build:**
+- D5's message: amended by the user at build time to a `min-max` line range when copies differ (see D5), because a `ProjectCandidate` has one message for every location.
+- Option upper bounds: 100,000 for each of `min_tokens`, `min_lines`, and `min_occurrences`, in `rules/duplicate_code.py`, well past any real block while still catching a typo'd value.
+- `min_lines` semantics: probed and pinned (`test_a_block_must_span_more_than_min_lines`): jscpd's floor is exclusive, so a match must span more than `min_lines` lines. The docs say so.
+- Every failure message, including the timeout, a non-zero exit, and an unknown name in the report, ends with the install hint naming the extra, as the posture lists. jscpd's last stderr line goes into the non-zero-exit message.
+- The version check runs `jscpd --version` on every HSL104 run, a second short subprocess with the same timeout.
+- The reportable set (D3 point 6) is keyed by `LoadedFile.path` rather than the `LoadedFile` objects: `LoadedFile` hashes its bytes, and an extra file can't share a path with a named one, since named files are skipped by resolved path.
+- The widening step returns a `ProjectInputs` (files, reportable set, widening errors) that `run_project_phase` takes in place of the `FilePhaseResult`; `FilePhaseResult` itself doesn't change. A failed widening pass reports a `project-rule-error` with operation `discovery` per widened rule, carrying the discovery error's message.
+- The extra files' per-file applies-check runs before the load, so a file no widened rule takes is never read.
+- Text cap format: `(also at a, b, c, and N more)`.
+- jscpd's `maxSize` is set to house-lint's `MAX_SOURCE_BYTES` (as a byte-count string). jscpd's default of 1 MB otherwise drops larger files from the comparison with no error. Found by the pre-commit code review, probed, and pinned with a >1 MiB fixture.
+- Extra files load through `scanner.open_source`, the same process boundary as the file phase: an unexpected exception loading one becomes an internal error, and no project rule runs.
+- The jscpd version pin appears in the extra, the dev group, and the README's hook example. `test_the_pinned_version_matches_the_extra_the_dev_group_and_the_docs` keeps them equal to `JSCPD_VERSION`.
+- Known issue KI-001: a `.py` symlink to a non-`.py` target is skipped by jscpd, since D3 hands it resolved paths.
