@@ -19,7 +19,7 @@ Before adding a rule, ask two questions:
 
 If the answer to 2 is yes, configure or wrap that tool instead of reimplementing it. If the answer to 1 is no, it's a general style preference and doesn't belong here. Generating a plausible-sounding rule is cheap, so the bar is evidence that the pattern recurs. Rules are opinionated, not a general plugin framework.
 
-Every shipped rule today is a Python, single-file detector. The engine also has a project phase for rules that take the scanned file set, but no shipped rule uses it yet. Cross-file checks (duplicate code #39, complexity and dead code #53) and first-class TypeScript support are in scope. The ratified plan for the engine work is the milestone ledger at `design/specs/005-cross-file-rules-and-duplicate-code/design.md`.
+Every shipped rule today is a Python, single-file detector. The engine also has a project phase for rules that take the scanned file set, but no shipped rule uses it yet. Cross-file checks (duplicate code #39, complexity and dead code #53) are in scope. TypeScript is not: a TypeScript rule belongs in a JavaScript-native tool, such as an ESLint or oxlint plugin, which gets parsing and disable comments for free (`design/specs/012-typescript-analysis-and-pragmas/design.md`, Addendum). The ratified plan for the engine work is the milestone ledger at `design/specs/005-cross-file-rules-and-duplicate-code/design.md`, as amended by that addendum.
 
 When a concrete rule or a ratified spec needs the engine to grow, grow the engine, and don't reject an approach because it breaks a single-file assumption. For unrelated changes, keep the diff small. Prefer wrapping a proven external tool over hand-building a complex analyzer.
 
