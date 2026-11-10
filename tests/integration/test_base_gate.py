@@ -488,6 +488,31 @@ def test_extraction_writes_committed_bytes_and_symlinks(repo: Path, tmp_path: Pa
     assert os.readlink(tree.root / "c.py") == "b.py"
 
 
+def test_an_explicit_config_symlink_is_followed_at_head_not_in_the_working_tree(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    commit(
+        repo,
+        {
+            "enabled.toml": '[tool.house-lint]\nselect = ["HSL002"]\n',
+            "disabled.toml": "[tool.house-lint]\nselect = []\n",
+            "a.py": "x = 1\n",
+        },
+    )
+    (repo / "lint.toml").symlink_to("enabled.toml")
+    commit(repo, {})
+    branch(repo)
+    commit(repo, {"b.py": LAZY_OS})
+    (repo / "lint.toml").unlink()
+    (repo / "lint.toml").symlink_to("disabled.toml")
+
+    code, result = gate(capsys, repo, config=repo / "lint.toml")
+
+    assert code == 1
+    assert reported(result) == [("HSL002", "b.py")]
+    assert result["config"] == str(repo / "lint.toml")
+
+
 def test_a_committed_config_symlinked_outside_the_commit_is_a_usage_error(
     repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

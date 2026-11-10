@@ -201,7 +201,7 @@ def check(
             gate = run_gate(
                 base,
                 root=resolution.root,
-                config=resolution.config if config is not None else None,
+                config=None if config is None else committed_config_path(config),
                 overrides=overrides,
                 read_cache=not no_cache,
                 cache_dir=cache_dir,
@@ -255,6 +255,17 @@ def check(
         shadowed=resolved_shadowed,
     )
     return code
+
+
+def committed_config_path(config: Path) -> Path:
+    """An explicit `--config` as an absolute path with its own name unresolved.
+
+    Its directories are resolved so it lines up with the repository's top level, but a symlinked
+    config file is left for the gate to follow at `HEAD`, where it may point somewhere other than in
+    the working tree.
+    """
+    absolute = config.expanduser().absolute()
+    return absolute.parent.resolve() / absolute.name
 
 
 @app.command
