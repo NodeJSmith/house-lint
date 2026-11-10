@@ -5,7 +5,7 @@ run once per scanned file, or a project rule, run once per scan on the scanned f
 """
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Generic, Literal, Protocol, TypeVar
 
@@ -56,26 +56,25 @@ class ProjectRun(Protocol[OptionsT_contra]):
 
 @dataclass(frozen=True)
 class Rule:
-    """Fixed metadata for one built-in house rule."""
+    """Fixed metadata for one built-in house rule.
+
+    `base_match` pairs the rule's findings across `--base`'s two scans.
+    """
 
     id: str
     name: str
     description: str
     enablement: Enablement
+    base_match: BaseMatcher = field(default=match_by_key, kw_only=True)
 
 
 @dataclass(frozen=True)
 class FileRule(Rule, Generic[OptionsT]):
-    """A rule that runs once per scanned file. `parse_options` is None when it takes no options.
-
-    `base_match` pairs the rule's findings across `--base`'s two scans; None means
-    `matching.match_by_key`.
-    """
+    """A rule that runs once per scanned file. `parse_options` is None when it takes no options."""
 
     detect: Detector[OptionsT]
     parse_options: Callable[[Any], OptionsT] | None = None
     languages: frozenset[Language] = _FILE_RULE_LANGUAGES
-    base_match: BaseMatcher | None = None
 
 
 @dataclass(frozen=True)
@@ -83,14 +82,12 @@ class ProjectRule(Rule, Generic[OptionsT]):
     """A rule that runs once per scan, after the file loop, on the files it applies to.
 
     `run` raises `ProjectRuleFailure` when it can't run for a reason the user can act on.
-    `parse_options` is None when it takes no options. `base_match` pairs the rule's findings
-    across `--base`'s two scans; None means `matching.match_by_key`.
+    `parse_options` is None when it takes no options.
     """
 
     run: ProjectRun[OptionsT]
     languages: frozenset[Language]
     parse_options: Callable[[Any], OptionsT] | None = None
-    base_match: BaseMatcher | None = None
 
 
 def file_rule(
@@ -109,7 +106,7 @@ def configurable_rule(
     options_type: type[ConfigurableOptionsT],
     *,
     parse: Callable[[Any], ConfigurableOptionsT] | None = None,
-    base_match: BaseMatcher | None = None,
+    base_match: BaseMatcher = match_by_key,
 ) -> FileRule[Any]:
     """Build the row for a file rule with options.
 
@@ -150,7 +147,7 @@ def configurable_project_rule(
     languages: frozenset[Language],
     options_type: type[ConfigurableOptionsT],
     *,
-    base_match: BaseMatcher | None = None,
+    base_match: BaseMatcher = match_by_key,
 ) -> ProjectRule[Any]:
     """Build the row for a project rule with options. See `configurable_rule` for why."""
     return ProjectRule(
@@ -282,11 +279,7 @@ def is_project_rule(rule_id: str) -> bool:
 
 def base_matcher(rule_id: str) -> BaseMatcher:
     """Return how `--base` pairs a known rule's findings across its two scans."""
-    rule = RULES[rule_id]
-    # HSL900's row is a bare `Rule`, with no matcher of its own.
-    if isinstance(rule, (FileRule, ProjectRule)) and rule.base_match is not None:
-        return rule.base_match
-    return match_by_key
+    return RULES[rule_id].base_match
 
 
 def rule_ids() -> tuple[str, ...]:

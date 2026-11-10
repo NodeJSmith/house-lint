@@ -152,20 +152,20 @@ def test_moving_old_findings_into_a_new_module_passes(
     assert result["findings"] == []
 
 
-def test_a_finding_added_above_identical_old_ones_is_the_one_reported(
+def test_a_finding_added_beside_identical_old_ones_counts_once(
     repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     commit(repo, {"m.py": LAZY_OS + LAZY_OS.replace("where", "there")})
     branch(repo)
-    commit(
-        repo,
-        {"m.py": LAZY_OS.replace("where", "first") + LAZY_OS + LAZY_OS.replace("where", "there")},
-    )
+    added = LAZY_OS.replace("where", "first")
+    commit(repo, {"m.py": added + LAZY_OS + LAZY_OS.replace("where", "there")})
 
     code, result = gate(capsys, repo)
 
+    # Exactly one is new. Which identical one is reported is first-come, not the added line.
     assert code == 1
-    assert [(f["path"], f["line"]) for f in result["findings"]] == [("m.py", 2)]
+    assert reported(result) == [("HSL002", "m.py")]
+    assert result["base"]["preexisting_count"] == 2
 
 
 def test_editing_inside_a_flagged_span_reports_it_again(
@@ -265,7 +265,8 @@ def test_a_ref_that_names_no_commit_fails_the_run(
     code, result = gate(capsys, repo, ref)
 
     assert code == 3
-    assert result["errors"][0]["message"] == f"--base {ref!r} does not name a commit"
+    assert result["errors"][0]["message"].startswith(f"--base {ref!r} does not name a commit; ")
+    assert "fetch full history" in result["errors"][0]["message"]
 
 
 def test_no_merge_base_fails_the_run(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -376,7 +377,7 @@ def test_an_explicit_config_is_read_from_the_head_commit_at_the_same_path(
     assert result["config"] == str(repo / "lint" / "custom.toml")
 
 
-def test_an_explicit_config_missing_from_the_head_commit_means_the_built_in_config(
+def test_an_explicit_config_not_committed_at_head_is_a_usage_error(
     repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     commit(repo, {"a.py": "x = 1\n"})
@@ -386,9 +387,10 @@ def test_an_explicit_config_missing_from_the_head_commit_means_the_built_in_conf
 
     code, result = gate(capsys, repo, config=repo / "house-lint.toml")
 
-    assert code == 1
-    assert result["config"] is None
-    assert reported(result) == [("HSL002", "b.py")]
+    assert code == 2
+    assert result["errors"][0]["message"] == (
+        "--config house-lint.toml is not committed at HEAD; --base reads the config from the commit"
+    )
 
 
 def test_a_config_outside_the_repository_is_a_usage_error(
@@ -409,3 +411,94 @@ def test_a_config_outside_the_repository_is_a_usage_error(
 
     assert code == 2
     assert "--config to be inside the git repository" in result["errors"][0]["message"]
+
+
+def test_fail_on_empty_judges_the_head_scan(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    commit(repo, {"a.py": "x = 1\n"})
+    branch(repo)
+    commit(repo, {"a.py": None, "notes.txt": "no python here\n"})
+
+    code, result = gate(capsys, repo, fail_on_empty=True)
+
+    assert code == 1
+    assert result["files_scanned"] == 0
+
+
+def test_span_text_is_decoded_as_the_python_layer_decodes_it(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    latin = "# -*- coding: latin-1 -*-\n# \xe9t\xe9\n" + LAZY_JSON
+    bom = "\ufeff" + LAZY_OS
+    (repo / "latin.py").write_bytes(latin.encode("latin-1"))
+    (repo / "bom.py").write_bytes(bom.encode("utf-8"))
+    commit(repo, {})
+    branch(repo)
+    # Moved down a line each: the findings pair on their decoded text, not their position.
+    (repo / "latin.py").write_bytes(latin.replace("def load", "\ndef load").encode("latin-1"))
+    (repo / "bom.py").write_bytes(("\ufeff\n" + LAZY_OS).encode("utf-8"))
+    commit(repo, {})
+
+    code, result = gate(capsys, repo)
+
+    assert code == 0
+    assert result["base"]["preexisting_count"] == 2
+
+
+def test_command_line_selection_reaches_both_scans(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    commit(repo, {"old.py": LAZY_JSON})
+    branch(repo)
+    commit(repo, {"new.py": "def where():\n    import os\n    return os\nLIMIT = 3\n"})
+
+    code, result = gate(capsys, repo, ignore=["HSL002"])
+
+    assert code == 1
+    assert reported(result) == [("HSL004", "new.py")]
+    assert result["base"]["preexisting_count"] == 0
+
+
+def test_an_hsl900_finding_pairs_like_any_other(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stale = "x = 1  # house-lint: ignore[HSL002]\n"
+    commit(repo, {"old.py": stale})
+    branch(repo)
+    commit(repo, {"old.py": "\n" + stale, "new.py": "y = 2  # house-lint: ignore[HSL004]\n"})
+
+    code, result = gate(capsys, repo)
+
+    assert code == 1
+    assert reported(result) == [("HSL900", "new.py")]
+
+
+def test_an_error_from_the_head_scan_says_so(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    commit(repo, {"a.py": "x = 1\n"})
+    branch(repo)
+    commit(repo, {"a.py": "def (:\n"})
+
+    code, result = gate(capsys, repo)
+
+    assert code == 3
+    [err] = result["errors"]
+    assert err["path"] == "a.py"
+    assert err["message"].startswith("head run: ")
+
+
+def test_a_line_finding_on_a_non_ascii_line_keys_on_its_whole_line(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # HSL002 is off, so its pragma is an HSL900 finding.
+    config = '[tool.house-lint]\nselect = ["HSL003"]\n'
+    old = "x = 1  # house-lint: ignore[HSL002] \u2014 \u00e9t\u00e9 one\n"
+    commit(repo, {"pyproject.toml": config, "a.py": old})
+    branch(repo)
+    # The same pragma and message, differing only in the line's last characters.
+    commit(repo, {"a.py": old + old.replace("one", "two")})
+
+    code, result = gate(capsys, repo)
+
+    assert code == 1
+    assert [(f["path"], f["line"]) for f in result["findings"]] == [("a.py", 2)]

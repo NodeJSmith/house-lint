@@ -10,20 +10,18 @@ import os
 import tempfile
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field, replace
-from difflib import SequenceMatcher
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from house_lint.config import ConfigError, LintConfig, SelectionOverrides
 from house_lint.discovery import (
     GitFailure,
-    ProjectResolution,
     inside_repository,
     resolve_project,
     run_git,
 )
 from house_lint.language import Language, language_for
-from house_lint.matching import LineMap, RenameMap, SpanText, strip_whitespace
+from house_lint.matching import RenameMap, SpanText, strip_whitespace
 from house_lint.pipeline import CacheLocation, run_scan
 from house_lint.python_source import decode_python
 from house_lint.results import BaseComparison, Finding, LintError, ScanResult, error
@@ -47,22 +45,10 @@ class Commits:
 
 @dataclass(frozen=True)
 class Tree:
-    """One commit's tracked files under `directory`, and the project root mapped into it.
-
-    `read_back` holds each root-relative file's decoded lines once read, or None for a file that
-    couldn't be loaded or decoded, so span text and the line map share one read per file.
-    """
+    """One commit's tracked files under `directory`, and the project root mapped into it."""
 
     directory: Path
     root: Path
-    read_back: dict[str, list[str] | None] = field(
-        default_factory=lambda: dict[str, list[str] | None](), compare=False
-    )
-
-    def lines(self, relative: str) -> list[str] | None:
-        if relative not in self.read_back:
-            self.read_back[relative] = file_lines(self.root, relative)
-        return self.read_back[relative]
 
     def in_project(self, message: str, top: Path) -> str:
         """`message` naming the repository's paths rather than this temporary tree's."""
@@ -130,10 +116,9 @@ def run_gate(
             new = new_findings(
                 head_result.findings,
                 base_result.findings,
-                head_text=span_texts(head_result.findings, head_tree),
-                base_text=span_texts(base_result.findings, base_tree),
+                head_text=span_texts(head_result.findings, head_tree.root),
+                base_text=span_texts(base_result.findings, base_tree.root),
                 renames=renames,
-                line_map=line_map(head_result.findings, head_tree, base_tree, renames),
             )
             errors = (
                 *labelled(head_result.errors, "head", head_tree, top),
@@ -180,7 +165,7 @@ def resolve_commits(top: Path, ref: str) -> Commits:
     try:
         ref_commit = rev_parse(top, "--end-of-options", f"{ref}^{{commit}}")
     except GitFailure as exc:
-        raise GateFailure(f"--base {ref!r} does not name a commit") from exc
+        raise GateFailure(f"--base {ref!r} does not name a commit; {GIT_HINT}") from exc
     try:
         head = rev_parse(top, "HEAD^{commit}")
     except GitFailure as exc:
@@ -249,8 +234,9 @@ def load_head_config(
 ) -> tuple[Path | None, LintConfig]:
     """Load the config that applies at the head commit, and its path in the project.
 
-    An explicit `--config` is looked up at the same repository path in the head commit, and with
-    none there, the built-in config applies. Otherwise the root's own config sources at the head
+    An explicit `--config` is looked up at the same repository path in the head commit, and is a
+    `ConfigError` when the commit has no file there: the user named it, so it never silently
+    gives way to the built-in config. Otherwise the root's own config sources at the head
     commit decide, as in a normal run, with the root passed explicitly so nothing above it is read.
     The returned path is built from the project's own paths, never by un-mapping the resolved one,
     which a symlinked config could take outside the extraction.
@@ -259,12 +245,14 @@ def load_head_config(
         if config is None:
             resolution = resolve_project(root=head_tree.root)
         else:
-            candidate = head_tree.directory / config.relative_to(top)
-            resolution = (
-                resolve_project(root=head_tree.root, config=candidate)
-                if candidate.is_file()
-                else ProjectResolution(head_tree.root, None)
-            )
+            committed = config.relative_to(top)
+            candidate = head_tree.directory / committed
+            if not candidate.is_file():
+                raise ConfigError(
+                    f"--config {committed.as_posix()} is not committed at HEAD; "
+                    "--base reads the config from the commit"
+                )
+            resolution = resolve_project(root=head_tree.root, config=candidate)
         loaded = overrides.load(resolution.config)
     except ConfigError as exc:
         raise ConfigError(head_tree.in_project(str(exc), top)) from exc
@@ -281,7 +269,6 @@ def new_findings(
     head_text: SpanText,
     base_text: SpanText,
     renames: RenameMap,
-    line_map: LineMap,
 ) -> tuple[Finding, ...]:
     """Pair each rule's findings with its own matcher and return the head findings left over."""
     base_by_rule = by_rule(base_findings)
@@ -295,7 +282,6 @@ def new_findings(
                 head_text=head_text,
                 base_text=base_text,
                 renames=renames,
-                line_map=line_map,
             )
         )
     return tuple(new)
@@ -308,7 +294,7 @@ def by_rule(findings: Iterable[Finding]) -> Mapping[str, list[Finding]]:
     return grouped
 
 
-def span_texts(findings: Iterable[Finding], tree: Tree) -> dict[Finding, str]:
+def span_texts(findings: Iterable[Finding], root: Path) -> dict[Finding, str]:
     """Each located finding's span text, whitespace removed, read back from its extraction.
 
     Read through `load_file`, so containment and the size bound apply as in the scan, and decoded
@@ -323,37 +309,12 @@ def span_texts(findings: Iterable[Finding], tree: Tree) -> dict[Finding, str]:
             located[finding.path].append(finding)
     texts: dict[Finding, str] = {}
     for relative, file_findings in located.items():
-        lines = tree.lines(relative)
+        lines = file_lines(root, relative)
         if lines is None:
             continue
         for finding in file_findings:
             texts[finding] = strip_whitespace(span_of(lines, finding))
     return texts
-
-
-def line_map(
-    head_findings: Iterable[Finding], head_tree: Tree, base_tree: Tree, renames: RenameMap
-) -> LineMap:
-    """Map each unchanged line of every head file with a finding to its line at the base commit.
-
-    A file that couldn't be read back at either commit, or that didn't exist at base, is left out,
-    as is one whose findings have no line (HSL102's), since only a line can be mapped. difflib's
-    default junk heuristic stays on: without it, a long file of repeated lines diffs in quadratic
-    time.
-    """
-    mapped: dict[str, dict[int, int]] = {}
-    for relative in {finding.path for finding in head_findings if finding.line is not None}:
-        head_lines = head_tree.lines(relative)
-        base_lines = base_tree.lines(renames.get(relative, relative))
-        if head_lines is None or base_lines is None:
-            continue
-        diff = SequenceMatcher(None, base_lines, head_lines)
-        mapped[relative] = {
-            block.b + offset + 1: block.a + offset + 1
-            for block in diff.get_matching_blocks()
-            for offset in range(block.size)
-        }
-    return mapped
 
 
 def file_lines(root: Path, relative: str) -> list[str] | None:

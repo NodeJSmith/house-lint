@@ -7,7 +7,7 @@ from typing import Annotated
 from msgspec import Meta
 
 from house_lint.analysis import CandidateFinding, SourceKind, append_candidate
-from house_lint.matching import LineMap, RenameMap, SpanText
+from house_lint.matching import RenameMap, SpanText
 from house_lint.python_source import PythonSource
 from house_lint.results import Finding
 from house_lint.rules.options import RuleOptions
@@ -67,7 +67,6 @@ def match_new(
     head_text: SpanText,
     base_text: SpanText,
     renames: RenameMap,
-    line_map: LineMap,
 ) -> tuple[Finding, ...]:
     """Report a too-long head file only if it has more lines than it had at base.
 

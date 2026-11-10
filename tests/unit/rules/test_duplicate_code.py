@@ -211,9 +211,7 @@ def copy_at(path: str, line: int, end_line: int, places: int = 3) -> Finding:
 
 
 def added(head: dict[Finding, str], base: dict[Finding, str], renames=None) -> tuple[Finding, ...]:
-    return match_new(
-        list(head), list(base), head_text=head, base_text=base, renames=renames or {}, line_map={}
-    )
+    return match_new(list(head), list(base), head_text=head, base_text=base, renames=renames or {})
 
 
 def test_a_fourth_copy_is_the_only_new_occurrence_though_the_message_changed() -> None:

@@ -45,7 +45,7 @@ def hsl102(path: str, lines: int, threshold: int = 800) -> Finding:
 
 
 def ratchet(head: list[Finding], base: list[Finding], renames=None) -> tuple[Finding, ...]:
-    return match_new(head, base, head_text={}, base_text={}, renames=renames or {}, line_map={})
+    return match_new(head, base, head_text={}, base_text={}, renames=renames or {})
 
 
 def test_the_line_count_round_trips_through_the_message() -> None:

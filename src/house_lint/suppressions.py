@@ -406,15 +406,15 @@ def _conflicting_claims(claims: list[_Claim]) -> set[int]:
 
 
 def _diagnostic(source: PythonSource, token: Token, message: str) -> CandidateFinding:
-    line, column = token.start
+    (line, column), (end_line, end_column) = token.start, token.end
     return CandidateFinding(
         ALWAYS_ON_RULE_ID,
         source.relative_path,
         message,
         line,
-        column + 1,
-        token.end[0],
-        token.end[1] + 1,
+        source.byte_column(line, column),
+        end_line,
+        source.byte_column(end_line, end_column),
         SourceKind.NO_OWNER,
     )
 

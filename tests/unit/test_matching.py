@@ -8,14 +8,13 @@ def finding(path: str, line: int, message: str = "import inside function body") 
     return Finding("HSL002", path, line, 5, line, 16, message)
 
 
-def new(head, base, *, head_text=None, base_text=None, renames=None, line_map=None):
+def new(head, base, *, head_text=None, base_text=None, renames=None):
     return match_by_key(
         head,
         base,
         head_text=head_text or {},
         base_text=base_text or {},
         renames=renames or {},
-        line_map=line_map or {},
     )
 
 
@@ -83,14 +82,3 @@ def test_a_finding_without_text_keys_on_its_message_alone() -> None:
     assert new([finding("b.py", 7, "other message")], [old]) == (
         finding("b.py", 7, "other message"),
     )
-
-
-def test_within_a_file_the_line_map_decides_which_identical_finding_is_new() -> None:
-    base = [finding("m.py", 2), finding("m.py", 5)]
-    head = [finding("m.py", 2), finding("m.py", 5), finding("m.py", 8)]
-    text = {item: "importos" for item in head + base}
-
-    # A function was inserted at the top: old lines 2 and 5 are now 5 and 8.
-    result = new(head, base, head_text=text, base_text=text, line_map={"m.py": {5: 2, 8: 5}})
-
-    assert result == (head[0],)

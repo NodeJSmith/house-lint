@@ -5,7 +5,7 @@ import traceback
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypeAlias
+from typing import Self, TypeAlias
 
 from house_lint.cache import (
     CachedFileResult,
@@ -102,7 +102,7 @@ class CacheLocation:
     managed: bool
 
     @classmethod
-    def for_project(cls, root: Path, cache_dir: Path | None) -> "CacheLocation":
+    def for_project(cls, root: Path, cache_dir: Path | None) -> Self:
         """`cache_dir` as the user gave it, or house-lint's default under `root` when None."""
         if cache_dir is None:
             return cls(default_cache_base(root), managed=True)

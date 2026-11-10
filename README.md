@@ -157,14 +157,15 @@ Turn `HSL104` on with `--select` in the pre-push hook, not with `extend-select` 
 house-lint check --base origin/main
 ```
 
-`--base <ref>` reports only the findings the `HEAD` commit introduced since its merge-base with `<ref>`, so a project with a backlog can still fail a PR that adds to it. house-lint extracts both commits from git into temporary directories and scans each one, so uncommitted and untracked files never count. Both scans use the config committed at `HEAD`: a PR that turns on a rule is judged only on the new instances it adds, and an uncommitted config edit is ignored. An explicit `--config` is read from the same path in `HEAD`, or the built-in config is used when `HEAD` has none there.
+`--base <ref>` reports only the findings the `HEAD` commit introduced since its merge-base with `<ref>`, so a project with a backlog can still fail a PR that adds to it. house-lint extracts both commits from git into temporary directories and scans each one, so uncommitted and untracked files never count. Both scans use the config committed at `HEAD`: a PR that turns on a rule is judged only on the new instances it adds, and an uncommitted config edit is ignored. An explicit `--config` is read from the same path in `HEAD`, and is a usage error when it isn't committed there.
 
-A finding at `HEAD` counts as old when it pairs with a finding at the merge-base: the same rule, message, and code, ignoring whitespace. Moving code to another file or reformatting it keeps it old, while editing inside a flagged statement reports it again. Matching counts copies, so a second identical finding beside an old one is new. `HSL102` reports a file only if it has more lines than it had at the merge-base, following renames, and `HSL104` reports only the copies a PR added (see [rules](docs/rules.md)).
+A finding at `HEAD` counts as old when it pairs with a finding at the merge-base: the same rule, message, and code, ignoring whitespace. Moving code to another file or reformatting it keeps it old, while editing inside a flagged statement reports it again. Matching counts copies, so a second identical finding beside an old one is new. Among identical findings in one file the count is exact, but the one reported may be an older copy rather than the line the branch added. `HSL102` reports a file only if it has more lines than it had at the merge-base, following renames, and `HSL104` reports only the copies a PR added (see [rules](docs/rules.md)).
 
 - `--base` takes no paths and can't be combined with `--no-git`. In a pre-commit hook, set `pass_filenames: false`.
 - It needs the merge-base in the clone. In GitHub Actions, check out with `fetch-depth: 0`.
 - A ref that names no commit, a missing merge-base, or an error from either scan fails the run with exit code 3. An error says which scan it came from (`base run:` or `head run:`), so a parse error that exists only at the merge-base also fails the gate.
-- Both scans share the project's cache, so a repeated run is fast.
+- Both scans share the project's cache, so file rules are fast on a repeated run. `HSL104` isn't cached, so jscpd runs on both commits every time.
+- `--fail-on-empty` judges the head commit's scan.
 
 ```yaml
 # .github/workflows/lint.yml
@@ -195,6 +196,8 @@ A cache failure never fails a scan. house-lint prints one warning for the first 
 `--format json` prints one schema-versioned JSON object to stdout (`schema_version` 3) with the root, config, enabled rules, file counts, findings, errors, and summary. Match on rule IDs, locations, and error `code` values. Finding `message` text is for people and may change.
 
 A `--base` run adds a `base` object with the `ref` as given, the `base_commit` (the merge-base) and `head_commit` it compared, and `preexisting_count`, the number of findings it left out as old. Text output prints the same as a `base:` line before the summary.
+
+Lines and columns are 1-based, columns count UTF-8 bytes, and `end_column` is exclusive.
 
 Each finding has a `related` list of the other places the same issue occurs, including ones a pragma suppressed, each with `path`, `line`, `column`, `end_line`, and `end_column`. It is empty for findings from single-file rules. Text output appends the same locations to the finding's line, as `(also at b.py:10:1, c.py)`, naming at most three and then `and N more`.
 

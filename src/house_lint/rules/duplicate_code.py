@@ -10,7 +10,7 @@ from typing import Annotated
 from msgspec import Meta
 
 from house_lint.jscpd import ClonePair, Fragment, find_clones
-from house_lint.matching import LineMap, RenameMap, SpanText, exact_passes
+from house_lint.matching import RenameMap, SpanText, exact_passes
 from house_lint.project_rule import Location, ProjectCandidate
 from house_lint.results import Finding
 from house_lint.rules.options import RuleOptions
@@ -181,7 +181,6 @@ def match_new(
     head_text: SpanText,
     base_text: SpanText,
     renames: RenameMap,
-    line_map: LineMap,
 ) -> tuple[Finding, ...]:
     """Report a head occurrence only when it pairs with no base occurrence, so only added copies.
 
@@ -202,7 +201,6 @@ def match_new(
         head_text=head_text,
         base_text=base_text,
         renames=renames,
-        line_map=line_map,
     )
     for same_file in (True, False):
         unpaired: list[Finding] = []

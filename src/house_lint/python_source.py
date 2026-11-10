@@ -56,6 +56,14 @@ class PythonSource:
             lines.pop()
         return lines
 
+    def byte_column(self, line: int, column: int) -> int:
+        """The 1-based UTF-8 byte column of 0-based character `column` on 1-based `line`.
+
+        A finding's columns are UTF-8 byte offsets, as the AST reports them. The tokenizer and
+        `lines` count characters, so a finding built from either converts here.
+        """
+        return len(self.lines[line - 1][:column].encode()) + 1
+
     @cached_property
     def comments(self) -> dict[int, str]:
         return {
