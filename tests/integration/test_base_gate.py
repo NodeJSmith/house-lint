@@ -246,6 +246,39 @@ def test_an_unparsable_working_tree_config_is_ignored(
     assert result["config"] == str(repo / "pkg" / "pyproject.toml")
 
 
+def test_an_unparsable_unrelated_pyproject_does_not_claim_the_root(
+    repo: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = '[house-lint]\nselect = ["HSL002"]\n'
+    commit(repo, {"house-lint.toml": config, "pkg/a.py": "x = 1\n"})
+    branch(repo)
+    commit(repo, {"pkg/b.py": LAZY_OS})
+    (repo / "pkg" / "pyproject.toml").write_text("[project\n")
+    monkeypatch.chdir(repo / "pkg")
+
+    code = cli.check(base="main", format="json")
+    result = json.loads(capsys.readouterr().out)
+
+    assert code == 1
+    assert result["root"] == str(repo)
+    assert result["config"] == str(repo / "house-lint.toml")
+
+
+def test_an_uncommitted_standalone_config_is_neither_used_nor_reported_as_shadowing(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    commit(repo, {"pyproject.toml": '[tool.house-lint]\nselect = ["HSL002"]\n', "a.py": "x=1\n"})
+    branch(repo)
+    commit(repo, {"b.py": LAZY_OS})
+    (repo / "house-lint.toml").write_text("[house-lint\n")
+
+    code, result = gate(capsys, repo)
+
+    assert code == 1
+    assert result["config"] == str(repo / "pyproject.toml")
+    assert "shadowed_config" not in result
+
+
 def test_a_project_below_the_repository_top_level_is_gated_from_its_own_root(
     repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -276,6 +309,7 @@ def test_paths_and_no_git_are_usage_errors(
     code, result = gate(capsys, repo, **kwargs)
 
     assert code == 2
+    assert result["errors"][0]["kind"] == "config"
     assert message in result["errors"][0]["message"]
 
 
@@ -288,6 +322,7 @@ def test_a_ref_that_names_no_commit_fails_the_run(
     code, result = gate(capsys, repo, ref)
 
     assert code == 3
+    assert result["errors"][0]["kind"] == "git"
     assert result["errors"][0]["message"].startswith(f"--base {ref!r} does not name a commit; ")
     assert "fetch full history" in result["errors"][0]["message"]
 
@@ -300,6 +335,7 @@ def test_no_merge_base_fails_the_run(repo: Path, capsys: pytest.CaptureFixture[s
     code, result = gate(capsys, repo)
 
     assert code == 3
+    assert result["errors"][0]["kind"] == "git"
     assert "have no merge-base" in result["errors"][0]["message"]
 
 
@@ -311,6 +347,7 @@ def test_outside_a_repository_fails_the_run(
     code, result = gate(capsys, tmp_path)
 
     assert code == 3
+    assert result["errors"][0]["kind"] == "git"
     assert "needs a git repository" in result["errors"][0]["message"]
 
 
@@ -426,6 +463,7 @@ def test_an_explicit_config_not_committed_at_head_is_a_usage_error(
     code, result = gate(capsys, repo, config=repo / "house-lint.toml")
 
     assert code == 2
+    assert result["errors"][0]["kind"] == "config"
     assert result["errors"][0]["message"] == (
         "--config house-lint.toml is not committed at HEAD; --base reads the config from the commit"
     )
@@ -448,6 +486,7 @@ def test_a_config_outside_the_repository_is_a_usage_error(
     result = json.loads(capsys.readouterr().out)
 
     assert code == 2
+    assert result["errors"][0]["kind"] == "config"
     assert "--config to be inside the git repository" in result["errors"][0]["message"]
 
 

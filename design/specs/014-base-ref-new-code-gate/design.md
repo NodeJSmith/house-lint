@@ -298,3 +298,7 @@ A plain hash of each occurrence's text changes in both cases, so old occurrences
 - The gate's reported config path is built from the project's own paths (the explicit `--config`, or the root plus the discovered file's name), not by un-mapping the resolved path from the extraction, which a symlinked config could take outside it.
 - The release containing `--base` waits for #91 (HSL900 skips pragmas naming rules excluded by command-line selection), filed from the ship-time challenge (Finding 5): without it, a per-rule `--select <rule> --base` gate fails on any newly added pragma for another rule, which blocks hassette's migration.
 - The PR ships as `feat!` with a `BREAKING CHANGE:` footer: the byte-column change moves `column` and `end_column` on non-ASCII lines for HSL001, HSL101, HSL103, and HSL900, which is a JSON output change. With `bump-minor-pre-major`, the release is 0.6.0 either way.
+
+## Addendum
+
+- 2026-11-10 (PR #92 review): `cli.check` still uses the working tree to find the project root under `--base`, but it now only locates the config there (`resolve_project(..., locate_only=True)`). A working-tree config that fails to parse no longer fails the gate. An unparsable `house-lint.toml` or `.house-lint.toml` still marks its directory as the config location, while an unparsable `pyproject.toml` is skipped like one without a house-lint table. An explicit `--config` missing from the working tree is no longer rejected there: `load_head_config` decides from HEAD. The shadowed-config note is omitted from `--base` output, which resolves KI-004.

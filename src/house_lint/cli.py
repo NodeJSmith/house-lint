@@ -193,7 +193,8 @@ def check(
         resolution = resolve_project(root=root, config=config, locate_only=base is not None)
         resolved_root = resolution.root
         resolved_config = resolution.config
-        resolved_shadowed = resolution.shadowed
+        # A --base run's config comes from HEAD, so the working tree's shadowing doesn't apply.
+        resolved_shadowed = resolution.shadowed if base is None else ()
         if base is not None:
             # Only an explicit --config carries over: without one, the gate finds the config
             # committed at HEAD itself, so a working-tree-only config never applies.

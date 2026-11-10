@@ -70,7 +70,7 @@ Acceptance criteria:
 
 ## KI-004: Under `--base`, `shadowed_config` reflects the working tree
 
-Status: open
+Status: resolved — fixed before ship (PR #92 review: the note is omitted under `--base`)
 Recorded: 2026-11-10 (52)
 Source: ship-challenge
 Reason not fixed now: accepted-limitation

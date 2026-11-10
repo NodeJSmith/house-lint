@@ -506,6 +506,12 @@ def _recognized_configs(directory: Path, *, locate_only: bool = False) -> tuple[
     carrying the table its file type expects -- in discovery-precedence order: `house-lint.toml`,
     `.house-lint.toml` (both `[house-lint]`), then `pyproject.toml` (`[tool.house-lint]`).
 
+    `locate_only` is for a caller that only needs to know where a config lives and loads it from
+    another tree: a standalone file that fails to parse still counts as recognized, since its name
+    says it is house-lint's, and no parse failure is ever raised. A `pyproject.toml` that fails to
+    parse is skipped, since nothing shows it holds a house-lint table. The two paragraphs below
+    describe the default mode.
+
     A recognized standalone file without the expected table (e.g. a `house-lint.toml`
     incidentally left over from another tool, with no `[house-lint]` table) is not included here
     -- it is silently skipped, falling through to the next name in precedence order, per FR#1.
@@ -522,10 +528,6 @@ def _recognized_configs(directory: Path, *, locate_only: bool = False) -> tuple[
     Callers that also need to know whether `directory / "pyproject.toml"` exists at all --
     regardless of its table -- for `found_marker` fallback purposes must stat it separately; this
     function only reports it when it is a recognized house-lint config source.
-
-    With `locate_only`, a candidate that fails to parse counts as recognized instead of being
-    skipped or raised: the caller only needs to know where a config lives, and loads the config
-    itself from somewhere else.
     """
     found: list[Path] = []
     parse_error: ConfigError | None = None
@@ -537,7 +539,9 @@ def _recognized_configs(directory: Path, *, locate_only: bool = False) -> tuple[
             document = load_toml(candidate)
         except ConfigError as exc:
             if locate_only:
-                found.append(candidate)
+                if name in STANDALONE_CONFIG_NAMES:
+                    found.append(candidate)
+                continue
             parse_error = parse_error or exc
             continue
         if table_getter(document) is not None:
