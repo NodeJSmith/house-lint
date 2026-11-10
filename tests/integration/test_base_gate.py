@@ -223,6 +223,29 @@ def test_the_config_committed_at_head_governs_both_scans(
     assert result["base"]["preexisting_count"] == 1
 
 
+@pytest.mark.parametrize("explicit_root", [True, False])
+def test_an_unparsable_working_tree_config_is_ignored(
+    repo: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    explicit_root: bool,
+) -> None:
+    config = '[tool.house-lint]\nselect = ["HSL002"]\n'
+    commit(repo, {"pkg/pyproject.toml": config, "pkg/a.py": "x = 1\n"})
+    branch(repo)
+    commit(repo, {"pkg/b.py": LAZY_OS})
+    (repo / "pkg" / "pyproject.toml").write_text("[tool.house-lint\nselect = [\n")
+    monkeypatch.chdir(repo / "pkg")
+
+    code = cli.check(base="main", root=repo / "pkg" if explicit_root else None, format="json")
+    result = json.loads(capsys.readouterr().out)
+
+    assert code == 1
+    assert reported(result) == [("HSL002", "b.py")]
+    assert result["root"] == str(repo / "pkg")
+    assert result["config"] == str(repo / "pkg" / "pyproject.toml")
+
+
 def test_a_project_below_the_repository_top_level_is_gated_from_its_own_root(
     repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -375,6 +398,21 @@ def test_an_explicit_config_is_read_from_the_head_commit_at_the_same_path(
     assert code == 1
     assert reported(result) == [("HSL002", "b.py")]
     assert result["config"] == str(repo / "lint" / "custom.toml")
+
+
+def test_an_explicit_config_deleted_from_the_working_tree_still_governs(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = '[tool.house-lint]\nselect = ["HSL002"]\n'
+    commit(repo, {"lint/custom.toml": config, "a.py": "x = 1\n"})
+    branch(repo)
+    commit(repo, {"b.py": LAZY_OS})
+    (repo / "lint" / "custom.toml").unlink()
+
+    code, result = gate(capsys, repo, config=repo / "lint" / "custom.toml")
+
+    assert code == 1
+    assert reported(result) == [("HSL002", "b.py")]
 
 
 def test_an_explicit_config_not_committed_at_head_is_a_usage_error(

@@ -501,7 +501,7 @@ def discover_files(
     return selector.result()
 
 
-def _recognized_configs(directory: Path) -> tuple[Path, ...]:
+def _recognized_configs(directory: Path, *, locate_only: bool = False) -> tuple[Path, ...]:
     """Every config source at `directory` recognized as valid -- existing, parseable, and
     carrying the table its file type expects -- in discovery-precedence order: `house-lint.toml`,
     `.house-lint.toml` (both `[house-lint]`), then `pyproject.toml` (`[tool.house-lint]`).
@@ -522,6 +522,10 @@ def _recognized_configs(directory: Path) -> tuple[Path, ...]:
     Callers that also need to know whether `directory / "pyproject.toml"` exists at all --
     regardless of its table -- for `found_marker` fallback purposes must stat it separately; this
     function only reports it when it is a recognized house-lint config source.
+
+    With `locate_only`, a candidate that fails to parse counts as recognized instead of being
+    skipped or raised: the caller only needs to know where a config lives, and loads the config
+    itself from somewhere else.
     """
     found: list[Path] = []
     parse_error: ConfigError | None = None
@@ -532,6 +536,8 @@ def _recognized_configs(directory: Path) -> tuple[Path, ...]:
         try:
             document = load_toml(candidate)
         except ConfigError as exc:
+            if locate_only:
+                found.append(candidate)
             parse_error = parse_error or exc
             continue
         if table_getter(document) is not None:
@@ -542,9 +548,18 @@ def _recognized_configs(directory: Path) -> tuple[Path, ...]:
 
 
 def resolve_project(
-    *, root: Path | None = None, config: Path | None = None, cwd: Path | None = None
+    *,
+    root: Path | None = None,
+    config: Path | None = None,
+    cwd: Path | None = None,
+    locate_only: bool = False,
 ) -> ProjectResolution:
-    """Resolve project boundary and applicable config according to the CLI contract."""
+    """Resolve project boundary and applicable config according to the CLI contract.
+
+    `locate_only` resolves where the project and its config are without requiring the config to
+    parse or an explicit `config` to exist, for a caller that loads the config from another tree
+    (`check --base` reads it from the `HEAD` commit).
+    """
     if root is not None:
         resolved_root = root.expanduser().resolve()
         if not resolved_root.is_dir():
@@ -555,7 +570,7 @@ def resolve_project(
         start = (cwd or Path.cwd()).expanduser().resolve()
         found_marker: Path | None = None
         for candidate in (start, *start.parents):
-            recognized = _recognized_configs(candidate)
+            recognized = _recognized_configs(candidate, locate_only=locate_only)
             if recognized:
                 return ProjectResolution(candidate, recognized[0], recognized[1:])
             if (candidate / PYPROJECT_CONFIG_NAME).is_file():
@@ -571,10 +586,10 @@ def resolve_project(
         resolved_config = config.expanduser().resolve()
         if not _inside(resolved_root, resolved_config):
             raise ConfigError("explicit config must be inside root")
-        if not resolved_config.is_file():
+        if not locate_only and not resolved_config.is_file():
             raise ConfigError(f"config does not exist: {config}")
         return ProjectResolution(resolved_root, resolved_config)
-    recognized = _recognized_configs(resolved_root)
+    recognized = _recognized_configs(resolved_root, locate_only=locate_only)
     if recognized:
         return ProjectResolution(resolved_root, recognized[0], recognized[1:])
     return ProjectResolution(resolved_root, None)

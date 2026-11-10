@@ -189,7 +189,8 @@ def check(
         # returning, the except handlers still need a resolved root/config to report.
         resolved_root = root.expanduser().resolve() if root is not None else None
         resolved_config = config.expanduser().resolve() if config is not None else None
-        resolution = resolve_project(root=root, config=config)
+        # A --base run loads its config from HEAD, so the working tree only locates it.
+        resolution = resolve_project(root=root, config=config, locate_only=base is not None)
         resolved_root = resolution.root
         resolved_config = resolution.config
         resolved_shadowed = resolution.shadowed
