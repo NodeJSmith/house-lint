@@ -10,7 +10,7 @@ house-lint check --base origin/main
 
 house-lint extracts both commits from git into temporary directories and scans each one, so uncommitted and untracked files never count.
 
-Both scans use the config committed at `HEAD`. A PR that turns on a rule is judged only on the new instances it adds. An uncommitted config edit is ignored, even one that leaves the file unparsable. An explicit `--config` is read from the same path in `HEAD`, and is a usage error when it isn't committed there.
+Both scans use the config committed at `HEAD`. A PR that turns on a rule is judged only on the new instances it adds. An uncommitted config edit is ignored, even one that leaves the file unparsable. An explicit `--config` is read from the same path in `HEAD`, and is a usage error when it isn't committed there. A committed config that is a symlink to a file outside the commit is a usage error too, since following it would read an uncommitted file.
 
 ## What counts as new
 

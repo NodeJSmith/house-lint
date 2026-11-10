@@ -253,6 +253,14 @@ def load_head_config(
                     "--base reads the config from the commit"
                 )
             resolution = resolve_project(root=head_tree.root, config=candidate)
+        # A committed symlink could lead out of the extraction to an uncommitted config.
+        if resolution.config is not None and not resolution.config.resolve().is_relative_to(
+            head_tree.directory.resolve()
+        ):
+            raise ConfigError(
+                f"the config {resolution.config} at HEAD is a symlink to a file outside the "
+                "commit; --base reads the config from the commit"
+            )
         loaded = overrides.load(resolution.config)
     except ConfigError as exc:
         raise ConfigError(head_tree.in_project(str(exc), top)) from exc

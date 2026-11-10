@@ -452,6 +452,23 @@ def test_an_explicit_config_deleted_from_the_working_tree_still_governs(
     assert reported(result) == [("HSL002", "b.py")]
 
 
+def test_a_committed_config_symlinked_outside_the_commit_is_a_usage_error(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    commit(repo, {"actual.toml": '[house-lint]\nselect = ["HSL002"]\n', "a.py": "x = 1\n"})
+    (repo / "house-lint.toml").symlink_to(repo / "actual.toml")
+    commit(repo, {})
+    branch(repo)
+    commit(repo, {"b.py": LAZY_OS})
+    (repo / "actual.toml").write_text("[house-lint]\nselect = []\n")
+
+    code, result = gate(capsys, repo)
+
+    assert code == 2
+    assert result["errors"][0]["kind"] == "config"
+    assert "symlink to a file outside the commit" in result["errors"][0]["message"]
+
+
 def test_an_explicit_config_not_committed_at_head_is_a_usage_error(
     repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
