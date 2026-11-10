@@ -1,6 +1,7 @@
 """`house-lint check --base`: only the findings `HEAD` introduced since its merge-base."""
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,7 @@ from typing import Any
 import pytest
 
 from house_lint import cli
+from house_lint.new_code import extract
 
 LAZY_JSON = "def load():\n    import json\n    return json\n"
 LAZY_OS = "def where():\n    import os\n    return os\n"
@@ -450,6 +452,40 @@ def test_an_explicit_config_deleted_from_the_working_tree_still_governs(
 
     assert code == 1
     assert reported(result) == [("HSL002", "b.py")]
+
+
+def use_hiding_filter(repo: Path) -> None:
+    """An untracked `.gitattributes` and a smudge filter that rewrites `import os` to `pass`."""
+    git(repo, "config", "filter.hide.smudge", "sed 's/import os/pass/'")
+    git(repo, "config", "filter.hide.clean", "cat")
+    (repo / ".gitattributes").write_text("*.py filter=hide\n")
+
+
+def test_checkout_filters_never_change_the_scanned_bytes(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    commit(repo, {"a.py": "x = 1\n"})
+    branch(repo)
+    commit(repo, {"b.py": LAZY_OS})
+    use_hiding_filter(repo)
+
+    code, result = gate(capsys, repo)
+
+    assert code == 1
+    assert reported(result) == [("HSL002", "b.py")]
+
+
+def test_extraction_writes_committed_bytes_and_symlinks(repo: Path, tmp_path: Path) -> None:
+    commit(repo, {"pkg/b.py": LAZY_OS})
+    (repo / "pkg" / "c.py").symlink_to("b.py")
+    head = commit(repo, {})  # commits everything, including the new symlink
+    use_hiding_filter(repo)
+
+    tree = extract(repo, head, tmp_path / "out", Path("pkg"))
+
+    assert (tree.root / "b.py").read_text() == LAZY_OS
+    assert (tree.root / "c.py").is_symlink()
+    assert os.readlink(tree.root / "c.py") == "b.py"
 
 
 def test_a_committed_config_symlinked_outside_the_commit_is_a_usage_error(

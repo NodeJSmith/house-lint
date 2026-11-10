@@ -44,7 +44,7 @@ CI has two workflows. `.github/workflows/ci.yml` runs the tests on Python 3.11 t
 `src/house_lint/`:
 - `cli.py`: the cyclopts app: argument parsing, config loading, the internal-error boundary, and rendering
 - `pipeline.py`: the whole run (`run_scan`): discovery, the file phase, the project phase, the per-run cache (`RunCache`, at a `CacheLocation`), and result aggregation
-- `new_code.py`: `check --base` (`run_gate`): resolving the merge-base, extracting both commits through a temporary index, scanning each with `run_scan`, and keeping the head findings no base finding pairs with
+- `new_code.py`: `check --base` (`run_gate`): resolving the merge-base, writing both commits' files straight from git's object store (no checkout conversions), scanning each with `run_scan`, and keeping the head findings no base finding pairs with
 - `matching.py`: how `--base` pairs findings across the two scans: the exact passes and the default matcher. A leaf module, so rule modules can import it
 - `config.py`: config discovery and validation, each run's resolved rule options (`LintConfig.rule_options`), which rules apply to a file (`applicable_rules`), and which languages to discover (`discovered_languages`)
 - `discovery.py`: file discovery through `git ls-files` or a plain walk, and configured excludes

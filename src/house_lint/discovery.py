@@ -3,7 +3,7 @@
 import os
 import stat
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -155,8 +155,8 @@ def run_git(
     args: tuple[str, ...],
     *,
     accepted: tuple[int, ...] = (0,),
-    env: Mapping[str, str] | None = None,
     hint: str = _GIT_FAILURE_HINT,
+    stdin: bytes | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     """Run git in `directory`, treating anything but a clean answer as a failure.
 
@@ -164,16 +164,16 @@ def run_git(
     on an unreadable directory while leaving that directory's files out of its list.
 
     The environment is inherited on purpose: inside `git commit <paths>`, a hook's `GIT_INDEX_FILE`
-    points at the index being committed. `env` overlays it, for a call that needs its own index.
-    `hint` ends every failure message, saying what the user can do about it.
+    points at the index being committed. `hint` ends every failure message, saying what the user can do about it. `stdin` is written
+    to git's standard input.
     """
     try:
         completed = subprocess.run(
             (*_GIT_COMMAND, *args),
             cwd=directory,
+            input=stdin,
             capture_output=True,
             check=False,
-            env=None if env is None else {**os.environ, **env},
         )
     except OSError as exc:
         raise GitFailure(f"could not run git: {exc}; {hint}") from exc

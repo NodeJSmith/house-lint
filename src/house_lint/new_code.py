@@ -29,8 +29,8 @@ from house_lint.rule_catalog import base_matcher
 from house_lint.source import LoadFailure, load_file
 
 GIT_HINT = "--base needs a git repository holding both commits; in CI, fetch full history"
-# A commit's own index, so extracting it never touches the repository's index or working tree.
-INDEX_VARIABLE = "GIT_INDEX_FILE"
+# The git tree mode of a symlink.
+SYMLINK_MODE = b"120000"
 
 
 class GateFailure(Exception):
@@ -41,6 +41,15 @@ class GateFailure(Exception):
 class Commits:
     merge_base: str
     head: str
+
+
+@dataclass(frozen=True)
+class TreeEntry:
+    """One file in a commit: its git mode, blob id, and repository-relative path."""
+
+    mode: bytes
+    object_id: bytes
+    path: str
 
 
 @dataclass(frozen=True)
@@ -216,17 +225,65 @@ def under_root(path: str, root_relative: Path) -> str | None:
 
 
 def extract(top: Path, commit: str, directory: Path, root_relative: Path) -> Tree:
-    """Write every file tracked at `commit` under `directory`, through a temporary index.
+    """Write every file tracked at `commit` under `directory`, as the bytes git stores.
 
-    Runs from the top level, because `checkout-index` run from a subdirectory extracts only that
-    subtree. The root is created when the commit has nothing there, so it scans as empty.
+    The blobs are read from the object store rather than checked out, so no attribute, filter,
+    line-ending, or encoding conversion can make the scan differ from the commit. Symlinks are
+    recreated and submodules skipped. The root is created when the commit has nothing there, so it
+    scans as empty.
     """
-    env = {INDEX_VARIABLE: str(directory.with_suffix(".index"))}
-    run_git(top, ("read-tree", commit), env=env, hint=GIT_HINT)
-    run_git(top, ("checkout-index", "-a", f"--prefix={directory}/"), env=env, hint=GIT_HINT)
+    entries = tree_entries(top, commit)
+    contents = read_blobs(top, {entry.object_id for entry in entries})
+    for entry in entries:
+        target = directory / entry.path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if entry.mode == SYMLINK_MODE:
+            target.symlink_to(os.fsdecode(bytes(contents[entry.object_id])))
+        else:
+            target.write_bytes(contents[entry.object_id])
     root = directory / root_relative
     root.mkdir(parents=True, exist_ok=True)
     return Tree(directory, root)
+
+
+def tree_entries(top: Path, commit: str) -> list[TreeEntry]:
+    """Each file at `commit`. A submodule is listed as a `commit` entry, not a blob, and skipped."""
+    listing = run_git(top, ("ls-tree", "-r", "-z", "--full-tree", commit), hint=GIT_HINT).stdout
+    entries: list[TreeEntry] = []
+    for entry in listing.split(b"\0"):
+        if not entry:
+            continue
+        info, _, path = entry.partition(b"\t")
+        mode, kind, object_id = info.split(b" ")
+        if kind == b"blob":
+            entries.append(TreeEntry(mode, object_id, os.fsdecode(path)))
+    return entries
+
+
+def read_blobs(top: Path, object_ids: set[bytes]) -> dict[bytes, memoryview]:
+    """The content of each blob, read in one `git cat-file --batch` call.
+
+    git answers each id with a header line, `<id> <type> <size>`, then that many bytes of content
+    and a newline. An object it can't find gets the header `<id> missing` and no content. The whole
+    answer is held in memory, and each blob is a view into it rather than a copy.
+    """
+    if not object_ids:
+        return {}
+    request = b"".join(object_id + b"\n" for object_id in object_ids)
+    output = run_git(top, ("cat-file", "--batch"), stdin=request, hint=GIT_HINT).stdout
+    view = memoryview(output)
+    contents: dict[bytes, memoryview] = {}
+    position = 0
+    while position < len(output):
+        header_end = output.index(b"\n", position)
+        header = output[position:header_end].split(b" ")
+        if len(header) != 3:
+            raise GateFailure(f"git cat-file could not read {header[0].decode()}; {GIT_HINT}")
+        start = header_end + 1
+        end = start + int(header[2])
+        contents[header[0]] = view[start:end]
+        position = end + 1  # the newline that ends each record
+    return contents
 
 
 def load_head_config(
