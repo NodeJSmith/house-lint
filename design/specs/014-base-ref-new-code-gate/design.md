@@ -1,7 +1,7 @@
 # Design: `--base` new-code gating
 
 **Date:** 2026-11-09
-**Status:** ratified
+**Status:** built
 **Mode:** sketch
 **Issues:** #52
 **Parent:** design/specs/005-cross-file-rules-and-duplicate-code/design.md
@@ -282,8 +282,8 @@ A plain hash of each occurrence's text changes in both cases, so old occurrences
 
 - [x] Implementation and tests committed
 - [x] Docs (README new-code gating section, docs/rules.md HSL102/HSL104 notes, CLAUDE.md layout)
-- [ ] Follow-up issues filed in hassette and hass-hassette (ask before filing)
-- [ ] Ship-time challenge
+- [x] Follow-up issues filed in hassette and hass-hassette (NodeJSmith/hassette#3997, NodeJSmith/hass-hassette#60)
+- [x] Ship-time challenge (17 findings; 6 rare ones accepted as KI-001 to KI-006 in known-issues.md)
 
 **Calls made during the build:**
 - Matchers take separate `head_text` and `base_text` mappings, not D10's single one: `Finding` is a frozen dataclass compared by value, so a head and a base finding with the same rule, path, span, and message but different code would collide in one mapping.
@@ -297,3 +297,4 @@ A plain hash of each occurrence's text changes in both cases, so old occurrences
 - The CLI's `shadowed` config note under `--base` still comes from the working tree's resolution: `run_gate` doesn't return the HEAD resolution's shadowed list, since the note is informational and the two differ only when the working tree's config sources differ from HEAD's.
 - The gate's reported config path is built from the project's own paths (the explicit `--config`, or the root plus the discovered file's name), not by un-mapping the resolved path from the extraction, which a symlinked config could take outside it.
 - The release containing `--base` waits for #91 (HSL900 skips pragmas naming rules excluded by command-line selection), filed from the ship-time challenge (Finding 5): without it, a per-rule `--select <rule> --base` gate fails on any newly added pragma for another rule, which blocks hassette's migration.
+- The PR ships as `feat!` with a `BREAKING CHANGE:` footer: the byte-column change moves `column` and `end_column` on non-ASCII lines for HSL001, HSL101, HSL103, and HSL900, which is a JSON output change. With `bump-minor-pre-major`, the release is 0.6.0 either way.
