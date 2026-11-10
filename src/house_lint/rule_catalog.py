@@ -5,7 +5,7 @@ run once per scanned file, or a project rule, run once per scan on the scanned f
 """
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Generic, Literal, Protocol, TypeVar
 
@@ -13,6 +13,7 @@ import msgspec
 
 from house_lint.analysis import CandidateFinding
 from house_lint.language import Language
+from house_lint.matching import BaseMatcher, match_by_key
 from house_lint.project_rule import ProjectCandidate
 from house_lint.python_source import PythonSource
 from house_lint.rules import (
@@ -55,12 +56,16 @@ class ProjectRun(Protocol[OptionsT_contra]):
 
 @dataclass(frozen=True)
 class Rule:
-    """Fixed metadata for one built-in house rule."""
+    """Fixed metadata for one built-in house rule.
+
+    `base_match` pairs the rule's findings across `--base`'s two scans.
+    """
 
     id: str
     name: str
     description: str
     enablement: Enablement
+    base_match: BaseMatcher = field(default=match_by_key, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -101,6 +106,7 @@ def configurable_rule(
     options_type: type[ConfigurableOptionsT],
     *,
     parse: Callable[[Any], ConfigurableOptionsT] | None = None,
+    base_match: BaseMatcher = match_by_key,
 ) -> FileRule[Any]:
     """Build the row for a file rule with options.
 
@@ -116,6 +122,7 @@ def configurable_rule(
         enablement,
         detect,
         parse or (lambda raw: msgspec.convert(raw, options_type)),
+        base_match=base_match,
     )
 
 
@@ -139,6 +146,8 @@ def configurable_project_rule(
     run: ProjectRun[ConfigurableOptionsT],
     languages: frozenset[Language],
     options_type: type[ConfigurableOptionsT],
+    *,
+    base_match: BaseMatcher = match_by_key,
 ) -> ProjectRule[Any]:
     """Build the row for a project rule with options. See `configurable_rule` for why."""
     return ProjectRule(
@@ -149,6 +158,7 @@ def configurable_project_rule(
         run,
         languages,
         lambda raw: msgspec.convert(raw, options_type),
+        base_match=base_match,
     )
 
 
@@ -198,6 +208,7 @@ FILE_RULES: Mapping[str, FileRule[Any]] = rules_by_id(
             "opt-in",
             file_length.detect,
             HSL102Options,
+            base_match=file_length.match_new,
         ),
         configurable_rule(
             "HSL103",
@@ -220,6 +231,7 @@ PROJECT_RULES: Mapping[str, ProjectRule[Any]] = rules_by_id(
             duplicate_code.run,
             frozenset({Language.PYTHON}),
             HSL104Options,
+            base_match=duplicate_code.match_new,
         ),
     )
 )
@@ -265,6 +277,11 @@ def is_project_rule(rule_id: str) -> bool:
     return isinstance(RULES[rule_id], ProjectRule)
 
 
+def base_matcher(rule_id: str) -> BaseMatcher:
+    """Return how `--base` pairs a known rule's findings across its two scans."""
+    return RULES[rule_id].base_match
+
+
 def rule_ids() -> tuple[str, ...]:
     """Return built-in rule IDs in their stable display order."""
     return tuple(RULES)
@@ -287,6 +304,7 @@ __all__ = [
     "ProjectRule",
     "ProjectRun",
     "Rule",
+    "base_matcher",
     "configurable_project_rule",
     "configurable_rule",
     "file_rule",

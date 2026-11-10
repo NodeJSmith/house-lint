@@ -387,3 +387,34 @@ def load_config(
     # `_effective_rule_selection`); re-sorting here would only differ from `default_config`'s
     # handling of the same value if an always-on rule ID ever stopped sorting last.
     return LintConfig(include, exclude, enabled, rule_options, per_file_ignores)
+
+
+@dataclass(frozen=True)
+class SelectionOverrides:
+    """The command line's rule selection, applied over whichever config a run loads.
+
+    Kept separate from loading so `--base` can apply the same flags to the config it reads from
+    the head commit rather than the working tree.
+    """
+
+    select: tuple[str, ...] | None = None
+    ignore: tuple[str, ...] | None = None
+    extend_select: tuple[str, ...] | None = None
+    extend_ignore: tuple[str, ...] | None = None
+
+    def load(self, path: Path | None) -> LintConfig:
+        """Load `path` with these overrides, or the built-in config when there is none."""
+        if path is None:
+            return default_config(
+                cli_select=self.select,
+                cli_ignore=self.ignore,
+                cli_extend_select=self.extend_select,
+                cli_extend_ignore=self.extend_ignore,
+            )
+        return load_config(
+            path,
+            cli_select=self.select,
+            cli_ignore=self.ignore,
+            cli_extend_select=self.extend_select,
+            cli_extend_ignore=self.extend_ignore,
+        )

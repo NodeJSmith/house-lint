@@ -112,7 +112,7 @@ def candidate_for_line(
         line,
         1,
         line,
-        len(source.lines[line - 1]) + 1,
+        source.byte_column(line, len(source.lines[line - 1])),
         SourceKind.STATEMENT if statement_owner is not None else SourceKind.NO_OWNER,
         statement_owner,
     )

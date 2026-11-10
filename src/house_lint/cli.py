@@ -6,9 +6,10 @@ from pathlib import Path
 
 from cyclopts import App, CycloptsError
 
-from house_lint.config import ConfigError, LintConfig, default_config, load_config
+from house_lint.config import ConfigError, LintConfig, SelectionOverrides
 from house_lint.discovery import resolve_project
-from house_lint.pipeline import run_scan
+from house_lint.new_code import run_gate
+from house_lint.pipeline import CacheLocation, run_scan
 from house_lint.reporters import (
     EMPTY_SCAN_MESSAGE,
     render_json,
@@ -106,6 +107,21 @@ def _exit_code(result: ScanResult, *, fail_on_empty: bool) -> int:
     return 0
 
 
+def _usage_error(
+    *, format: str, base: str | None, paths: list[Path] | None, no_git: bool
+) -> str | None:
+    if format not in {"text", "json"}:
+        return "--format must be text or json"
+    if base is not None and paths:
+        return (
+            "--base compares the whole project and takes no paths; "
+            "in a pre-commit hook, set pass_filenames: false"
+        )
+    if base is not None and no_git:
+        return "--base reads both commits from git, so it can't be combined with --no-git"
+    return None
+
+
 def _requested_format(arguments: list[str]) -> str:
     """Return the explicitly requested output format before Cyclopts parses it."""
     for index, argument in enumerate(arguments):
@@ -120,6 +136,7 @@ def _requested_format(arguments: list[str]) -> str:
 def check(
     paths: list[Path] | None = None,
     *,
+    base: str | None = None,
     config: Path | None = None,
     root: Path | None = None,
     format: str = "text",
@@ -140,15 +157,22 @@ def check(
     that orphaned the configured paths) pass silently. Off by default: an empty scan is a normal,
     non-error outcome for interactive/exploratory use (a brand-new project, a directory that
     hasn't grown any source files yet).
+
+    `base` reports only the findings the `HEAD` commit introduced since its merge-base with that
+    ref, scanning both commits from git rather than the working tree. It takes no paths and needs
+    git.
     """
-    if format not in {"text", "json"}:
-        result = _result_for_config_error(ConfigError("--format must be text or json"))
-        _write_config_error(result, "text")
+    usage = _usage_error(format=format, base=base, paths=paths, no_git=no_git)
+    if usage is not None:
+        result = _result_for_config_error(ConfigError(usage))
+        _write_config_error(result, format if format in {"text", "json"} else "text")
         return 2
-    cli_select = _flatten_ids(select)
-    cli_ignore = _flatten_ids(ignore)
-    cli_extend_select = _flatten_ids(extend_select)
-    cli_extend_ignore = _flatten_ids(extend_ignore)
+    overrides = SelectionOverrides(
+        _flatten_ids(select),
+        _flatten_ids(ignore),
+        _flatten_ids(extend_select),
+        _flatten_ids(extend_ignore),
+    )
     resolved_root: Path | None = None
     resolved_config: Path | None = None
     resolved_shadowed: tuple[Path, ...] = ()
@@ -165,36 +189,38 @@ def check(
         # returning, the except handlers still need a resolved root/config to report.
         resolved_root = root.expanduser().resolve() if root is not None else None
         resolved_config = config.expanduser().resolve() if config is not None else None
-        resolution = resolve_project(root=root, config=config)
+        # A --base run loads its config from HEAD, so the working tree only locates it.
+        resolution = resolve_project(root=root, config=config, locate_only=base is not None)
         resolved_root = resolution.root
         resolved_config = resolution.config
-        resolved_shadowed = resolution.shadowed
-        lint_config = (
-            default_config(
-                cli_select=cli_select,
-                cli_ignore=cli_ignore,
-                cli_extend_select=cli_extend_select,
-                cli_extend_ignore=cli_extend_ignore,
+        # A --base run's config comes from HEAD, so the working tree's shadowing doesn't apply.
+        resolved_shadowed = resolution.shadowed if base is None else ()
+        if base is not None:
+            # Only an explicit --config carries over: without one, the gate finds the config
+            # committed at HEAD itself, so a working-tree-only config never applies.
+            gate = run_gate(
+                base,
+                root=resolution.root,
+                config=None if config is None else committed_config_path(config),
+                overrides=overrides,
+                read_cache=not no_cache,
+                cache_dir=cache_dir,
+                debug=debug,
             )
-            if resolution.config is None
-            else load_config(
-                resolution.config,
-                cli_select=cli_select,
-                cli_ignore=cli_ignore,
-                cli_extend_select=cli_extend_select,
-                cli_extend_ignore=cli_extend_ignore,
+            result = gate.result
+            lint_config = gate.config or lint_config
+        else:
+            lint_config = overrides.load(resolution.config)
+            result = run_scan(
+                tuple(paths or ()),
+                root=resolution.root,
+                config_path=resolution.config,
+                config=lint_config,
+                use_git=not no_git,
+                read_cache=not no_cache,
+                cache=CacheLocation.for_project(resolution.root, cache_dir),
+                debug=debug,
             )
-        )
-        result = run_scan(
-            tuple(paths or ()),
-            root=resolution.root,
-            config_path=resolution.config,
-            config=lint_config,
-            use_git=not no_git,
-            read_cache=not no_cache,
-            cache_dir=cache_dir,
-            debug=debug,
-        )
     except ConfigError as exc:
         if resolved_root is None:
             resolved_root = resolved_config.parent if resolved_config is not None else Path.cwd()
@@ -229,6 +255,17 @@ def check(
         shadowed=resolved_shadowed,
     )
     return code
+
+
+def committed_config_path(config: Path) -> Path:
+    """An explicit `--config` as an absolute path with its own name unresolved.
+
+    Its directories are resolved so it lines up with the repository's top level, but a symlinked
+    config file is left for the gate to follow at `HEAD`, where it may point somewhere other than in
+    the working tree.
+    """
+    absolute = config.expanduser().absolute()
+    return absolute.parent.resolve() / absolute.name
 
 
 @app.command

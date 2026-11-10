@@ -151,6 +151,14 @@ repos:
 
 Turn `HSL104` on with `--select` in the pre-push hook, not with `extend-select` in `pyproject.toml`: config selection also applies to the commit-stage `house-lint` hook, whose environment has no jscpd, so every commit would fail with a `project-rule-error`.
 
+## New-code gating
+
+```bash
+house-lint check --base origin/main
+```
+
+`--base <ref>` reports only the findings the `HEAD` commit introduced since its merge-base with `<ref>`, so a project with a backlog can still fail a PR that adds to it. Both commits are scanned from git with the config committed at `HEAD`, so uncommitted changes never count. Moved or reformatted findings stay old, and `HSL102` reports only files that grew. [New-code gating](docs/new-code-gating.md) covers how findings are matched, a GitHub Actions example, and how the gate fails.
+
 ## Caching
 
 `check` caches each file's result under `<root>/.house-lint-cache/`. The key covers the file's content, the rules and rule options in effect, and the Python version; [configuration](docs/configuration.md#caching) lists every input. A hit skips parsing and rule execution.
@@ -165,6 +173,10 @@ A cache failure never fails a scan. house-lint prints one warning for the first 
 ## Output and exit codes
 
 `--format json` prints one schema-versioned JSON object to stdout (`schema_version` 3) with the root, config, enabled rules, file counts, findings, errors, and summary. Match on rule IDs, locations, and error `code` values. Finding `message` text is for people and may change.
+
+A `--base` run adds a `base` object with the `ref` as given, the `base_commit` (the merge-base) and `head_commit` it compared, and `preexisting_count`, the number of findings it left out as old. Text output prints the same as a `base:` line before the summary.
+
+Lines and columns are 1-based, columns count UTF-8 bytes, and `end_column` is exclusive.
 
 Each finding has a `related` list of the other places the same issue occurs, including ones a pragma suppressed, each with `path`, `line`, `column`, `end_line`, and `end_column`. It is empty for findings from single-file rules. Text output appends the same locations to the finding's line, as `(also at b.py:10:1, c.py)`, naming at most three and then `and N more`.
 
@@ -183,7 +195,7 @@ When several apply, the highest code wins.
 | `config-error` | Invalid CLI arguments, configuration, or root |
 | `path-error` | Invalid explicit path or source path |
 | `traversal-error` | Discovery filesystem failure; the rest of the scan still ran |
-| `git-error` | git failed inside a repository; nothing was scanned |
+| `git-error` | git failed inside a repository, or `--base` couldn't resolve its commits; nothing was scanned |
 | `budget-error` | A discovery or candidate-count safety limit was exceeded |
 | `source-too-large` | A source file exceeds the 10 MiB read limit |
 | `read-error` | A source file could not be read |

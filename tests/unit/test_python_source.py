@@ -112,3 +112,13 @@ def test_lines_follow_the_tokenizer_line_model_not_splitlines(write_sample) -> N
         ('x = "a b"\n# after\n', ['x = "a b"', "# after"]),
     ):
         assert parse_file(write_sample(content)).lines == expected
+
+
+def test_byte_column_counts_utf8_bytes_before_a_character_offset(parse_sample) -> None:
+    source = parse_sample("x = 1  # \u00e9t\u00e9 \u2014 note\n")
+
+    assert source.byte_column(1, 0) == 1
+    # "\u00e9" is two bytes, so the first 12 characters ("x = 1  # " and the word) are 14 bytes.
+    assert source.byte_column(1, 12) == 15
+    # "\u2014" is three bytes, so the line's 19 characters end at byte 23.
+    assert source.byte_column(1, 19) == 24

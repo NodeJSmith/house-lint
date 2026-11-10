@@ -151,7 +151,12 @@ def inside_repository(directory: Path) -> bool:
 
 
 def run_git(
-    directory: Path, args: tuple[str, ...], *, accepted: tuple[int, ...] = (0,)
+    directory: Path,
+    args: tuple[str, ...],
+    *,
+    accepted: tuple[int, ...] = (0,),
+    hint: str = _GIT_FAILURE_HINT,
+    stdin: bytes | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     """Run git in `directory`, treating anything but a clean answer as a failure.
 
@@ -159,18 +164,23 @@ def run_git(
     on an unreadable directory while leaving that directory's files out of its list.
 
     The environment is inherited on purpose: inside `git commit <paths>`, a hook's `GIT_INDEX_FILE`
-    points at the index being committed.
+    points at the index being committed. `hint` ends every failure message, saying what the user can do about it. `stdin` is written
+    to git's standard input.
     """
     try:
         completed = subprocess.run(
-            (*_GIT_COMMAND, *args), cwd=directory, capture_output=True, check=False
+            (*_GIT_COMMAND, *args),
+            cwd=directory,
+            input=stdin,
+            capture_output=True,
+            check=False,
         )
     except OSError as exc:
-        raise GitFailure(f"could not run git: {exc}; {_GIT_FAILURE_HINT}") from exc
+        raise GitFailure(f"could not run git: {exc}; {hint}") from exc
     detail = completed.stderr.decode(errors="replace").strip()
     if completed.returncode not in accepted or detail:
         reason = detail or f"exit status {completed.returncode}"
-        raise GitFailure(f"git {args[0]} failed: {reason}; {_GIT_FAILURE_HINT}")
+        raise GitFailure(f"git {args[0]} failed: {reason}; {hint}")
     return completed
 
 
@@ -491,10 +501,16 @@ def discover_files(
     return selector.result()
 
 
-def _recognized_configs(directory: Path) -> tuple[Path, ...]:
+def _recognized_configs(directory: Path, *, locate_only: bool = False) -> tuple[Path, ...]:
     """Every config source at `directory` recognized as valid -- existing, parseable, and
     carrying the table its file type expects -- in discovery-precedence order: `house-lint.toml`,
     `.house-lint.toml` (both `[house-lint]`), then `pyproject.toml` (`[tool.house-lint]`).
+
+    `locate_only` is for a caller that only needs to know where a config lives and loads it from
+    another tree: a standalone file that fails to parse still counts as recognized, since its name
+    says it is house-lint's, and no parse failure is ever raised. A `pyproject.toml` that fails to
+    parse is skipped, since nothing shows it holds a house-lint table. The two paragraphs below
+    describe the default mode.
 
     A recognized standalone file without the expected table (e.g. a `house-lint.toml`
     incidentally left over from another tool, with no `[house-lint]` table) is not included here
@@ -522,6 +538,10 @@ def _recognized_configs(directory: Path) -> tuple[Path, ...]:
         try:
             document = load_toml(candidate)
         except ConfigError as exc:
+            if locate_only:
+                if name in STANDALONE_CONFIG_NAMES:
+                    found.append(candidate)
+                continue
             parse_error = parse_error or exc
             continue
         if table_getter(document) is not None:
@@ -532,9 +552,18 @@ def _recognized_configs(directory: Path) -> tuple[Path, ...]:
 
 
 def resolve_project(
-    *, root: Path | None = None, config: Path | None = None, cwd: Path | None = None
+    *,
+    root: Path | None = None,
+    config: Path | None = None,
+    cwd: Path | None = None,
+    locate_only: bool = False,
 ) -> ProjectResolution:
-    """Resolve project boundary and applicable config according to the CLI contract."""
+    """Resolve project boundary and applicable config according to the CLI contract.
+
+    `locate_only` resolves where the project and its config are without requiring the config to
+    parse or an explicit `config` to exist, for a caller that loads the config from another tree
+    (`check --base` reads it from the `HEAD` commit).
+    """
     if root is not None:
         resolved_root = root.expanduser().resolve()
         if not resolved_root.is_dir():
@@ -545,7 +574,7 @@ def resolve_project(
         start = (cwd or Path.cwd()).expanduser().resolve()
         found_marker: Path | None = None
         for candidate in (start, *start.parents):
-            recognized = _recognized_configs(candidate)
+            recognized = _recognized_configs(candidate, locate_only=locate_only)
             if recognized:
                 return ProjectResolution(candidate, recognized[0], recognized[1:])
             if (candidate / PYPROJECT_CONFIG_NAME).is_file():
@@ -561,10 +590,10 @@ def resolve_project(
         resolved_config = config.expanduser().resolve()
         if not _inside(resolved_root, resolved_config):
             raise ConfigError("explicit config must be inside root")
-        if not resolved_config.is_file():
+        if not locate_only and not resolved_config.is_file():
             raise ConfigError(f"config does not exist: {config}")
         return ProjectResolution(resolved_root, resolved_config)
-    recognized = _recognized_configs(resolved_root)
+    recognized = _recognized_configs(resolved_root, locate_only=locate_only)
     if recognized:
         return ProjectResolution(resolved_root, recognized[0], recognized[1:])
     return ProjectResolution(resolved_root, None)
