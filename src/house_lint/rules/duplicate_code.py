@@ -2,7 +2,7 @@
 
 import sys
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Hashable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -10,7 +10,9 @@ from typing import Annotated
 from msgspec import Meta
 
 from house_lint.jscpd import ClonePair, Fragment, find_clones
+from house_lint.matching import LineMap, RenameMap, SpanText, exact_passes
 from house_lint.project_rule import Location, ProjectCandidate
+from house_lint.results import Finding
 from house_lint.rules.options import RuleOptions
 from house_lint.source import LoadedFile
 
@@ -172,4 +174,76 @@ def build_candidate(cluster: list[Occurrence], by_path: dict[Path, LoadedFile]) 
     )
 
 
-__all__ = ["HSL104Options", "clusters", "run"]
+def match_new(
+    head: Sequence[Finding],
+    base: Sequence[Finding],
+    *,
+    head_text: SpanText,
+    base_text: SpanText,
+    renames: RenameMap,
+    line_map: LineMap,
+) -> tuple[Finding, ...]:
+    """Report a head occurrence only when it pairs with no base occurrence, so only added copies.
+
+    An occurrence's span depends on the copies jscpd paired it with, so a rename or an added copy
+    can grow or shrink an old one. Equal text pairs first, the same file before any file. Then
+    an occurrence pairs with one whose text contains it or is contained in it, the same file
+    first, the closest length winning, then path and line. Exact pairs going first keeps a short
+    new copy from taking a long old one and leaving an untouched copy reported in its place.
+
+    The exact key is the text, not the message, since the message counts places and so changes
+    when a copy is added. Only an occurrence whose file couldn't be read back keys on its message,
+    and it never pairs by containment.
+    """
+    head_left, base_left = exact_passes(
+        head,
+        base,
+        key=text_or_message,
+        head_text=head_text,
+        base_text=base_text,
+        renames=renames,
+        line_map=line_map,
+    )
+    for same_file in (True, False):
+        unpaired: list[Finding] = []
+        for finding in head_left:
+            text = head_text.get(finding)
+            path = renames.get(finding.path, finding.path) if same_file else None
+            partner = None if not text else containing_partner(text, path, base_left, base_text)
+            if partner is None:
+                unpaired.append(finding)
+                continue
+            # Equal findings share one text, so removing any of them is the same pairing.
+            base_left.remove(partner)
+        head_left = unpaired
+    return tuple(head_left)
+
+
+def text_or_message(finding: Finding, text: SpanText) -> Hashable:
+    span = text.get(finding)
+    return ("message", finding.message) if span is None else ("text", span)
+
+
+def containing_partner(
+    text: str, path: str | None, candidates: list[Finding], candidate_text: SpanText
+) -> Finding | None:
+    """The candidate whose text contains `text` or is contained in it, closest length first.
+
+    `path` limits the candidates to one file; None allows any. Neither side may be empty, since
+    the empty string is contained in every other.
+    """
+    best: Finding | None = None
+    best_rank: tuple[int, str, int] | None = None
+    for candidate in candidates:
+        other = candidate_text.get(candidate)
+        if not other or (path is not None and candidate.path != path):
+            continue
+        if text not in other and other not in text:
+            continue
+        rank = (abs(len(text) - len(other)), candidate.path, candidate.line or 0)
+        if best_rank is None or rank < best_rank:
+            best, best_rank = candidate, rank
+    return best
+
+
+__all__ = ["HSL104Options", "clusters", "match_new", "run"]

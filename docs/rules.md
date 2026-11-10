@@ -44,6 +44,8 @@ Select `HSL101` to detect its three built-in token families (`AC`/`FR`/`NFR`/`WP
 
 `max_lines` defaults to `800`; the rule reports only files above that number. File-length findings have no statement owner and no line of their own, so only `ignore-file[HSL102]` can suppress them — unlike a standalone-comment finding (see [suppressions](suppressions.md#ownership)), which also lacks a statement owner but can still be reached by `ignore-next`.
 
+Under [`--base`](../README.md#new-code-gating), a file is reported only if it has more lines than it had at the merge-base, following renames. A file that was under the limit, or that's new, counts as growing from under it. A file that shrank or didn't change passes.
+
 ### HSL103 — Exception names
 
 `allowed` defaults to `['exc', '*_exc']`. Exact names and a single leading suffix wildcard are supported. Configure it only when your project adopts this naming policy.
@@ -58,6 +60,7 @@ Flags code copied across the project, the kind a fixture, helper, or `parametriz
 - **Suppressing.** A pragma suppresses only the copy in its own file, and that copy still counts toward `min_occurrences`. For generated files, use `exclude` or `per-file-ignores`; a file per-file-ignored for `HSL104` is left out of its comparison entirely.
 - **Explicit paths.** `house-lint check a.py` still compares `a.py` against the whole configured scope, but reports only copies in `a.py`, and `files scanned` counts only the files named. A named file outside `include` is compared too. See [pre-commit](../README.md#pre-commit) for running it before a push. Turn it on there with `--select`, not with `extend-select` in config, as that section explains.
 - **Every run.** Nothing `HSL104` finds is cached: jscpd runs on every scan that enables it.
+- **Under [`--base`](../README.md#new-code-gating).** Only the copies a PR added are reported. Each place at `HEAD` pairs with a place at the merge-base holding the same code, or, failing that, code that contains it or is contained in it, so a rename that makes jscpd match copies over different lines still passes. An old copy extended with more copied lines stays old.
 
 jscpd's own `jscpd:ignore` comments are not supported; use house-lint pragmas.
 

@@ -151,6 +151,34 @@ repos:
 
 Turn `HSL104` on with `--select` in the pre-push hook, not with `extend-select` in `pyproject.toml`: config selection also applies to the commit-stage `house-lint` hook, whose environment has no jscpd, so every commit would fail with a `project-rule-error`.
 
+## New-code gating
+
+```bash
+house-lint check --base origin/main
+```
+
+`--base <ref>` reports only the findings the `HEAD` commit introduced since its merge-base with `<ref>`, so a project with a backlog can still fail a PR that adds to it. house-lint extracts both commits from git into temporary directories and scans each one, so uncommitted and untracked files never count. Both scans use the config committed at `HEAD`: a PR that turns on a rule is judged only on the new instances it adds, and an uncommitted config edit is ignored. An explicit `--config` is read from the same path in `HEAD`, or the built-in config is used when `HEAD` has none there.
+
+A finding at `HEAD` counts as old when it pairs with a finding at the merge-base: the same rule, message, and code, ignoring whitespace. Moving code to another file or reformatting it keeps it old, while editing inside a flagged statement reports it again. Matching counts copies, so a second identical finding beside an old one is new. `HSL102` reports a file only if it has more lines than it had at the merge-base, following renames, and `HSL104` reports only the copies a PR added (see [rules](docs/rules.md)).
+
+- `--base` takes no paths and can't be combined with `--no-git`. In a pre-commit hook, set `pass_filenames: false`.
+- It needs the merge-base in the clone. In GitHub Actions, check out with `fetch-depth: 0`.
+- A ref that names no commit, a missing merge-base, or an error from either scan fails the run with exit code 3. An error says which scan it came from (`base run:` or `head run:`), so a parse error that exists only at the merge-base also fails the gate.
+- Both scans share the project's cache, so a repeated run is fast.
+
+```yaml
+# .github/workflows/lint.yml
+jobs:
+  house-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v8
+      - run: uvx --from 'house-lint[duplicates]' house-lint check --base "origin/${{ github.base_ref }}" --extend-select HSL102,HSL104
+```
+
 ## Caching
 
 `check` caches each file's result under `<root>/.house-lint-cache/`. The key covers the file's content, the rules and rule options in effect, and the Python version; [configuration](docs/configuration.md#caching) lists every input. A hit skips parsing and rule execution.
@@ -165,6 +193,8 @@ A cache failure never fails a scan. house-lint prints one warning for the first 
 ## Output and exit codes
 
 `--format json` prints one schema-versioned JSON object to stdout (`schema_version` 3) with the root, config, enabled rules, file counts, findings, errors, and summary. Match on rule IDs, locations, and error `code` values. Finding `message` text is for people and may change.
+
+A `--base` run adds a `base` object with the `ref` as given, the `base_commit` (the merge-base) and `head_commit` it compared, and `preexisting_count`, the number of findings it left out as old. Text output prints the same as a `base:` line before the summary.
 
 Each finding has a `related` list of the other places the same issue occurs, including ones a pragma suppressed, each with `path`, `line`, `column`, `end_line`, and `end_column`. It is empty for findings from single-file rules. Text output appends the same locations to the finding's line, as `(also at b.py:10:1, c.py)`, naming at most three and then `and N more`.
 
@@ -183,7 +213,7 @@ When several apply, the highest code wins.
 | `config-error` | Invalid CLI arguments, configuration, or root |
 | `path-error` | Invalid explicit path or source path |
 | `traversal-error` | Discovery filesystem failure; the rest of the scan still ran |
-| `git-error` | git failed inside a repository; nothing was scanned |
+| `git-error` | git failed inside a repository, or `--base` couldn't resolve its commits; nothing was scanned |
 | `budget-error` | A discovery or candidate-count safety limit was exceeded |
 | `source-too-large` | A source file exceeds the 10 MiB read limit |
 | `read-error` | A source file could not be read |

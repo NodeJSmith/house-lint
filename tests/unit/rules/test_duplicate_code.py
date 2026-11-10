@@ -8,11 +8,13 @@ from _source_helpers import load, write_file
 
 from house_lint.jscpd import ClonePair, Fragment
 from house_lint.project_rule import ProjectRuleFailure
+from house_lint.results import Finding
 from house_lint.rules.duplicate_code import (
     MAX_OPTION_VALUE,
     HSL104Options,
     Occurrence,
     clusters,
+    match_new,
     run,
 )
 from house_lint.source import LoadedFile
@@ -201,3 +203,63 @@ def test_a_symlinked_spelling_of_a_file_is_not_a_copy_of_itself(tmp_path: Path) 
 def test_options_outside_their_bounds_are_rejected(table: dict[str, int]) -> None:
     with pytest.raises(msgspec.ValidationError):
         msgspec.convert(table, HSL104Options)
+
+
+def copy_at(path: str, line: int, end_line: int, places: int = 3) -> Finding:
+    message = f"duplicated code of {end_line - line + 1} lines in {places} places"
+    return Finding("HSL104", path, line, 1, end_line, 10, message)
+
+
+def added(head: dict[Finding, str], base: dict[Finding, str], renames=None) -> tuple[Finding, ...]:
+    return match_new(
+        list(head), list(base), head_text=head, base_text=base, renames=renames or {}, line_map={}
+    )
+
+
+def test_a_fourth_copy_is_the_only_new_occurrence_though_the_message_changed() -> None:
+    base = {copy_at(name, 1, 5): "blockAB" for name in ("a.py", "b.py", "c.py")}
+    head = {copy_at(name, 1, 5, places=4): "blockAB" for name in ("a.py", "b.py", "c.py", "d.py")}
+
+    assert added(head, base) == (copy_at("d.py", 1, 5, places=4),)
+
+
+def test_an_occurrence_whose_span_grew_or_shrank_pairs_by_containment() -> None:
+    # A rename reorders jscpd's pairs, so the copies are matched over different lines.
+    base = {
+        copy_at("a.py", 1, 5): "block",
+        copy_at("b.py", 1, 5): "block",
+        copy_at("c.py", 1, 5): "block",
+    }
+    head = {
+        copy_at("a.py", 1, 5): "block",
+        copy_at("b.py", 1, 6): "block+",
+        copy_at("renamed.py", 2, 5): "lock",
+    }
+
+    assert added(head, base, renames={"renamed.py": "c.py"}) == ()
+
+
+def test_a_short_new_copy_cannot_take_a_long_old_one_and_blame_an_untouched_file() -> None:
+    long_text = "x" * 200
+    base = {
+        copy_at("a.py", 1, 40, places=2): long_text,
+        copy_at("b.py", 1, 40, places=2): long_text,
+    }
+    short = copy_at("c.py", 1, 5)
+    head = {short: "x" * 30, **{copy_at(f, 1, 40): long_text for f in ("a.py", "b.py")}}
+
+    assert added(head, base) == (short,)
+
+
+def test_containment_prefers_the_closest_length() -> None:
+    base = {copy_at("a.py", 1, 9): "abcdefghij", copy_at("b.py", 1, 3): "abcd"}
+    head = {copy_at("c.py", 1, 3): "abc", copy_at("d.py", 1, 9): "abcdefghi"}
+
+    assert added(head, base) == ()
+
+
+def test_a_copy_unrelated_to_every_base_occurrence_is_new() -> None:
+    base = {copy_at("a.py", 1, 5): "block"}
+    other = copy_at("b.py", 1, 5)
+
+    assert added({other: "different"}, base) == (other,)

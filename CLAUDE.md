@@ -43,7 +43,9 @@ CI has two workflows. `.github/workflows/ci.yml` runs the tests on Python 3.11 t
 
 `src/house_lint/`:
 - `cli.py`: the cyclopts app: argument parsing, config loading, the internal-error boundary, and rendering
-- `pipeline.py`: the whole run (`run_scan`): discovery, the file phase, the project phase, the per-run cache (`RunCache`), and result aggregation
+- `pipeline.py`: the whole run (`run_scan`): discovery, the file phase, the project phase, the per-run cache (`RunCache`, at a `CacheLocation`), and result aggregation
+- `new_code.py`: `check --base` (`run_gate`): resolving the merge-base, extracting both commits through a temporary index, scanning each with `run_scan`, and keeping the head findings no base finding pairs with
+- `matching.py`: how `--base` pairs findings across the two scans: the exact passes and the default matcher. A leaf module, so rule modules can import it
 - `config.py`: config discovery and validation, each run's resolved rule options (`LintConfig.rule_options`), which rules apply to a file (`applicable_rules`), and which languages to discover (`discovered_languages`)
 - `discovery.py`: file discovery through `git ls-files` or a plain walk, and configured excludes
 - `language.py`: the `Language` enum and `language_for(path)`, the one place a file's language is decided
@@ -72,7 +74,7 @@ Tests:
 A file rule is a detector `(source: PythonSource, options, *, limit=None) -> list[CandidateFinding]` in `rules/<name>.py`. Adding one touches:
 
 1. `rules/<name>.py`: the detector. A rule with options also declares its options type there, a frozen `RuleOptions` subclass whose fields, defaults, and `Annotated` constraints are the config schema. Cross-field checks go in `__post_init__`, raising `ValueError`.
-2. `rule_catalog.py`: one row, `file_rule(...)` or `configurable_rule(...)`. This is the single source of truth for ID, display info, default or opt-in tier, detector, and options. Parsing, dispatch, and the cache key all derive from it. A row whose detector and options type disagree fails Pyright. Pass `parse=` only when a rule's config needs more than converting its table to its options type, as HSL101's merge with the built-in families does.
+2. `rule_catalog.py`: one row, `file_rule(...)` or `configurable_rule(...)`. A rule whose findings can't pair across `--base`'s two scans on message and span text passes `base_match=`, a matcher in its own module (see HSL102 and HSL104). This is the single source of truth for ID, display info, default or opt-in tier, detector, and options. Parsing, dispatch, and the cache key all derive from it. A row whose detector and options type disagree fails Pyright. Pass `parse=` only when a rule's config needs more than converting its table to its options type, as HSL101's merge with the built-in families does.
 3. `docs/rules.md` and, for options, `docs/configuration.md`. Also update the README rules table.
 4. Tests under `tests/unit/rules/`, plus the pins that list rules: `test_rule_catalog_has_fixed_metadata_and_derived_selections` and `test_console_and_module_have_equivalent_rule_listing`, and for a default-tier rule, the tests that pin the default selection.
 

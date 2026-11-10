@@ -3,7 +3,7 @@
 import os
 import stat
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -151,7 +151,12 @@ def inside_repository(directory: Path) -> bool:
 
 
 def run_git(
-    directory: Path, args: tuple[str, ...], *, accepted: tuple[int, ...] = (0,)
+    directory: Path,
+    args: tuple[str, ...],
+    *,
+    accepted: tuple[int, ...] = (0,),
+    env: Mapping[str, str] | None = None,
+    hint: str = _GIT_FAILURE_HINT,
 ) -> subprocess.CompletedProcess[bytes]:
     """Run git in `directory`, treating anything but a clean answer as a failure.
 
@@ -159,18 +164,23 @@ def run_git(
     on an unreadable directory while leaving that directory's files out of its list.
 
     The environment is inherited on purpose: inside `git commit <paths>`, a hook's `GIT_INDEX_FILE`
-    points at the index being committed.
+    points at the index being committed. `env` overlays it, for a call that needs its own index.
+    `hint` ends every failure message, saying what the user can do about it.
     """
     try:
         completed = subprocess.run(
-            (*_GIT_COMMAND, *args), cwd=directory, capture_output=True, check=False
+            (*_GIT_COMMAND, *args),
+            cwd=directory,
+            capture_output=True,
+            check=False,
+            env=None if env is None else {**os.environ, **env},
         )
     except OSError as exc:
-        raise GitFailure(f"could not run git: {exc}; {_GIT_FAILURE_HINT}") from exc
+        raise GitFailure(f"could not run git: {exc}; {hint}") from exc
     detail = completed.stderr.decode(errors="replace").strip()
     if completed.returncode not in accepted or detail:
         reason = detail or f"exit status {completed.returncode}"
-        raise GitFailure(f"git {args[0]} failed: {reason}; {_GIT_FAILURE_HINT}")
+        raise GitFailure(f"git {args[0]} failed: {reason}; {hint}")
     return completed
 
 

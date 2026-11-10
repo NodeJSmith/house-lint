@@ -81,14 +81,23 @@ class PythonSource:
         return tuple(sorted(spans))
 
 
+def decode_python(content: bytes) -> str:
+    """Decode Python source bytes as the interpreter would: BOM, encoding cookie, newlines.
+
+    Raises `UnicodeDecodeError` or `LookupError` for undecodable bytes or an unknown encoding, and
+    `SyntaxError` for an invalid encoding declaration.
+    """
+    buffer = io.BytesIO(content)
+    encoding, _ = tokenize.detect_encoding(buffer.readline)
+    buffer.seek(0)
+    return io.TextIOWrapper(buffer, encoding=encoding).read()
+
+
 def parse_python(loaded: LoadedFile) -> PythonSource | ParseFailure:
     """Decode, tokenize, and parse a loaded file, in that order. The first failure is the result."""
     relative = loaded.relative_path
     try:
-        buffer = io.BytesIO(loaded.content)
-        encoding, _ = tokenize.detect_encoding(buffer.readline)
-        buffer.seek(0)
-        text = io.TextIOWrapper(buffer, encoding=encoding).read()
+        text = decode_python(loaded.content)
     except (UnicodeDecodeError, LookupError) as exc:
         return ParseFailure(
             error("decode", "read", "bounded-read", "source could not be decoded", path=relative),
@@ -138,4 +147,4 @@ def _node_key(node: ast.stmt) -> tuple[int, int, int, int]:
     )
 
 
-__all__ = ["ParseFailure", "PythonSource", "Token", "parse_python"]
+__all__ = ["ParseFailure", "PythonSource", "Token", "decode_python", "parse_python"]

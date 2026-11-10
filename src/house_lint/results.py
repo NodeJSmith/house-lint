@@ -144,7 +144,31 @@ def internal_error(
 
 
 @dataclass(frozen=True)
+class BaseComparison:
+    """What a `--base` run compared against: the ref as given, both commits, and what it left out.
+
+    `preexisting_count` is the number of head findings paired with a base finding and so not
+    reported.
+    """
+
+    ref: str
+    base_commit: str
+    head_commit: str
+    preexisting_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ref": self.ref,
+            "base_commit": self.base_commit,
+            "head_commit": self.head_commit,
+            "preexisting_count": self.preexisting_count,
+        }
+
+
+@dataclass(frozen=True)
 class ScanResult:
+    """One run's outcome. `base` is set only for a `--base` run, whose findings are the new ones."""
+
     root: Path | None
     config: Path | None
     enabled_rules: tuple[str, ...]
@@ -152,6 +176,7 @@ class ScanResult:
     findings: tuple[Finding, ...] = ()
     suppressed_count: int = 0
     errors: tuple[LintError, ...] = ()
+    base: BaseComparison | None = None
 
     def __post_init__(self) -> None:
         if self.root is not None:
@@ -180,7 +205,7 @@ class ScanResult:
         errors = sorted(
             self.errors, key=lambda item: (item.path or "", item.line or 0, item.kind, item.message)
         )
-        return {
+        data: dict[str, Any] = {
             "schema_version": 3,
             "root": str(self.root) if self.root is not None else None,
             "config": str(self.config) if self.config is not None else None,
@@ -194,6 +219,9 @@ class ScanResult:
                 "suppressed_count": self.suppressed_count,
             },
         }
+        if self.base is not None:
+            data["base"] = self.base.to_dict()
+        return data
 
 
 @dataclass(frozen=True)

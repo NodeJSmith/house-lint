@@ -89,6 +89,26 @@ class ProjectInputs:
     errors: tuple[LintError, ...] = ()
 
 
+@dataclass(frozen=True)
+class CacheLocation:
+    """Where a run's cache lives, and whether house-lint manages that place itself.
+
+    `managed` marks house-lint's own default under a project root. Only a managed base gets the
+    self-ignore marker and the symlink check, because only its path is chosen by the scanned
+    project. A user-given path is the user's choice and is never vetted.
+    """
+
+    base: Path
+    managed: bool
+
+    @classmethod
+    def for_project(cls, root: Path, cache_dir: Path | None) -> "CacheLocation":
+        """`cache_dir` as the user gave it, or house-lint's default under `root` when None."""
+        if cache_dir is None:
+            return cls(default_cache_base(root), managed=True)
+        return cls(cache_dir.expanduser().resolve(), managed=False)
+
+
 class RunCache:
     """One run's use of the cache: when it reads, when it writes, and when it cleans up.
 
@@ -192,17 +212,14 @@ def run_scan(
     config: LintConfig,
     use_git: bool,
     read_cache: bool,
-    cache_dir: Path | None,
+    cache: CacheLocation,
     debug: bool,
 ) -> ScanResult:
     """Run the complete pipeline, retaining all completed-file results.
 
-    `cache_dir` is the location as the user gave it, or None for house-lint's own default. A given
-    path means the user chose it, never that it was vetted: it skips the self-ignore marker and
-    the symlink check.
+    `cache` is passed in rather than derived from `root`, so a run over another tree, such as
+    `--base`'s extractions, can still use the project's own cache.
     """
-    cache_base = default_cache_base(root) if cache_dir is None else cache_dir.expanduser().resolve()
-    resolved_cache_dir = versioned_cache_dir(cache_base)
     try:
         discovered = discover_files(
             root,
@@ -222,17 +239,17 @@ def run_scan(
         )
     # Built after discovery, so the constructor's symlink check only runs once discovery has
     # succeeded and a discovery error is what gets reported.
-    cache = RunCache(
-        resolved_cache_dir,
-        self_ignore=cache_dir is None,
+    run_cache = RunCache(
+        versioned_cache_dir(cache.base),
+        self_ignore=cache.managed,
         read_enabled=read_cache,
         reporter=CacheReporter(debug=debug),
     )
     if discovered.files:
         # Only when there is something to scan — so a run that discovers nothing neither creates
         # a cache directory in the project nor reports on one it was never going to use.
-        cache.prepare()
-    file_phase = run_file_phase(discovered, root=root, config=config, cache=cache, debug=debug)
+        run_cache.prepare()
+    file_phase = run_file_phase(discovered, root=root, config=config, cache=run_cache, debug=debug)
     project_inputs = ProjectInputs(file_phase.project_inputs)
     if paths and not file_phase.aborted:
         project_inputs = widen_project_inputs(
@@ -246,7 +263,7 @@ def run_scan(
     project_phase = run_project_phase(
         project_inputs, aborted=file_phase.aborted, config=config, debug=debug
     )
-    cache.finish()
+    run_cache.finish()
     return ScanResult(
         root,
         config_path,
@@ -589,4 +606,4 @@ def _resolve_file_rules(
     return file_enabled_rules, selected_detector_inputs(config, enabled_rules=file_enabled_rules)
 
 
-__all__ = ["run_scan"]
+__all__ = ["CacheLocation", "run_scan"]

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from house_lint.config import config_table_name, discovered_languages, is_standalone_config
-from house_lint.results import RuleList, ScanResult
+from house_lint.results import BaseComparison, RuleList, ScanResult
 
 # A text finding names at most this many related locations, so a line stays readable for a large
 # cluster of copies. JSON lists every one.
@@ -100,6 +100,8 @@ def render_text(
         if finding["related"]:
             line += f" (also at {related_text(finding['related'])})"
         lines.append(line)
+    if result.base is not None:
+        lines.append(base_line(result.base))
     summary = data["summary"]
     lines.append(
         "summary: "
@@ -107,6 +109,15 @@ def render_text(
         f"{summary['suppressed_count']} suppressed"
     )
     return "\n".join(lines)
+
+
+def base_line(base: BaseComparison) -> str:
+    """Name the commit a `--base` run compared against and how many findings it left out."""
+    noun = "finding" if base.preexisting_count == 1 else "findings"
+    return (
+        f"base: {base.ref} (merge-base {base.base_commit[:12]}): "
+        f"{base.preexisting_count} pre-existing {noun} not reported"
+    )
 
 
 def related_text(related: list[dict[str, Any]]) -> str:

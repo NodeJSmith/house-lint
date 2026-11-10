@@ -13,6 +13,7 @@ import msgspec
 
 from house_lint.analysis import CandidateFinding
 from house_lint.language import Language
+from house_lint.matching import BaseMatcher, match_by_key
 from house_lint.project_rule import ProjectCandidate
 from house_lint.python_source import PythonSource
 from house_lint.rules import (
@@ -65,11 +66,16 @@ class Rule:
 
 @dataclass(frozen=True)
 class FileRule(Rule, Generic[OptionsT]):
-    """A rule that runs once per scanned file. `parse_options` is None when it takes no options."""
+    """A rule that runs once per scanned file. `parse_options` is None when it takes no options.
+
+    `base_match` pairs the rule's findings across `--base`'s two scans; None means
+    `matching.match_by_key`.
+    """
 
     detect: Detector[OptionsT]
     parse_options: Callable[[Any], OptionsT] | None = None
     languages: frozenset[Language] = _FILE_RULE_LANGUAGES
+    base_match: BaseMatcher | None = None
 
 
 @dataclass(frozen=True)
@@ -77,12 +83,14 @@ class ProjectRule(Rule, Generic[OptionsT]):
     """A rule that runs once per scan, after the file loop, on the files it applies to.
 
     `run` raises `ProjectRuleFailure` when it can't run for a reason the user can act on.
-    `parse_options` is None when it takes no options.
+    `parse_options` is None when it takes no options. `base_match` pairs the rule's findings
+    across `--base`'s two scans; None means `matching.match_by_key`.
     """
 
     run: ProjectRun[OptionsT]
     languages: frozenset[Language]
     parse_options: Callable[[Any], OptionsT] | None = None
+    base_match: BaseMatcher | None = None
 
 
 def file_rule(
@@ -101,6 +109,7 @@ def configurable_rule(
     options_type: type[ConfigurableOptionsT],
     *,
     parse: Callable[[Any], ConfigurableOptionsT] | None = None,
+    base_match: BaseMatcher | None = None,
 ) -> FileRule[Any]:
     """Build the row for a file rule with options.
 
@@ -116,6 +125,7 @@ def configurable_rule(
         enablement,
         detect,
         parse or (lambda raw: msgspec.convert(raw, options_type)),
+        base_match=base_match,
     )
 
 
@@ -139,6 +149,8 @@ def configurable_project_rule(
     run: ProjectRun[ConfigurableOptionsT],
     languages: frozenset[Language],
     options_type: type[ConfigurableOptionsT],
+    *,
+    base_match: BaseMatcher | None = None,
 ) -> ProjectRule[Any]:
     """Build the row for a project rule with options. See `configurable_rule` for why."""
     return ProjectRule(
@@ -149,6 +161,7 @@ def configurable_project_rule(
         run,
         languages,
         lambda raw: msgspec.convert(raw, options_type),
+        base_match=base_match,
     )
 
 
@@ -198,6 +211,7 @@ FILE_RULES: Mapping[str, FileRule[Any]] = rules_by_id(
             "opt-in",
             file_length.detect,
             HSL102Options,
+            base_match=file_length.match_new,
         ),
         configurable_rule(
             "HSL103",
@@ -220,6 +234,7 @@ PROJECT_RULES: Mapping[str, ProjectRule[Any]] = rules_by_id(
             duplicate_code.run,
             frozenset({Language.PYTHON}),
             HSL104Options,
+            base_match=duplicate_code.match_new,
         ),
     )
 )
@@ -265,6 +280,15 @@ def is_project_rule(rule_id: str) -> bool:
     return isinstance(RULES[rule_id], ProjectRule)
 
 
+def base_matcher(rule_id: str) -> BaseMatcher:
+    """Return how `--base` pairs a known rule's findings across its two scans."""
+    rule = RULES[rule_id]
+    # HSL900's row is a bare `Rule`, with no matcher of its own.
+    if isinstance(rule, (FileRule, ProjectRule)) and rule.base_match is not None:
+        return rule.base_match
+    return match_by_key
+
+
 def rule_ids() -> tuple[str, ...]:
     """Return built-in rule IDs in their stable display order."""
     return tuple(RULES)
@@ -287,6 +311,7 @@ __all__ = [
     "ProjectRule",
     "ProjectRun",
     "Rule",
+    "base_matcher",
     "configurable_project_rule",
     "configurable_rule",
     "file_rule",
