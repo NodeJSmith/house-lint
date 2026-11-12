@@ -593,9 +593,9 @@ def _resolve_file_rules(
     """Return this file's (enabled_rules, detector_inputs), narrowed to the rules that apply.
 
     Suppression handling never filters candidate findings by enabled_rules (see
-    apply_suppressions in suppressions.py). detector_inputs must be recomputed when the set narrows, so a rule
-    that doesn't apply to this file never runs on it; otherwise its findings would leak through
-    unfiltered.
+    apply_suppressions in suppressions.py). detector_inputs must be recomputed when the set
+    narrows, so a rule that doesn't apply to this file never runs on it; otherwise its findings
+    would leak through unfiltered.
     """
     file_enabled_rules = applicable_rules(
         config.enabled_rules, compiled_per_file_ignores, match_relative, language

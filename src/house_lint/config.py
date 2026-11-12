@@ -117,7 +117,8 @@ def applicable_rules(
     a language, and per-file-ignores can't name it, so it stays.
 
     Detector dispatch, the cache key, each project rule's input, and the suppression rules all read
-    this result. Discovery runs before there are files to ask about, so it reads `discovered_languages` instead.
+    this result. Discovery runs before there are files to ask about, so it reads
+    `discovered_languages` instead.
     """
     ignored: set[str] = set()
     for spec, rule_ids in compiled_per_file_ignores:
@@ -203,8 +204,9 @@ def _effective_rule_selection(
     Order:
     1. `select`/`ignore` establish the base set — or a CLI `--select` gives a wholesale
        override, replacing every configured selection key (`select`, `ignore`, `extend-select`,
-       `extend-ignore`) rather than adding to them, as Ruff's `--select` does. A per-rule run such as
-       `--select HSL102` then runs exactly that rule, even when the config extends the selection.
+       `extend-ignore`) rather than adding to them, as Ruff's `--select` does. A per-rule run
+       such as `--select HSL102` then runs exactly that rule, even when the config extends the
+       selection.
     2. `extend-select`/`extend-ignore` layer on top of that base. Config and CLI variants of each
        are merged together (concatenated, not one overriding the other) before being applied;
        under a CLI `--select`, only the CLI variants apply.

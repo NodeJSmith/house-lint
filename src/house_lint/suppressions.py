@@ -122,11 +122,11 @@ def apply_suppressions(
         add_diagnostic(diagnostic)
     claims = _collect_claims(scan, candidates)
     if STALE_SUPPRESSION_RULE_ID in enabled_rules:
-        stale = (
+        stale_reports = (
             *scan.stale,
             *_unused_and_redundant_reports(source, claims, candidates_complete=candidates_complete),
         )
-        for diagnostic in _unsuppressed_stale_reports(scan, stale):
+        for diagnostic in _unsuppressed_stale_reports(scan, stale_reports):
             add_diagnostic(diagnostic)
 
     suppressed = {candidate_index for claim in claims for candidate_index in claim.candidates}
@@ -174,6 +174,7 @@ def scan_pragmas(source: PythonSource, enabled_rules: Collection[str]) -> Pragma
     accepted: list[AcceptedPragma] = []
     diagnostics: list[CandidateFinding] = []
     stale: list[CandidateFinding] = []
+    report_stale = STALE_SUPPRESSION_RULE_ID in enabled_rules
     for token in source.tokens:
         if token.type != tokenize.COMMENT or not _is_pragma(token):
             continue
@@ -202,12 +203,9 @@ def scan_pragmas(source: PythonSource, enabled_rules: Collection[str]) -> Pragma
                 continue
             if rule_id not in enabled_rules:
                 # Never accepted, so it suppresses nothing; only HSL901 says so.
-                if STALE_SUPPRESSION_RULE_ID in enabled_rules:
-                    stale.append(
-                        _stale_report(
-                            source, pragma, f"unused suppression for disabled rule {rule_id}"
-                        )
-                    )
+                if report_stale:
+                    message = f"unused suppression for disabled rule {rule_id}"
+                    stale.append(_stale_report(source, pragma, message))
                 continue
             accepted.append(AcceptedPragma(pragma, rule_id))
     return PragmaScan(tuple(accepted), tuple(diagnostics), tuple(stale))
@@ -218,7 +216,8 @@ def _collect_claims(scan: PragmaScan, candidates: tuple[CandidateFinding, ...]) 
 
     A pragma naming a project rule makes no claim here. That rule's findings don't exist yet when
     this file's scan runs; the project phase resolves it (`claims_for`). Nor does one naming
-    HSL901, whose reports `_unsuppressed_stale_reports` resolves. Neither is ever reported unused or redundant.
+    HSL901, whose reports `_unsuppressed_stale_reports` resolves. Neither is ever reported unused
+    or redundant.
     """
     claims: list[_Claim] = []
     for entry in scan.accepted:
@@ -458,7 +457,6 @@ def _survival_key(claim: _Claim) -> tuple[int, int, tuple[int, int]]:
 
     Scope and position only break ties in candidate count. Keeping any tied claim is safe, since
     `_redundant_claims` flags a claim only when its candidates are a subset of the kept claim's.
-    Among claims owning the same candidates, the broadest scope is kept, then the earliest.
     """
     return -len(claim.candidates), _SCOPE_RANK[claim.pragma.action], claim.pragma.token.start
 
