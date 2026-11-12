@@ -558,7 +558,7 @@ def test_hsl901_never_reports_pragmas_naming_an_enabled_project_rule(
     assert result["findings"] == []
 
 
-def test_a_pragma_naming_a_disabled_project_rule_is_reported_and_never_replayed_from_cache(
+def test_hsl901_never_reports_a_pragma_naming_a_disabled_project_rule(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
     (tmp_path / "a.py").write_text(f"# house-lint: ignore-file[{PY_RULE}] - generated code\n")
@@ -567,10 +567,8 @@ def test_a_pragma_naming_a_disabled_project_rule_is_reported_and_never_replayed_
     assert scan(capsys, tmp_path, "HSL002", PY_RULE, "HSL901")[0] == 0
     code, result = scan(capsys, tmp_path, "HSL002", "HSL901")
 
-    assert code == 1
-    assert [(finding["rule_id"], finding["message"]) for finding in result["findings"]] == [
-        ("HSL901", f"unused suppression for disabled rule {PY_RULE}")
-    ]
+    assert code == 0
+    assert result["findings"] == []
 
 
 def test_project_rule_options_come_from_config_and_join_the_cache_key(

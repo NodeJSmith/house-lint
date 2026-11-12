@@ -67,7 +67,7 @@ jscpd's own `jscpd:ignore` comments are not supported; use house-lint pragmas.
 
 ### HSL901 — Stale suppressions
 
-Reports a pragma that does nothing: one whose rule ran and found nothing for it to suppress, one naming a rule that doesn't run on the file, and one an overlapping pragma already covers. It's opt-in, like Ruff's `RUF100`, so a run selecting one rule doesn't report pragmas for the others; add `extend-select = ["HSL901"]` to keep stale pragmas from piling up. It never reports a pragma naming a project rule. See [Suppressions](suppressions.md#hsl901-stale-pragmas) for its messages and how to suppress it.
+Reports a pragma that does nothing: one whose rule ran and found nothing for it to suppress, one naming a rule that doesn't run on the file, and one an overlapping pragma already covers. It's opt-in, like Ruff's `RUF100`, so a run selecting one rule doesn't report pragmas for the others; add `extend-select = ["HSL901"]` to keep stale pragmas from piling up. It never reports a pragma naming a project rule, so it can run in a hook that leaves `HSL104` out. See [Suppressions](suppressions.md#hsl901-stale-pragmas) for its messages and how to suppress it.
 
 ## Source compatibility matrix
 

@@ -18,7 +18,7 @@ or does one of them read `config.enabled_rules` directly?
 ## Suppression guarantees
 Can any pragma, config key, or CLI flag silence an HSL900 report? And can a pragma HSL901 reports
 as `redundant` be the only owner of some finding, so deleting it would unsuppress that finding?
-Trace `_redundant_claims` and `_owns`, not just the docstrings.
+Trace `_credited_claims` and `_owns`, not just the docstrings.
 
 ## Breaking surface
 Does the change alter a CLI flag, config key, JSON field, exit code, or pragma spelling? If so,

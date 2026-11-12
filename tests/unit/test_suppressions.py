@@ -16,8 +16,8 @@ from house_lint.rules.spec_tokens import detect as detect_spec_tokens
 from house_lint.suppressions import (
     SuppressionResult,
     _Claim,
+    _credited_claims,
     _Pragma,
-    _redundant_claims,
     apply_suppressions,
     scan_pragmas,
 )
@@ -489,8 +489,8 @@ def _hsl901_reports(result: SuppressionResult) -> list[tuple[int | None, str]]:
             "# house-lint: ignore-next[HSL002] - lazy by design\n"
             "# house-lint: ignore-next[HSL002] - lazy by design\n"
             "value = 1\n",
-            [(2, "redundant suppression for HSL002"), (1, "unused suppression for HSL002")],
-            id="unused-overlap-reports-survivor-as-unused",
+            [(1, "unused suppression for HSL002"), (2, "unused suppression for HSL002")],
+            id="unused-overlap-reports-each-as-unused",
         ),
     ],
 )
@@ -552,7 +552,7 @@ def test_hsl901_reports_all_but_the_broadest_earliest_overlapping_pragma(
         "decorated-def-windows",
     ],
 )
-def test_deleting_every_redundant_pragma_leaves_the_suppressed_set_unchanged(
+def test_deleting_every_reported_pragma_leaves_the_suppressed_set_unchanged(
     parse_sample, content: str
 ) -> None:
     def scan(text: str):
@@ -561,19 +561,19 @@ def test_deleting_every_redundant_pragma_leaves_the_suppressed_set_unchanged(
         return apply_suppressions(source, tuple(candidates), WITH_HSL901)
 
     before = scan(content)
-    redundant = {
-        (finding.line, finding.message.removeprefix("redundant suppression for "))
+    reported = {
+        (finding.line, finding.message.rsplit(" ", 1)[1])
         for finding in before.findings
-        if finding.message.startswith("redundant suppression")
+        if finding.rule_id == "HSL901"
     }
-    assert redundant, "each sample must contain an overlap"
-    after = scan(_without_ids(content, redundant))
+    assert reported, "each sample must contain an overlapping pragma HSL901 reports"
+    after = scan(_without_ids(content, reported))
 
     assert after.suppressed_count == before.suppressed_count
     assert [f for f in after.findings if f.rule_id != "HSL901"] == [
         f for f in before.findings if f.rule_id != "HSL901"
     ]
-    assert not any(f.message.startswith("redundant") for f in after.findings)
+    assert not any(f.rule_id == "HSL901" for f in after.findings)
 
 
 def test_ignore_file_hsl901_claims_every_hsl901_report_but_no_hsl900_report(
@@ -651,7 +651,7 @@ def test_suppressed_hsl901_reports_spend_no_diagnostic_budget(parse_sample) -> N
     assert result.findings == ()
 
 
-def test_a_claim_is_redundant_only_when_the_kept_claim_owns_all_its_candidates(
+def test_each_candidate_is_credited_to_one_owner_and_uncredited_claims_are_reported(
     parse_sample,
 ) -> None:
     source = parse_sample(
@@ -667,26 +667,25 @@ def test_a_claim_is_redundant_only_when_the_kept_claim_owns_all_its_candidates(
             strict=True,
         )
     ]
-    # Overlapping claims that don't nest, which today's pragma actions can't produce: the
-    # file pragma would be kept by scope, but deleting the trailing ones would lose candidate 2.
+    # Overlapping claims that don't nest, which today's pragma actions can't produce: the file
+    # claim is credited with candidate 1, but only `second` owns candidate 2, so it stays credited.
     claims = [
-        _Claim(file_pragma, "HSL002", ("file", "ignore-file"), (0, 1)),
-        _Claim(first, "HSL002", ("a", "ignore"), (1,)),
-        _Claim(second, "HSL002", ("b", "ignore"), (1, 2)),
+        _Claim(file_pragma, "HSL002", (0, 1)),
+        _Claim(first, "HSL002", (1,)),
+        _Claim(second, "HSL002", (1, 2)),
     ]
 
-    assert _redundant_claims(claims) == {1}
+    assert _credited_claims(claims) == {0, 2}
 
-    # A chain across two groups: `first` owns nothing and shares `second`'s target, so it's
-    # redundant to `second`, which is redundant to the file claim through candidate 2. Deleting
-    # both still leaves every candidate owned.
-    chain = [
-        _Claim(file_pragma, "HSL002", ("file", "ignore-file"), (2, 3)),
-        _Claim(first, "HSL002", ("a", "ignore"), ()),
-        _Claim(second, "HSL002", ("a", "ignore"), (2,)),
+    # Two identical file claims over many candidates: one is credited with all of them, in time
+    # linear in the candidates.
+    many = tuple(range(10_000))
+    duplicates = [
+        _Claim(file_pragma, "HSL002", many),
+        _Claim(file_pragma, "HSL002", many),
     ]
 
-    assert _redundant_claims(chain) == {1, 2}
+    assert len(_credited_claims(duplicates)) == 1
 
 
 def _without_ids(content: str, reports: set[tuple[int | None, str]]) -> str:

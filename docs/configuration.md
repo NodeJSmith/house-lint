@@ -64,7 +64,7 @@ to `pyproject.toml`.
 "legacy/*.py" = ["HSL001", "HSL003"]
 ```
 
-Applied after the base selection and `extend-select`/`extend-ignore` resolve, per file: a rule dropped by `per-file-ignores` for a matching file is not detected for that file at all, so a `# house-lint: ignore[...]` pragma naming it there suppresses nothing and, when `HSL901` runs, is reported like a pragma naming a rule the selection leaves out. `HSL900` can never appear in a `per-file-ignores` value.
+Applied after the base selection and `extend-select`/`extend-ignore` resolve, per file: a rule dropped by `per-file-ignores` for a matching file is not detected for that file at all, so a `# house-lint: ignore[...]` pragma naming it there suppresses nothing and, when `HSL901` runs, is reported like a pragma naming a rule the selection leaves out, unless it names a project rule. `HSL900` can never appear in a `per-file-ignores` value.
 
 `per-file-ignores` patterns are matched against each file's resolved location under the root, not the spelling used to reach it. Naming `src/../tests/a.py`, or a path reached through a symlinked directory, matches the same patterns as `tests/a.py` would. Findings still report the path as typed.
 

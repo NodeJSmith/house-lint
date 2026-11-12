@@ -152,8 +152,6 @@ repos:
 
 Turn `HSL104` on with `--select` in the pre-push hook, not with `extend-select` in `pyproject.toml`: config selection also applies to the commit-stage `house-lint` hook, whose environment has no jscpd, so every commit would fail with a `project-rule-error`.
 
-For the same reason, a project that uses `HSL104` and wants `HSL901` should run `HSL901` in that pre-push hook, not through `extend-select` in config. `HSL901` reports a pragma naming a rule the run leaves out, so in the commit-stage hook, which doesn't run `HSL104`, every `ignore[HSL104]` pragma would be reported. Give the pre-push hook `args: [--extend-select, "HSL104,HSL901"]` to run every rule there. `--select HSL104,HSL901` won't work, since it flags the pragmas for every other rule.
-
 ## New-code gating
 
 ```bash

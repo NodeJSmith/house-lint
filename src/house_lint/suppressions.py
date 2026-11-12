@@ -32,7 +32,7 @@ from house_lint.rule_catalog import (
 _ID = re.compile(r"HSL[0-9]{3}\Z")
 _PRAGMA = re.compile(r"#\s*house-lint:\s*(ignore-next|ignore-file|ignore)\[([^]]*)\] - (.+)\Z")
 _MIN_REASON_ALNUM_CHARS = 3
-# Among overlapping pragmas owning the same candidates, the broadest is kept: rank 0 first.
+# Among pragmas owning the same candidate, the broadest is credited with it: rank 0 first.
 _SCOPE_RANK = {"ignore-file": 0, "ignore-next": 1, "ignore": 2}
 
 _Owner: TypeAlias = StatementKey | str
@@ -87,7 +87,6 @@ class PragmaScan:
 class _Claim:
     pragma: _Pragma
     rule_id: str
-    target: tuple[_Owner, str]
     candidates: tuple[int, ...]
 
 
@@ -102,9 +101,10 @@ def apply_suppressions(
     """Apply valid pragmas, retaining diagnostics and provenance until public conversion.
 
     Every claim suppresses what it owns, overlapping or not. HSL900 reports broken pragmas. When
-    HSL901 runs, it reports stale ones: unused, naming a disabled rule, or redundant with an
-    overlapping pragma that survives. A pragma naming HSL901 can claim those reports. The visible
-    findings are the unsuppressed candidates, then HSL900's reports, then HSL901's.
+    HSL901 runs, it reports stale ones: unused, naming a disabled rule, or redundant because
+    overlapping pragmas are credited with every finding it suppresses. A pragma naming HSL901 can claim
+    those reports. The visible findings are the unsuppressed candidates, then HSL900's reports,
+    then HSL901's.
     """
     diagnostics: list[CandidateFinding] = []
     diagnostic_limit = None if limit is None else max(0, limit - len(candidates))
@@ -169,7 +169,8 @@ def scan_pragmas(source: PythonSource, enabled_rules: Collection[str]) -> Pragma
 
     Malformed, misplaced, unknown-rule, and wrong-language pragmas become HSL900 diagnostics, in
     source order, rather than accepted entries. A disabled-rule entry is never accepted either; it
-    becomes an HSL901 report only when `enabled_rules` holds HSL901.
+    becomes an HSL901 report only when `enabled_rules` holds HSL901 and the rule isn't a project
+    rule.
     """
     accepted: list[AcceptedPragma] = []
     diagnostics: list[CandidateFinding] = []
@@ -202,8 +203,10 @@ def scan_pragmas(source: PythonSource, enabled_rules: Collection[str]) -> Pragma
                 )
                 continue
             if rule_id not in enabled_rules:
-                # Never accepted, so it suppresses nothing; only HSL901 says so.
-                if report_stale:
+                # Never accepted, so it suppresses nothing; only HSL901 says so, and never for a
+                # project rule, which a run often leaves to a separate hook (as Pylint exempts
+                # duplicate-code from useless-suppression).
+                if report_stale and not is_project_rule(rule_id):
                     message = f"unused suppression for disabled rule {rule_id}"
                     stale.append(_stale_report(source, pragma, message))
                 continue
@@ -216,8 +219,7 @@ def _collect_claims(scan: PragmaScan, candidates: tuple[CandidateFinding, ...]) 
 
     A pragma naming a project rule makes no claim here. That rule's findings don't exist yet when
     this file's scan runs; the project phase resolves it (`claims_for`). Nor does one naming
-    HSL901, whose reports `_unsuppressed_stale_reports` resolves. Neither is ever reported unused
-    or redundant.
+    HSL901, whose reports `_unsuppressed_stale_reports` resolves. HSL901 never reports either.
     """
     claims: list[_Claim] = []
     for entry in scan.accepted:
@@ -227,9 +229,9 @@ def _collect_claims(scan: PragmaScan, candidates: tuple[CandidateFinding, ...]) 
         owned = tuple(
             index
             for index, candidate in enumerate(candidates)
-            if candidate.rule_id == entry.rule_id and _owns(entry.pragma, target[0], candidate)
+            if candidate.rule_id == entry.rule_id and _owns(entry.pragma, target, candidate)
         )
-        claims.append(_Claim(entry.pragma, entry.rule_id, target, owned))
+        claims.append(_Claim(entry.pragma, entry.rule_id, owned))
     return claims
 
 
@@ -353,11 +355,11 @@ def _prologue_statement(statement: ast.stmt, *, is_module_docstring: bool) -> bo
     return isinstance(statement, ast.ImportFrom) and statement.module == "__future__"
 
 
-def _target(pragma: _Pragma) -> tuple[_Owner, str]:
+def _target(pragma: _Pragma) -> _Owner:
     if pragma.action == "ignore-file":
-        return "file", pragma.action
+        return "file"
     assert pragma.owner is not None
-    return pragma.owner, pragma.action
+    return pragma.owner
 
 
 def _owns(pragma: _Pragma, owner: _Owner, candidate: CandidateFinding) -> bool:
@@ -404,16 +406,18 @@ def _owns(pragma: _Pragma, owner: _Owner, candidate: CandidateFinding) -> bool:
 def _unused_and_redundant_reports(
     source: PythonSource, claims: list[_Claim], *, candidates_complete: bool
 ) -> list[CandidateFinding]:
-    """Report each claim that's redundant with a surviving overlap, or else owns nothing.
+    """Report each claim credited with no candidate: redundant if it owns some, else unused.
 
     A claim that owns nothing is only known unused when every candidate was produced.
     """
-    redundant = _redundant_claims(claims)
+    credited = _credited_claims(claims)
     reports: list[CandidateFinding] = []
     for index, claim in enumerate(claims):
-        if index in redundant:
+        if index in credited:
+            continue
+        if claim.candidates:
             message = f"redundant suppression for {claim.rule_id}"
-        elif not claim.candidates and candidates_complete:
+        elif candidates_complete:
             message = f"unused suppression for {claim.rule_id}"
         else:
             continue
@@ -421,43 +425,24 @@ def _unused_and_redundant_reports(
     return reports
 
 
-def _redundant_claims(claims: list[_Claim]) -> set[int]:
-    """Return each overlapping claim whose candidates another, kept claim already owns.
+def _credited_claims(claims: list[_Claim]) -> set[int]:
+    """Credit each candidate to one owning claim, and return the claims credited with any.
 
-    Claims overlap when they share a target and rule, or claim one candidate. In each overlap
-    group the claim owning the most candidates survives, and a claim is redundant only when its
-    candidates are a subset of the survivor's. Survivors are picked by one strict total order
-    (`_survival_key`), so following "redundant because of" from any flagged claim reaches a kept
-    one that owns all its candidates, and deleting every redundant claim never changes what is
-    suppressed, whatever `_owns` decides. With today's actions overlapping claims nest, so every
-    claim in a group but the survivor is flagged.
+    Ruff, ESLint, and Pylint credit a finding to one suppression the same way. Every claim still
+    suppresses what it owns, so deleting a claim credited with nothing leaves each of its
+    candidates owned by the claim credited with it, whatever `_owns` decides.
     """
-    by_target: dict[tuple[_Owner, str, str], list[int]] = defaultdict(list)
-    by_candidate: dict[int, list[int]] = defaultdict(list)
+    owners: dict[int, list[int]] = defaultdict(list)
     for index, claim in enumerate(claims):
-        by_target[(*claim.target, claim.rule_id)].append(index)
         for candidate in claim.candidates:
-            by_candidate[candidate].append(index)
-    redundant: set[int] = set()
-    for indexes in (*by_target.values(), *by_candidate.values()):
-        if len(indexes) < 2:
-            continue
-        survivor = min(indexes, key=lambda index: _survival_key(claims[index]))
-        kept = set(claims[survivor].candidates)
-        redundant.update(
-            index
-            for index in indexes
-            if index != survivor and kept.issuperset(claims[index].candidates)
-        )
-    return redundant
+            owners[candidate].append(index)
+    return {
+        min(indexes, key=lambda index: _credit_rank(claims[index])) for indexes in owners.values()
+    }
 
 
-def _survival_key(claim: _Claim) -> tuple[int, int, tuple[int, int]]:
-    """Order overlapping claims: most candidates first, then broadest scope, then earliest.
-
-    Scope and position only break ties in candidate count. Keeping any tied claim is safe, since
-    `_redundant_claims` flags a claim only when its candidates are a subset of the kept claim's.
-    """
+def _credit_rank(claim: _Claim) -> tuple[int, int, tuple[int, int]]:
+    """Order a candidate's owners: most candidates first, then broadest scope, then earliest."""
     return -len(claim.candidates), _SCOPE_RANK[claim.pragma.action], claim.pragma.token.start
 
 
@@ -471,7 +456,7 @@ def _unsuppressed_stale_reports(
     other IDs, as in `ignore[HSL002, HSL901]` with HSL002 unused.
     """
     owners = [
-        (entry.pragma, _target(entry.pragma)[0])
+        (entry.pragma, _target(entry.pragma))
         for entry in scan.accepted
         if entry.rule_id == STALE_SUPPRESSION_RULE_ID
     ]
