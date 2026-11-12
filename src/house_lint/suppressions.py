@@ -23,6 +23,7 @@ from house_lint.python_source import PythonSource, Token
 from house_lint.results import Finding
 from house_lint.rule_catalog import (
     ALWAYS_ON_RULE_ID,
+    STALE_SUPPRESSION_RULE_ID,
     is_known_rule,
     is_project_rule,
     rule_languages,
@@ -31,6 +32,9 @@ from house_lint.rule_catalog import (
 _ID = re.compile(r"HSL[0-9]{3}\Z")
 _PRAGMA = re.compile(r"#\s*house-lint:\s*(ignore-next|ignore-file|ignore)\[([^]]*)\] - (.+)\Z")
 _MIN_REASON_ALNUM_CHARS = 3
+# Among overlapping pragmas, the broadest survives: rank 0 first. A file pragma's claims contain a
+# statement pragma's, and an `ignore-next`'s contain a trailing `ignore`'s on the same statement.
+_SCOPE_RANK = {"ignore-file": 0, "ignore-next": 1, "ignore": 2}
 
 _Owner: TypeAlias = StatementKey | str
 
@@ -69,10 +73,15 @@ class AcceptedPragma:
 
 @dataclass(frozen=True)
 class PragmaScan:
-    """Every pragma in one file: what each accepted pragma names, and the HSL900 diagnostics."""
+    """Every pragma in one file: what each accepted pragma names, and what's wrong with the rest.
+
+    `diagnostics` are HSL900's broken-pragma reports. `stale` are HSL901's reports of a pragma
+    naming a rule this file doesn't run, present only when HSL901 itself runs.
+    """
 
     accepted: tuple[AcceptedPragma, ...]
     diagnostics: tuple[CandidateFinding, ...]
+    stale: tuple[CandidateFinding, ...]
 
 
 @dataclass(frozen=True)
@@ -91,7 +100,13 @@ def apply_suppressions(
     candidates_complete: bool = True,
     limit: int | None = None,
 ) -> SuppressionResult:
-    """Apply valid pragmas, retaining diagnostics and provenance until public conversion."""
+    """Apply valid pragmas, retaining diagnostics and provenance until public conversion.
+
+    Every claim suppresses what it owns, overlapping or not. HSL900 reports broken pragmas. When
+    HSL901 runs, it reports stale ones: unused, naming a disabled rule, or redundant with an
+    overlapping pragma that survives. A pragma naming HSL901 can claim those reports. The visible
+    findings are the unsuppressed candidates, then HSL900's reports, then HSL901's.
+    """
     diagnostics: list[CandidateFinding] = []
     diagnostic_limit = None if limit is None else max(0, limit - len(candidates))
     diagnostics_exceeded = False
@@ -107,25 +122,15 @@ def apply_suppressions(
     for diagnostic in scan.diagnostics:
         add_diagnostic(diagnostic)
     claims = _collect_claims(scan, candidates)
-    conflicts = _conflicting_claims(claims)
-    for index, claim in enumerate(claims):
-        if index in conflicts:
-            add_diagnostic(
-                _diagnostic(
-                    source, claim.pragma.token, f"conflicting suppression for {claim.rule_id}"
-                )
-            )
-        elif not claim.candidates and candidates_complete:
-            add_diagnostic(
-                _diagnostic(source, claim.pragma.token, f"unused suppression for {claim.rule_id}")
-            )
+    if STALE_SUPPRESSION_RULE_ID in enabled_rules:
+        stale = (
+            *scan.stale,
+            *_unused_and_redundant_reports(source, claims, candidates_complete=candidates_complete),
+        )
+        for diagnostic in _unsuppressed_stale_reports(scan, stale):
+            add_diagnostic(diagnostic)
 
-    suppressed = {
-        candidate_index
-        for index, claim in enumerate(claims)
-        if index not in conflicts
-        for candidate_index in claim.candidates
-    }
+    suppressed = {candidate_index for claim in claims for candidate_index in claim.candidates}
     visible = tuple(
         candidate for index, candidate in enumerate(candidates) if index not in suppressed
     ) + tuple(diagnostics)
@@ -163,27 +168,29 @@ def claims_for(source: PythonSource, rule_id: str) -> Callable[[int | None], boo
 def scan_pragmas(source: PythonSource, enabled_rules: Collection[str]) -> PragmaScan:
     """Check every pragma comment, returning one accepted entry per rule ID that passes.
 
-    Malformed, misplaced, unknown-rule, wrong-language, and disabled-rule pragmas become HSL900
-    diagnostics, in source order, rather than accepted entries.
+    Malformed, misplaced, unknown-rule, and wrong-language pragmas become HSL900 diagnostics, in
+    source order, rather than accepted entries. A disabled-rule entry is never accepted either; it
+    becomes an HSL901 report only when `enabled_rules` holds HSL901.
     """
     accepted: list[AcceptedPragma] = []
     diagnostics: list[CandidateFinding] = []
+    stale: list[CandidateFinding] = []
     for token in source.tokens:
         if token.type != tokenize.COMMENT or not _is_pragma(token):
             continue
         pragma, message = _parse_pragma(source, token)
         if pragma is None:
-            diagnostics.append(_diagnostic(source, token, message))
+            diagnostics.append(_broken_pragma_report(source, token, message))
             continue
         owner, placement_error = _owner_for_pragma(source, pragma)
         if placement_error is not None:
-            diagnostics.append(_diagnostic(source, token, placement_error))
+            diagnostics.append(_broken_pragma_report(source, token, placement_error))
             continue
         pragma = _Pragma(pragma.action, pragma.ids, pragma.token, owner)
         for rule_id in pragma.ids:
             if not is_known_rule(rule_id):
                 diagnostics.append(
-                    _diagnostic(source, token, f"unknown suppression rule {rule_id}")
+                    _broken_pragma_report(source, token, f"unknown suppression rule {rule_id}")
                 )
                 continue
             # Checked first: `enabled_rules` never holds such a rule, so the disabled check below
@@ -191,27 +198,32 @@ def scan_pragmas(source: PythonSource, enabled_rules: Collection[str]) -> Pragma
             # since `_parse_pragma` rejects a pragma naming it.
             if Language.PYTHON not in rule_languages(rule_id):
                 diagnostics.append(
-                    _diagnostic(source, token, f"{rule_id} does not handle Python files")
+                    _broken_pragma_report(source, token, f"{rule_id} does not handle Python files")
                 )
                 continue
             if rule_id not in enabled_rules:
-                diagnostics.append(
-                    _diagnostic(source, token, f"unused suppression for disabled rule {rule_id}")
-                )
+                # Never accepted, so it suppresses nothing; only HSL901 says so.
+                if STALE_SUPPRESSION_RULE_ID in enabled_rules:
+                    stale.append(
+                        _stale_report(
+                            source, pragma, f"unused suppression for disabled rule {rule_id}"
+                        )
+                    )
                 continue
             accepted.append(AcceptedPragma(pragma, rule_id))
-    return PragmaScan(tuple(accepted), tuple(diagnostics))
+    return PragmaScan(tuple(accepted), tuple(diagnostics), tuple(stale))
 
 
 def _collect_claims(scan: PragmaScan, candidates: tuple[CandidateFinding, ...]) -> list[_Claim]:
     """Build one file-phase claim per accepted pragma entry.
 
     A pragma naming a project rule makes no claim here. That rule's findings don't exist yet when
-    this file's scan runs; the project phase resolves it (`claims_for`).
+    this file's scan runs; the project phase resolves it (`claims_for`). Nor does one naming
+    HSL901, whose reports `_unsuppressed_stale_reports` resolves. Neither is ever reported unused or redundant.
     """
     claims: list[_Claim] = []
     for entry in scan.accepted:
-        if is_project_rule(entry.rule_id):
+        if is_project_rule(entry.rule_id) or entry.rule_id == STALE_SUPPRESSION_RULE_ID:
             continue
         target = _target(entry.pragma)
         owned = tuple(
@@ -391,31 +403,119 @@ def _owns(pragma: _Pragma, owner: _Owner, candidate: CandidateFinding) -> bool:
     )
 
 
-def _conflicting_claims(claims: list[_Claim]) -> set[int]:
-    conflicts: set[int] = set()
+def _unused_and_redundant_reports(
+    source: PythonSource, claims: list[_Claim], *, candidates_complete: bool
+) -> list[CandidateFinding]:
+    """Report each claim that's redundant with a surviving overlap, or else owns nothing.
+
+    A claim that owns nothing is only known unused when every candidate was produced.
+    """
+    redundant = _redundant_claims(claims)
+    reports: list[CandidateFinding] = []
+    for index, claim in enumerate(claims):
+        if index in redundant:
+            message = f"redundant suppression for {claim.rule_id}"
+        elif not claim.candidates and candidates_complete:
+            message = f"unused suppression for {claim.rule_id}"
+        else:
+            continue
+        reports.append(_stale_report(source, claim.pragma, message))
+    return reports
+
+
+def _redundant_claims(claims: list[_Claim]) -> set[int]:
+    """Return every overlapping claim but the survivor of each overlap.
+
+    Claims overlap when they share a target and rule, or claim one candidate. Overlapping claims
+    for one rule nest (`_owns`): an `ignore-file` owns every candidate of its rule; an `ignore-next`
+    owns its statement's candidates plus comment findings in its window, a superset of a trailing
+    `ignore`'s on that statement; and of two pragmas sharing a target, the earlier's window holds
+    the later's. Statement pragmas on different statements share no candidate, since each candidate
+    has one owner. So each group's survivor (broadest scope, then earliest) owns everything the
+    others do, a claim redundant in one group can't be the only owner of a candidate in another,
+    and deleting every redundant claim never changes what is suppressed.
+    `test_deleting_every_redundant_pragma_leaves_the_suppressed_set_unchanged` pins that.
+    """
     by_target: dict[tuple[_Owner, str, str], list[int]] = defaultdict(list)
     by_candidate: dict[int, list[int]] = defaultdict(list)
     for index, claim in enumerate(claims):
         by_target[(*claim.target, claim.rule_id)].append(index)
         for candidate in claim.candidates:
             by_candidate[candidate].append(index)
+    redundant: set[int] = set()
     for indexes in (*by_target.values(), *by_candidate.values()):
-        if len(indexes) > 1:
-            conflicts.update(indexes)
-    return conflicts
+        if len(indexes) < 2:
+            continue
+        survivor = min(indexes, key=lambda index: _survival_rank(claims[index].pragma))
+        redundant.update(index for index in indexes if index != survivor)
+    return redundant
 
 
-def _diagnostic(source: PythonSource, token: Token, message: str) -> CandidateFinding:
+def _survival_rank(pragma: _Pragma) -> tuple[int, tuple[int, int]]:
+    """Order overlapping pragmas: broadest scope first, then earliest in the file."""
+    return _SCOPE_RANK[pragma.action], pragma.token.start
+
+
+def _unsuppressed_stale_reports(
+    scan: PragmaScan, stale: tuple[CandidateFinding, ...]
+) -> list[CandidateFinding]:
+    """Drop each HSL901 report a pragma naming HSL901 claims, by the same `_owns` as any finding.
+
+    An `ignore-file[HSL901]` claims every report. A statement pragma claims the reports carrying
+    its owner: those on every pragma owning the same statement, including the reports on its own
+    other IDs, as in `ignore[HSL002, HSL901]` with HSL002 unused.
+    """
+    owners = [
+        (entry.pragma, _target(entry.pragma)[0])
+        for entry in scan.accepted
+        if entry.rule_id == STALE_SUPPRESSION_RULE_ID
+    ]
+    return [
+        report
+        for report in stale
+        if not any(_owns(pragma, owner, report) for pragma, owner in owners)
+    ]
+
+
+def _broken_pragma_report(source: PythonSource, token: Token, message: str) -> CandidateFinding:
+    """Build an HSL900 report. It has no owner, since no pragma can claim it."""
+    return _pragma_finding(
+        source, token, ALWAYS_ON_RULE_ID, message, SourceKind.NO_OWNER, owner=None
+    )
+
+
+def _stale_report(source: PythonSource, pragma: _Pragma, message: str) -> CandidateFinding:
+    """Build an HSL901 report on `pragma`, owned as the pragma is, so a pragma can claim it.
+
+    An `ignore-file` pragma has no statement owner, so its reports are file-kind, which only an
+    `ignore-file[HSL901]` claims.
+    """
+    kind = SourceKind.FILE if pragma.owner is None else SourceKind.STATEMENT
+    return _pragma_finding(
+        source, pragma.token, STALE_SUPPRESSION_RULE_ID, message, kind, owner=pragma.owner
+    )
+
+
+def _pragma_finding(
+    source: PythonSource,
+    token: Token,
+    rule_id: str,
+    message: str,
+    kind: SourceKind,
+    *,
+    owner: StatementKey | None,
+) -> CandidateFinding:
     (line, column), (end_line, end_column) = token.start, token.end
     return CandidateFinding(
-        ALWAYS_ON_RULE_ID,
+        rule_id,
         source.relative_path,
         message,
         line,
         source.byte_column(line, column),
         end_line,
         source.byte_column(end_line, end_column),
-        SourceKind.NO_OWNER,
+        kind,
+        owner,
     )
 
 

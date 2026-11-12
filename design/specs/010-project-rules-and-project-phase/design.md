@@ -234,3 +234,9 @@ Every rule today runs once per file, and `pipeline.run_file_phase` drops each fi
 - The explicit-path error reads "not a regular file any enabled rule handles", because the same branch also rejects non-regular files.
 - A rule's findings are built inside the same `try` as its `run`, so anything wrong with its output is that rule's internal error, none of its findings are kept, and the run's other results are.
 - The Assumed line saying no test pins the old message was off by one: `test_explicit_paths_are_strict_and_directories_recursive` matched "Python". It now matches the new message.
+
+## Addendum
+
+### 2026-11-12: D9 now scopes HSL901
+
+HSL900 no longer reports unused pragmas; the opt-in `HSL901` does. D9's exclusion carries over unchanged: `HSL901` never reports a pragma naming a project rule as unused or redundant. A pragma naming a project rule the file doesn't run is an `HSL901` disabled-rule report. See `design/specs/015-split-stale-suppression-rule/design.md`.

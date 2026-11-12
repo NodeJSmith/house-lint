@@ -148,7 +148,7 @@ def _fail_cache_writes(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
             "",
             [
                 ("HSL002", 2, LAZY_IMPORT_MESSAGE),
-                ("HSL900", 2, "unused suppression for disabled rule HSL001"),
+                ("HSL901", 2, "unused suppression for disabled rule HSL001"),
             ],
             0,
             1,
@@ -160,7 +160,7 @@ def _fail_cache_writes(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
                 import module  # house-lint: ignore[HSL002] - rule is off for this file
             """,
             PER_FILE_IGNORES_CONFIG,
-            [("HSL900", 2, "unused suppression for disabled rule HSL002")],
+            [("HSL901", 2, "unused suppression for disabled rule HSL002")],
             0,
             1,
             id="disabled-by-per-file-ignores",
@@ -214,7 +214,7 @@ def _fail_cache_writes(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
             value = 1  # house-lint: ignore[HSL002] - nothing here to suppress
             """,
             "",
-            [("HSL900", 1, "unused suppression for HSL002")],
+            [("HSL901", 1, "unused suppression for HSL002")],
             0,
             1,
             id="unused",
@@ -226,14 +226,10 @@ def _fail_cache_writes(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
                 import module  # house-lint: ignore[HSL002] - imported lazily on purpose
             """,
             "",
-            [
-                ("HSL900", 2, "conflicting suppression for HSL002"),
-                ("HSL002", 3, LAZY_IMPORT_MESSAGE),
-                ("HSL900", 3, "conflicting suppression for HSL002"),
-            ],
-            0,
+            [("HSL901", 3, "redundant suppression for HSL002")],
             1,
-            id="conflicting",
+            1,
+            id="redundant",
         ),
     ],
 )
@@ -252,7 +248,7 @@ def test_suppression_outcome_is_the_same_cold_and_warm(
     if config:
         (tmp_path / "pyproject.toml").write_text(config)
 
-    cold_code, cold, _ = _check(capsys, tmp_path)
+    cold_code, cold, _ = _check(capsys, tmp_path, extend_select=["HSL901"])
 
     actual = [(item["rule_id"], item["line"], item["message"]) for item in cold["findings"]]
     assert actual == expected_findings
@@ -264,7 +260,7 @@ def test_suppression_outcome_is_the_same_cold_and_warm(
     # below means the outcome was replayed rather than recomputed.
     fail_detectors_for("sample.py")
 
-    warm_code, warm, _ = _check(capsys, tmp_path)
+    warm_code, warm, _ = _check(capsys, tmp_path, extend_select=["HSL901"])
 
     assert warm == cold
     assert warm_code == cold_code

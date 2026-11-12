@@ -38,8 +38,11 @@ ConfigurableOptionsT = TypeVar("ConfigurableOptionsT", bound=RuleOptions)
 Enablement = Literal["default", "opt-in", "always"]
 OptionsT_contra = TypeVar("OptionsT_contra", contravariant=True)
 RuleT = TypeVar("RuleT", bound="Rule")
-# A file rule's detector takes a `PythonSource`, so Python is all a file rule can handle.
+# A file rule's detector takes a `PythonSource`, so Python is all a file rule can handle. HSL901
+# reports on pragmas, which only Python files have, so it declares the same set.
 _FILE_RULE_LANGUAGES = frozenset({Language.PYTHON})
+# Reported by the suppression engine, not a detector; see `suppressions.apply_suppressions`.
+STALE_SUPPRESSION_RULE_ID = "HSL901"
 
 
 class Detector(Protocol[OptionsT_contra]):
@@ -58,6 +61,10 @@ class ProjectRun(Protocol[OptionsT_contra]):
 class Rule:
     """Fixed metadata for one built-in house rule.
 
+    `languages` are the languages whose files the rule applies to, which decides discovery and
+    which files' results it joins. HSL900 declares none: it always runs, validates pragmas in every
+    scanned file, and never brings a language into a scan. HSL901 declares Python, so selecting it
+    alone still discovers the Python files whose pragmas it checks.
     `base_match` pairs the rule's findings across `--base`'s two scans.
     """
 
@@ -65,6 +72,7 @@ class Rule:
     name: str
     description: str
     enablement: Enablement
+    languages: frozenset[Language] = field(kw_only=True)
     base_match: BaseMatcher = field(default=match_by_key, kw_only=True)
 
 
@@ -74,7 +82,6 @@ class FileRule(Rule, Generic[OptionsT]):
 
     detect: Detector[OptionsT]
     parse_options: Callable[[Any], OptionsT] | None = None
-    languages: frozenset[Language] = _FILE_RULE_LANGUAGES
 
 
 @dataclass(frozen=True)
@@ -86,7 +93,6 @@ class ProjectRule(Rule, Generic[OptionsT]):
     """
 
     run: ProjectRun[OptionsT]
-    languages: frozenset[Language]
     parse_options: Callable[[Any], OptionsT] | None = None
 
 
@@ -94,7 +100,7 @@ def file_rule(
     rule_id: str, name: str, description: str, enablement: Enablement, detect: Detector[None]
 ) -> FileRule[Any]:
     """Build the row for a file rule with no options."""
-    return FileRule(rule_id, name, description, enablement, detect)
+    return FileRule(rule_id, name, description, enablement, detect, languages=_FILE_RULE_LANGUAGES)
 
 
 def configurable_rule(
@@ -122,6 +128,7 @@ def configurable_rule(
         enablement,
         detect,
         parse or (lambda raw: msgspec.convert(raw, options_type)),
+        languages=_FILE_RULE_LANGUAGES,
         base_match=base_match,
     )
 
@@ -135,7 +142,7 @@ def project_rule(
     languages: frozenset[Language],
 ) -> ProjectRule[Any]:
     """Build the row for a project rule with no options."""
-    return ProjectRule(rule_id, name, description, enablement, run, languages)
+    return ProjectRule(rule_id, name, description, enablement, run, languages=languages)
 
 
 def configurable_project_rule(
@@ -156,8 +163,8 @@ def configurable_project_rule(
         description,
         enablement,
         run,
-        languages,
         lambda raw: msgspec.convert(raw, options_type),
+        languages=languages,
         base_match=base_match,
     )
 
@@ -240,7 +247,20 @@ RULES: Mapping[str, Rule] = rules_by_id(
     (
         *FILE_RULES.values(),
         *PROJECT_RULES.values(),
-        Rule("HSL900", "Suppression diagnostics", "Invalid suppression pragmas", "always"),
+        Rule(
+            "HSL900",
+            "Suppression diagnostics",
+            "Invalid suppression pragmas",
+            "always",
+            languages=frozenset(),
+        ),
+        Rule(
+            STALE_SUPPRESSION_RULE_ID,
+            "Stale suppressions",
+            "Unused and redundant suppression pragmas",
+            "opt-in",
+            languages=_FILE_RULE_LANGUAGES,
+        ),
     )
 )
 
@@ -268,8 +288,7 @@ def is_known_rule(rule_id: str) -> bool:
 
 def rule_languages(rule_id: str) -> frozenset[Language]:
     """Return the languages a known rule handles. HSL900 declares none: it never decides a scan."""
-    rule = RULES[rule_id]
-    return rule.languages if isinstance(rule, (FileRule, ProjectRule)) else frozenset()
+    return RULES[rule_id].languages
 
 
 def is_project_rule(rule_id: str) -> bool:
@@ -299,6 +318,7 @@ __all__ = [
     "ORDINARY_RULES",
     "PROJECT_RULES",
     "RULES",
+    "STALE_SUPPRESSION_RULE_ID",
     "Detector",
     "FileRule",
     "ProjectRule",

@@ -63,13 +63,30 @@ def test_cli_extend_select_adds_one_rule_without_losing_the_rest_of_select(
     assert config.enabled_rules == ("HSL001", "HSL002", "HSL003", "HSL900")
 
 
-def test_extend_select_also_layers_on_top_of_a_cli_select_override(tmp_path: Path) -> None:
+def test_a_cli_select_override_replaces_the_configured_extends(tmp_path: Path) -> None:
     config_path = tmp_path / "pyproject.toml"
-    config_path.write_text('[tool.house-lint]\nselect = ["HSL001"]\nextend-select = ["HSL002"]\n')
+    config_path.write_text(
+        '[tool.house-lint]\nselect = ["HSL001"]\n'
+        'extend-select = ["HSL002"]\nextend-ignore = ["HSL003"]\n'
+    )
 
     config = load_config(config_path, cli_select=("HSL003",))
 
-    assert config.enabled_rules == ("HSL002", "HSL003", "HSL900")
+    assert config.enabled_rules == ("HSL003", "HSL900")
+
+
+def test_cli_extends_still_layer_on_top_of_a_cli_select_override(tmp_path: Path) -> None:
+    config_path = tmp_path / "pyproject.toml"
+    config_path.write_text('[tool.house-lint]\nextend-select = ["HSL002"]\n')
+
+    config = load_config(
+        config_path,
+        cli_select=("HSL003", "HSL004"),
+        cli_extend_select=("HSL001",),
+        cli_extend_ignore=("HSL004",),
+    )
+
+    assert config.enabled_rules == ("HSL001", "HSL003", "HSL900")
 
 
 def test_extend_ignore_subtracts_from_extend_select_and_configured_select(

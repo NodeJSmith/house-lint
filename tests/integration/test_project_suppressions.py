@@ -432,11 +432,11 @@ def test_a_pragma_in_a_per_file_ignored_file_is_a_disabled_rule_pragma_in_both_p
     write_file(tmp_path, "kept.py", "value = 1\n")
     register_project_rules(row(RULE, at_lines(("gen.py", 2), ("kept.py", 1))))
 
-    code, result = scan(capsys, tmp_path, "HSL002", RULE)
+    code, result = scan(capsys, tmp_path, "HSL002", RULE, "HSL901")
 
     assert code == 1
     assert [(finding["rule_id"], finding["path"]) for finding in result["findings"]] == [
-        ("HSL900", "gen.py"),
+        ("HSL901", "gen.py"),
         (RULE, "kept.py"),
     ]
     assert result["findings"][0]["message"] == f"unused suppression for disabled rule {RULE}"

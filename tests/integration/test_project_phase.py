@@ -543,16 +543,16 @@ def test_a_pragma_naming_a_rule_that_doesnt_handle_python_gets_its_own_message(
         assert [finding["message"] for finding in result["findings"]] == [expected]
 
 
-def test_pragmas_naming_an_enabled_project_rule_are_neither_unused_nor_conflicting(
+def test_hsl901_never_reports_pragmas_naming_an_enabled_project_rule(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
     (tmp_path / "a.py").write_text(
         f"# house-lint: ignore-file[{PY_RULE}] - generated code\n"
-        f"# house-lint: ignore-file[{PY_RULE}] - second one has no claim to conflict with\n"
+        f"# house-lint: ignore-file[{PY_RULE}] - would be redundant for a file rule\n"
     )
     register_project_rules(row(PY_RULE, Recorder()))
 
-    code, result = scan(capsys, tmp_path, PY_RULE)
+    code, result = scan(capsys, tmp_path, PY_RULE, "HSL901")
 
     assert code == 0
     assert result["findings"] == []
@@ -564,12 +564,12 @@ def test_a_pragma_naming_a_disabled_project_rule_is_reported_and_never_replayed_
     (tmp_path / "a.py").write_text(f"# house-lint: ignore-file[{PY_RULE}] - generated code\n")
     register_project_rules(row(PY_RULE, Recorder()))
 
-    assert scan(capsys, tmp_path, "HSL002", PY_RULE)[0] == 0
-    code, result = scan(capsys, tmp_path, "HSL002")
+    assert scan(capsys, tmp_path, "HSL002", PY_RULE, "HSL901")[0] == 0
+    code, result = scan(capsys, tmp_path, "HSL002", "HSL901")
 
     assert code == 1
-    assert [finding["message"] for finding in result["findings"]] == [
-        f"unused suppression for disabled rule {PY_RULE}"
+    assert [(finding["rule_id"], finding["message"]) for finding in result["findings"]] == [
+        ("HSL901", f"unused suppression for disabled rule {PY_RULE}")
     ]
 
 

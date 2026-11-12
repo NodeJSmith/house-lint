@@ -45,7 +45,8 @@ uv run house-lint check
 | `HSL102` | Off | Files longer than a configured line limit (default 800) |
 | `HSL103` | Off | Bound exception names outside an allowed policy (default `exc` or `*_exc`) |
 | `HSL104` | Off | Code copied three or more times across the project, found with jscpd (needs `house-lint[duplicates]`) |
-| `HSL900` | Always | Invalid, unused, conflicting, or malformed suppressions; cannot be disabled |
+| `HSL900` | Always | Malformed, misplaced, or invalid suppressions; cannot be disabled |
+| `HSL901` | Off | Stale suppressions: unused, redundant, or naming a rule that doesn't run on the file |
 
 `house-lint rules --format json` prints the installed rule metadata. The [rule reference](docs/rules.md) describes exactly what each rule flags and what it leaves alone.
 
@@ -67,7 +68,7 @@ max_lines = 600
 ```
 
 - `select` sets the base selection and `ignore` removes rules from it. `extend-select` and `extend-ignore` add and remove on top of that base.
-- On the command line, `--select` replaces the configured base. `--extend-select` and `--extend-ignore` combine with the configured values. A CLI `--ignore` is applied last and always wins.
+- On the command line, `--select` replaces the configured selection, `extend-select` and `extend-ignore` included, as Ruff's does. `--extend-select` and `--extend-ignore` combine with the configured values, or layer on a CLI `--select`. A CLI `--ignore` is applied last and always wins.
 - Each flag occurrence takes one comma-separated list. Selection is strict: unknown, duplicate, or empty rule IDs are usage errors.
 
 [Configuration](docs/configuration.md) covers config file discovery, precedence, scan scope, excludes, rule options, and `HSL101` token families.
@@ -97,7 +98,7 @@ except OSError as error:  # house-lint: ignore[HSL103] - compatibility callback 
 - `ignore-next` on its own line covers the next statement in the same block, skipping comments and blank lines.
 - `ignore-file` covers the whole file for the listed rules. It must come before the first statement other than a docstring or `__future__` import.
 
-`HSL900` flags suppressions that are malformed, misplaced, unused, duplicated, or that name an unknown or disabled rule or one that doesn't handle Python, so stale suppressions don't pile up. See [suppressions](docs/suppressions.md).
+`HSL900` flags suppressions that are malformed, misplaced, or that name an unknown rule or one that doesn't handle Python. It always runs. `HSL901` flags stale ones: unused, redundant with another pragma, or naming a rule that doesn't run on the file. Like Ruff's `RUF100`, it's opt-in, so a run selecting one rule passes over pragmas for the others. Add `extend-select = ["HSL901"]` to keep stale suppressions from piling up. See [suppressions](docs/suppressions.md).
 
 ## Paths and roots
 

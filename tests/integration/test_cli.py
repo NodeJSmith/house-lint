@@ -58,6 +58,7 @@ def test_console_and_module_have_equivalent_rule_listing(repository: Path) -> No
         "HSL103",
         "HSL104",
         "HSL900",
+        "HSL901",
     ]
 
     text = _run(repository, "rules")
@@ -73,6 +74,7 @@ def test_console_and_module_have_equivalent_rule_listing(repository: Path) -> No
         "HSL103",
         "HSL104",
         "HSL900",
+        "HSL901",
     ]
     assert "[default]" in text.stdout
     assert "[opt-in]" in text.stdout
@@ -246,7 +248,7 @@ def test_per_file_ignores_flags_a_pragma_naming_a_rule_disabled_for_that_file(
         "def example():\n    import module  # house-lint: ignore[HSL002] - stale suppression\n"
     )
     (repository / "pyproject.toml").write_text(
-        '[tool.house-lint]\nselect = ["HSL002"]\n'
+        '[tool.house-lint]\nselect = ["HSL002", "HSL901"]\n'
         '[tool.house-lint.per-file-ignores]\n"tests/**" = ["HSL002"]\n'
     )
 
@@ -255,8 +257,38 @@ def test_per_file_ignores_flags_a_pragma_naming_a_rule_disabled_for_that_file(
     result = json.loads(completed.stdout)
     assert completed.returncode == 1
     assert [(finding["rule_id"], finding["message"]) for finding in result["findings"]] == [
-        ("HSL900", "unused suppression for disabled rule HSL002")
+        ("HSL901", "unused suppression for disabled rule HSL002")
     ]
+
+
+def test_selecting_one_rule_passes_over_pragmas_for_other_rules(repository: Path) -> None:
+    (repository / "src" / "lazy.py").write_text(
+        "def example():\n    import module  # house-lint: ignore[HSL002] - deliberate\n"
+    )
+    (repository / "pyproject.toml").write_text('[tool.house-lint]\nextend-select = ["HSL901"]\n')
+
+    # The CLI --select replaces the config's extend-select, so HSL901 doesn't run on the narrowed
+    # run; the full run with HSL901 shows the pragma is in use, so it's not stale either way.
+    narrowed = _run(repository, "check", "--root", str(repository), "--select", "HSL102")
+    full = _run(repository, "check", "--root", str(repository), "--format", "json")
+
+    assert narrowed.returncode == 0, narrowed.stdout
+    assert full.returncode == 0, full.stdout
+    assert json.loads(full.stdout)["findings"] == []
+
+
+def test_per_file_ignores_can_turn_off_hsl901_for_a_path(repository: Path) -> None:
+    (repository / "src" / "kept.py").write_text(
+        "value = 1  # house-lint: ignore[HSL002] - kept for a migration\n"
+    )
+    (repository / "pyproject.toml").write_text(
+        '[tool.house-lint]\nextend-select = ["HSL901"]\n'
+        '[tool.house-lint.per-file-ignores]\n"src/kept.py" = ["HSL901"]\n'
+    )
+
+    completed = _run(repository, "check", "--root", str(repository))
+
+    assert completed.returncode == 0, completed.stdout
 
 
 def test_cache_is_populated_and_reused_across_runs(repository: Path) -> None:

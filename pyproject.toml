@@ -59,6 +59,8 @@ exclude = ["design"]
 [tool.house-lint]
 # design/ holds research probe corpora: deliberately duplicated code and test pragmas.
 exclude = ["design"]
+# HSL901 is opt-in; keep house-lint checking its own pragmas for staleness.
+extend-select = ["HSL901"]
 
 [tool.pyright]
 include = ["src"]
