@@ -4,39 +4,39 @@ All notable changes to `house-lint` are documented here.
 
 ## [0.6.0](https://github.com/NodeJSmith/house-lint/compare/v0.5.0...v0.6.0) (2026-11-12)
 
+### Breaking Changes
 
-### ⚠ BREAKING CHANGES
+#### Suppressions (#93)
 
-* Stale-suppression reporting moves to a new opt-in rule, overlapping pragmas now suppress, and a CLI `--select` replaces the configured selection.
-    #### What changed and what to do
-    - HSL900 no longer reports unused, disabled-rule, or overlapping
-    pragmas; the opt-in HSL901 does. Add `extend-select = ["HSL901"]` to
-    `[tool.house-lint]` to keep them reported. JSON consumers filtering
-    `rule_id == "HSL900"` for stale pragmas see them under HSL901, or not at
-    all while it's off.
-    - Overlapping pragmas now suppress their finding instead of failing
-    closed, so a run that exited 1 on an overlap can exit 0, and the
-    `conflicting suppression for X` message is gone. With HSL901 on, the
-    extra pragmas are reported as `redundant suppression for X`.
-    - A CLI `--select` replaces the config's `select`, `ignore`,
-    `extend-select`, and `extend-ignore`. A command that relied on
-    configured `extend-ignore` or `extend-select` under `--select` must pass
-    `--ignore`, `--extend-ignore`, or `--extend-select` on the command line
-    instead.
-* HSL001, HSL101, HSL103, and HSL900 now report `column` and `end_column` as UTF-8 byte offsets, as the other rules already did. On lines with non-ASCII text, these values are larger than before in text and JSON output. A consumer that maps columns to characters must treat them as byte offsets into the line's UTF-8 encoding.
-* JSON output moves to `schema_version` 3. Every finding now has a `related` list of the other places the same issue occurs (empty for single-file rules), and text output appends `(also at ...)` to a project-rule finding's line. A consumer that checks `schema_version == 2` must accept 3; otherwise the change is additive. `summary.suppressed_count` now also counts project-rule occurrences a pragma suppressed.
+- **Stale pragmas move from `HSL900` to a new opt-in rule, `HSL901`.** `HSL900` now reports only broken pragmas: bad syntax, bad placement, or unknown IDs. Unused pragmas, pragmas naming a rule that doesn't run on the file, and redundant pragmas are `HSL901`'s, and go unreported while it's off. Add `extend-select = ["HSL901"]` to `[tool.house-lint]` to keep them reported. A JSON consumer filtering `rule_id == "HSL900"` for stale pragmas must look for `HSL901`.
+- **A run selecting one rule no longer trips over pragmas for other rules.** `house-lint check --select HSL102` used to report every `ignore[HSL002]` elsewhere as naming a disabled rule; with `HSL901` off, it reports nothing for them.
+- **Overlapping pragmas now suppress their finding** instead of failing the run, and the `conflicting suppression for X` message is gone. A run that exited 1 on an overlap can now exit 0. With `HSL901` on, each extra pragma is reported as `redundant suppression for X`.
+- **A CLI `--select` now replaces the config's whole selection:** `select`, `ignore`, `extend-select`, and `extend-ignore`. A command that relied on a configured `extend-ignore` or `extend-select` under `--select` must pass `--ignore`, `--extend-ignore`, or `--extend-select` on the command line.
+
+#### Output (#84, #92)
+
+- **JSON output moves to `schema_version` 3.** Every finding has a `related` list of the other places the same issue occurs, empty for single-file rules, and text output appends `(also at ...)` to such a finding. A consumer that checks `schema_version == 2` must accept 3; otherwise the change is additive. `summary.suppressed_count` now also counts suppressed project-rule occurrences.
+- **`HSL001`, `HSL101`, `HSL103`, and `HSL900` report `column` and `end_column` as UTF-8 byte offsets,** as the other rules already did. On lines with non-ASCII text, the values are larger than before. A consumer mapping columns to characters must treat them as byte offsets into the line's UTF-8 encoding.
 
 ### Features
 
-* add --base to report only findings a commit introduced ([#92](https://github.com/NodeJSmith/house-lint/issues/92)) ([1b2e025](https://github.com/NodeJSmith/house-lint/commit/1b2e02542bbbb7efbb568b5f0349382000003b7a))
-* add HSL104 opt-in rule for code copied across a project ([#89](https://github.com/NodeJSmith/house-lint/issues/89)) ([a2172b1](https://github.com/NodeJSmith/house-lint/commit/a2172b19b5eb1832099cf307ab201e7f8e30b1b2))
-* let pragmas suppress project-rule findings and list related locations ([#84](https://github.com/NodeJSmith/house-lint/issues/84)) ([87eea01](https://github.com/NodeJSmith/house-lint/commit/87eea01cd06693e7e1486093d331e127118d1be7))
-* split stale suppression reports into opt-in HSL901 ([#93](https://github.com/NodeJSmith/house-lint/issues/93)) ([5741dc7](https://github.com/NodeJSmith/house-lint/commit/5741dc79de06a6b4b753ce391c5e3fb783d35552))
+#### New-code gating with `--base` (#92)
 
+- `house-lint check --base <ref>` reports only the findings the `HEAD` commit introduced since its merge-base with `<ref>`, for every rule. A project with a backlog can fail a PR that adds to it, without a baseline file or a ratchet script.
+- Both commits are read straight from git, so uncommitted and untracked files never count, and both scans use the config committed at `HEAD`.
+- A finding counts as old when it matches a base finding by rule, message, and code, so moved or reformatted code stays old. `HSL102` reports a file only if it grew past its line count at the merge-base.
+- A bad ref or missing merge-base exits 3. JSON output gains a `base` object and text output a `base:` line. See [New-code gating](docs/new-code-gating.md) for a GitHub Actions example.
 
-### Documentation
+#### HSL104: duplicate code (#89)
 
-* drop TypeScript from house-lint's scope ([#88](https://github.com/NodeJSmith/house-lint/issues/88)) ([c6210f0](https://github.com/NodeJSmith/house-lint/commit/c6210f0ae02d1b3a542e3b7fdade86a299a66e1a))
+- New opt-in rule that reports Python code copied across a project, wrapping jscpd 5.4.1 (install the `duplicates` extra).
+- Reports each place in a group of at least `min_occurrences` copies (default 3), listing the others as `related`. Options: `min_tokens` (default 30), `min_lines` (default 5), and `min_occurrences`.
+- Run it in a pre-push hook rather than through config, so the commit-stage hook doesn't need jscpd. With explicit paths, it still analyzes the whole configured scope and reports only findings in the named files.
+
+#### Suppressing project-rule findings (#84)
+
+- A pragma in one location's file suppresses that location's finding alone; the other copies stay visible. `ignore-file` covers the whole file, and `ignore` or `ignore-next` covers occurrences that start in the statement it owns.
+- `HSL901` never reports a pragma naming a project rule, so it can run in a hook that leaves `HSL104` out.
 
 ## [0.5.0](https://github.com/NodeJSmith/house-lint/compare/v0.4.0...v0.5.0) (2026-11-03)
 
