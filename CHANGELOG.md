@@ -2,6 +2,42 @@
 
 All notable changes to `house-lint` are documented here.
 
+## [0.6.0](https://github.com/NodeJSmith/house-lint/compare/v0.5.0...v0.6.0) (2026-11-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* Stale-suppression reporting moves to a new opt-in rule, overlapping pragmas now suppress, and a CLI `--select` replaces the configured selection.
+    #### What changed and what to do
+    - HSL900 no longer reports unused, disabled-rule, or overlapping
+    pragmas; the opt-in HSL901 does. Add `extend-select = ["HSL901"]` to
+    `[tool.house-lint]` to keep them reported. JSON consumers filtering
+    `rule_id == "HSL900"` for stale pragmas see them under HSL901, or not at
+    all while it's off.
+    - Overlapping pragmas now suppress their finding instead of failing
+    closed, so a run that exited 1 on an overlap can exit 0, and the
+    `conflicting suppression for X` message is gone. With HSL901 on, the
+    extra pragmas are reported as `redundant suppression for X`.
+    - A CLI `--select` replaces the config's `select`, `ignore`,
+    `extend-select`, and `extend-ignore`. A command that relied on
+    configured `extend-ignore` or `extend-select` under `--select` must pass
+    `--ignore`, `--extend-ignore`, or `--extend-select` on the command line
+    instead.
+* HSL001, HSL101, HSL103, and HSL900 now report `column` and `end_column` as UTF-8 byte offsets, as the other rules already did. On lines with non-ASCII text, these values are larger than before in text and JSON output. A consumer that maps columns to characters must treat them as byte offsets into the line's UTF-8 encoding.
+* JSON output moves to `schema_version` 3. Every finding now has a `related` list of the other places the same issue occurs (empty for single-file rules), and text output appends `(also at ...)` to a project-rule finding's line. A consumer that checks `schema_version == 2` must accept 3; otherwise the change is additive. `summary.suppressed_count` now also counts project-rule occurrences a pragma suppressed.
+
+### Features
+
+* add --base to report only findings a commit introduced ([#92](https://github.com/NodeJSmith/house-lint/issues/92)) ([1b2e025](https://github.com/NodeJSmith/house-lint/commit/1b2e02542bbbb7efbb568b5f0349382000003b7a))
+* add HSL104 opt-in rule for code copied across a project ([#89](https://github.com/NodeJSmith/house-lint/issues/89)) ([a2172b1](https://github.com/NodeJSmith/house-lint/commit/a2172b19b5eb1832099cf307ab201e7f8e30b1b2))
+* let pragmas suppress project-rule findings and list related locations ([#84](https://github.com/NodeJSmith/house-lint/issues/84)) ([87eea01](https://github.com/NodeJSmith/house-lint/commit/87eea01cd06693e7e1486093d331e127118d1be7))
+* split stale suppression reports into opt-in HSL901 ([#93](https://github.com/NodeJSmith/house-lint/issues/93)) ([5741dc7](https://github.com/NodeJSmith/house-lint/commit/5741dc79de06a6b4b753ce391c5e3fb783d35552))
+
+
+### Documentation
+
+* drop TypeScript from house-lint's scope ([#88](https://github.com/NodeJSmith/house-lint/issues/88)) ([c6210f0](https://github.com/NodeJSmith/house-lint/commit/c6210f0ae02d1b3a542e3b7fdade86a299a66e1a))
+
 ## [0.5.0](https://github.com/NodeJSmith/house-lint/compare/v0.4.0...v0.5.0) (2026-11-03)
 
 ### Breaking Changes
