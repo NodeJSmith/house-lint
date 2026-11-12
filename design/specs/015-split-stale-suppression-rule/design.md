@@ -1,7 +1,7 @@
 # Design: Split stale-suppression diagnostics out of HSL900
 
 **Date:** 2026-11-10
-**Status:** ratified
+**Status:** built
 **Mode:** sketch
 **Issues:** #91
 
@@ -184,7 +184,7 @@ The `conflicting suppression for X` message is retired; the `unused suppression 
 
 - [x] Implementation and tests committed, including `extend-select = ["HSL901"]` in house-lint's own `[tool.house-lint]` (`pyproject.toml:59`) so it keeps checking its own pragmas
 - [x] Docs: `docs/suppressions.md` (split the HSL900 section; replace fail-closed conflicts with D3/D4 behavior; HSL901 suppressibility per D6), `docs/rules.md` (including the rule counts at `:3`: five opt-in rules), `docs/configuration.md` (`:15`, `:67`, `:81`, `:85`), the README rules table and line 100, CLAUDE.md (the ID convention line and the HSL900 gotcha), and dated `## Addendum` entries on spec 001 (archived; fail-closed conflicts) and spec 010 (built; D9 now scopes HSL901)
-- [ ] Ship-time challenge
+- [x] Ship-time challenge
 
 **Calls made during the build:**
 - Overlap groups are the old conflict groups (same target and rule, or one shared candidate): an `ignore-file` and a statement pragma that both claim nothing don't overlap, so each is reported `unused`. Nothing claims a shared target there, and deleting either changes nothing.
