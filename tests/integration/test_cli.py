@@ -281,14 +281,21 @@ def test_per_file_ignores_can_turn_off_hsl901_for_a_path(repository: Path) -> No
     (repository / "src" / "kept.py").write_text(
         "value = 1  # house-lint: ignore[HSL002] - kept for a migration\n"
     )
+    (repository / "src" / "stale.py").write_text(
+        "value = 1  # house-lint: ignore[HSL002] - left behind\n"
+    )
     (repository / "pyproject.toml").write_text(
         '[tool.house-lint]\nextend-select = ["HSL901"]\n'
         '[tool.house-lint.per-file-ignores]\n"src/kept.py" = ["HSL901"]\n'
     )
 
-    completed = _run(repository, "check", "--root", str(repository))
+    completed = _run(repository, "check", "--root", str(repository), "--format", "json")
 
-    assert completed.returncode == 0, completed.stdout
+    assert completed.returncode == 1, completed.stdout
+    assert [
+        (finding["path"], finding["rule_id"])
+        for finding in json.loads(completed.stdout)["findings"]
+    ] == [("src/stale.py", "HSL901")]
 
 
 def test_cache_is_populated_and_reused_across_runs(repository: Path) -> None:
