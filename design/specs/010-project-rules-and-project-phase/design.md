@@ -239,4 +239,4 @@ Every rule today runs once per file, and `pipeline.run_file_phase` drops each fi
 
 ### 2026-11-12: D9 now scopes HSL901
 
-HSL900 no longer reports unused pragmas; the opt-in `HSL901` does. D9's exclusion carries over unchanged: `HSL901` never reports a pragma naming a project rule as unused or redundant. A pragma naming a project rule the file doesn't run is an `HSL901` disabled-rule report. See `design/specs/015-split-stale-suppression-rule/design.md`.
+HSL900 no longer reports unused pragmas; the opt-in `HSL901` does. D9's exclusion carries over and widens: `HSL901` never reports a pragma naming a project rule, not as unused or redundant, and not when the run leaves the rule out. See `design/specs/015-split-stale-suppression-rule/design.md`.

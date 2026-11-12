@@ -68,6 +68,6 @@ With `HSL901` off, stale pragmas go unreported, so a run selecting one rule, suc
 extend-select = ["HSL901"]
 ```
 
-A CLI `--select` replaces the config's selection, `extend-select` included, so a per-rule run still leaves `HSL901` out. `--select HSL901` alone runs no other rule, so it reports every pragma naming another Python rule as naming a disabled one.
+A CLI `--select` replaces the config's selection, `extend-select` included, so a per-rule run still leaves `HSL901` out. `--select HSL901` alone runs no other rule, so it reports every pragma naming another Python file rule as naming a disabled one. Pragmas naming a project rule are still exempt.
 
 `HSL901` is an ordinary rule: `ignore`, `per-file-ignores`, and the CLI flags can turn it off, and a pragma can suppress its reports. `ignore-file[HSL901]` suppresses every `HSL901` report in its file. A statement pragma listing `HSL901` suppresses the reports on every pragma owning the same statement, itself included, so `value = 1  # house-lint: ignore[HSL002, HSL901] - kept for a migration` keeps an unused `HSL002` pragma quietly. A pragma naming `HSL901` is never itself reported: not as unused or redundant, and not while `HSL901` is off, when it suppresses nothing because there is nothing to suppress.
