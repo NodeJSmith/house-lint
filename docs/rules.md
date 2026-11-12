@@ -1,6 +1,6 @@
 # Rules
 
-`house-lint` has fixed rule IDs. Four rules are enabled by default, four are opt-in, and `HSL900` is always enabled.
+`house-lint` has fixed rule IDs. Four rules are enabled by default, five are opt-in, and `HSL900` is always enabled. `HSL1xx` are opt-in code-pattern rules; `HSL9xx` check suppression pragmas.
 
 Finding messages are human-readable display text and may change. Machine consumers should identify findings by rule ID and location rather than message text.
 
@@ -14,7 +14,8 @@ Finding messages are human-readable display text and may change. Machine consume
 | `HSL102` | Opt-in | Flags a file when `len(text.splitlines())` is strictly greater than `max_lines`. |
 | `HSL103` | Opt-in | Flags `except … as name` bindings outside the configured exact/suffix policy. |
 | `HSL104` | Opt-in | Flags each copy of a block of code that appears at least three times across the project. Needs the `duplicates` extra. |
-| `HSL900` | Always | Reports invalid suppression pragmas. It cannot be selected, ignored, or suppressed. |
+| `HSL900` | Always | Reports broken suppression pragmas. It cannot be selected, ignored, or suppressed. |
+| `HSL901` | Opt-in | Reports unused and redundant suppression pragmas, and pragmas naming a rule that doesn't run on the file. |
 
 ## Default rules
 
@@ -63,6 +64,10 @@ Flags code copied across the project, the kind a fixture, helper, or `parametriz
 - **Under [`--base`](new-code-gating.md).** Only the copies a PR added are reported. Each place at `HEAD` pairs with a place at the merge-base holding the same code, or, failing that, code that contains it or is contained in it, so a rename that makes jscpd match copies over different lines still passes. An old copy extended with more copied lines stays old.
 
 jscpd's own `jscpd:ignore` comments are not supported; use house-lint pragmas.
+
+### HSL901 — Stale suppressions
+
+Reports a pragma that does nothing: one whose rule ran and found nothing for it to suppress, one naming a rule that doesn't run on the file, and one an overlapping pragma already covers. It's opt-in, like Ruff's `RUF100`, so a run selecting one rule doesn't report pragmas for the others; add `extend-select = ["HSL901"]` to keep stale pragmas from piling up. It never reports a pragma naming a project rule, so it can run in a hook that leaves `HSL104` out. See [Suppressions](suppressions.md#hsl901-stale-pragmas) for its messages and how to suppress it.
 
 ## Source compatibility matrix
 

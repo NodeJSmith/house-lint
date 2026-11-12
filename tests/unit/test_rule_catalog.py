@@ -12,6 +12,7 @@ from house_lint.rule_catalog import (
     FILE_RULES,
     ORDINARY_RULES,
     PROJECT_RULES,
+    Rule,
     is_known_rule,
     is_project_rule,
     project_rule,
@@ -35,6 +36,7 @@ def test_rule_catalog_has_fixed_metadata_and_derived_selections() -> None:
         "HSL103",
         "HSL104",
         "HSL900",
+        "HSL901",
     )
     assert rule_metadata("HSL900").enablement == "always"
     assert is_known_rule("HSL001")
@@ -71,6 +73,18 @@ def test_hsl104_is_the_only_project_rule_and_every_rule_handles_python() -> None
 def test_the_always_on_rule_declares_no_languages() -> None:
     assert rule_languages("HSL900") == frozenset()
     assert not is_project_rule("HSL900")
+
+
+def test_the_stale_suppression_rule_is_an_opt_in_python_rule_with_no_detector() -> None:
+    assert rule_metadata("HSL901").enablement == "opt-in"
+    assert rule_languages("HSL901") == {Language.PYTHON}
+    assert "HSL901" not in FILE_RULES
+    assert not is_project_rule("HSL901")
+
+
+def test_a_rule_row_must_declare_its_languages() -> None:
+    with pytest.raises(TypeError, match="languages"):
+        Rule("HSL998", "Name", "Description", "opt-in")
 
 
 def test_a_project_candidate_needs_a_location() -> None:

@@ -116,8 +116,9 @@ def applicable_rules(
     doesn't handle the file's language. The always-on rule validates pragmas rather than handling
     a language, and per-file-ignores can't name it, so it stays.
 
-    Detector dispatch, the cache key, each project rule's input, and HSL900 all read this result.
-    Discovery runs before there are files to ask about, so it reads `discovered_languages` instead.
+    Detector dispatch, the cache key, each project rule's input, and the suppression rules all read
+    this result. Discovery runs before there are files to ask about, so it reads
+    `discovered_languages` instead.
     """
     ignored: set[str] = set()
     for spec, rule_ids in compiled_per_file_ignores:
@@ -202,11 +203,13 @@ def _effective_rule_selection(
 
     Order:
     1. `select`/`ignore` establish the base set — or a CLI `--select` gives a wholesale
-       override, replacing configured `select`/`ignore` entirely rather than adding to them.
-    2. `extend-select`/`extend-ignore` layer on top of that base *regardless of its source*.
-       Config and CLI variants of each are merged together (concatenated, not one overriding
-       the other) before being applied, since — unlike `select` vs. `--select` — neither is
-       meant to replace the other.
+       override, replacing every configured selection key (`select`, `ignore`, `extend-select`,
+       `extend-ignore`) rather than adding to them, as Ruff's `--select` does. A per-rule run
+       such as `--select HSL102` then runs exactly that rule, even when the config extends the
+       selection.
+    2. `extend-select`/`extend-ignore` layer on top of that base. Config and CLI variants of each
+       are merged together (concatenated, not one overriding the other) before being applied;
+       under a CLI `--select`, only the CLI variants apply.
     3. `extend-ignore` is subtractive against the *whole* pool from steps 1-2, not just
        against `extend-select`'s own additions — `select = ["HSL001"]` combined with
        `extend-ignore = ["HSL001"]` drops HSL001 entirely, the same as if it had never been
@@ -215,15 +218,18 @@ def _effective_rule_selection(
     """
     configured = _ids(list(configured_select), "select")
     configured_ignored = _ids(list(configured_ignore), "ignore")
-    selected = (
-        _ids(list(cli_select), "--select")
-        if cli_select is not None
-        else tuple(rule_id for rule_id in configured if rule_id not in configured_ignored)
-    )
-    extend_selected = _ids(list(configured_extend_select), "extend-select") + _ids(
+    configured_extend_selected = _ids(list(configured_extend_select), "extend-select")
+    configured_extend_ignored = _ids(list(configured_extend_ignore), "extend-ignore")
+    if cli_select is not None:
+        selected = _ids(list(cli_select), "--select")
+        configured_extend_selected = ()
+        configured_extend_ignored = ()
+    else:
+        selected = tuple(rule_id for rule_id in configured if rule_id not in configured_ignored)
+    extend_selected = configured_extend_selected + _ids(
         list(cli_extend_select or ()), "--extend-select"
     )
-    extend_ignored = _ids(list(configured_extend_ignore), "extend-ignore") + _ids(
+    extend_ignored = configured_extend_ignored + _ids(
         list(cli_extend_ignore or ()), "--extend-ignore"
     )
     extended = (set(selected) | set(extend_selected)) - set(extend_ignored)

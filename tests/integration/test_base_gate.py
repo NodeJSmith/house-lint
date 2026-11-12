@@ -616,10 +616,10 @@ def test_command_line_selection_reaches_both_scans(
 def test_an_hsl900_finding_pairs_like_any_other(
     repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    stale = "x = 1  # house-lint: ignore[HSL002]\n"
-    commit(repo, {"old.py": stale})
+    malformed = "x = 1  # house-lint: ignore[HSL002]\n"
+    commit(repo, {"old.py": malformed})
     branch(repo)
-    commit(repo, {"old.py": "\n" + stale, "new.py": "y = 2  # house-lint: ignore[HSL004]\n"})
+    commit(repo, {"old.py": "\n" + malformed, "new.py": "y = 2  # house-lint: ignore[HSL004]\n"})
 
     code, result = gate(capsys, repo)
 
@@ -645,7 +645,7 @@ def test_an_error_from_the_head_scan_says_so(
 def test_a_line_finding_on_a_non_ascii_line_keys_on_its_whole_line(
     repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # HSL002 is off, so its pragma is an HSL900 finding.
+    # The em dash in place of ` - ` makes the pragma malformed, an HSL900 finding.
     config = '[tool.house-lint]\nselect = ["HSL003"]\n'
     old = "x = 1  # house-lint: ignore[HSL002] \u2014 \u00e9t\u00e9 one\n"
     commit(repo, {"pyproject.toml": config, "a.py": old})

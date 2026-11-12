@@ -640,3 +640,7 @@ No open questions remain. The design intentionally keeps atomic per-file parse g
 ### 2026-10-30: discovery now shells out to git
 
 The "do not shell out to Git" constraint in Key Constraints and the discovery section no longer holds. Inside a repository, discovery takes its file list from `git ls-files`. See `design/specs/007-git-file-discovery/design.md`.
+
+### 2026-11-12: overlapping pragmas suppress; stale pragmas move to HSL901
+
+Ownership conflicts no longer fail closed. Overlapping pragmas all suppress what they own, and the opt-in `HSL901` reports all but the broadest, earliest one as redundant. Unused and disabled-rule IDs are `HSL901`'s too; `HSL900` keeps the malformed, misplaced, unknown, and duplicate-ID checks. See `design/specs/015-split-stale-suppression-rule/design.md`.

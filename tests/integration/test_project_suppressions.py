@@ -422,7 +422,7 @@ def test_text_output_names_the_other_locations_on_the_findings_own_line(
     assert f"b.py: {RULE} duplicated block (also at a.py:1:1)" in lines
 
 
-def test_a_pragma_in_a_per_file_ignored_file_is_a_disabled_rule_pragma_in_both_phases(
+def test_a_pragma_in_a_per_file_ignored_file_suppresses_nothing_and_is_never_reported(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], register_project_rules
 ) -> None:
     write_file(
@@ -432,12 +432,10 @@ def test_a_pragma_in_a_per_file_ignored_file_is_a_disabled_rule_pragma_in_both_p
     write_file(tmp_path, "kept.py", "value = 1\n")
     register_project_rules(row(RULE, at_lines(("gen.py", 2), ("kept.py", 1))))
 
-    code, result = scan(capsys, tmp_path, "HSL002", RULE)
+    code, result = scan(capsys, tmp_path, "HSL002", RULE, "HSL901")
 
     assert code == 1
     assert [(finding["rule_id"], finding["path"]) for finding in result["findings"]] == [
-        ("HSL900", "gen.py"),
         (RULE, "kept.py"),
     ]
-    assert result["findings"][0]["message"] == f"unused suppression for disabled rule {RULE}"
     assert result["summary"]["suppressed_count"] == 0

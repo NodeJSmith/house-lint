@@ -64,7 +64,7 @@ to `pyproject.toml`.
 "legacy/*.py" = ["HSL001", "HSL003"]
 ```
 
-Applied after the base selection and `extend-select`/`extend-ignore` resolve, per file: a rule dropped by `per-file-ignores` for a matching file is not detected for that file at all, so a `# house-lint: ignore[...]` pragma naming it there is flagged the same way as suppressing an already-disabled rule. `HSL900` can never appear in a `per-file-ignores` value.
+Applied after the base selection and `extend-select`/`extend-ignore` resolve, per file: a rule dropped by `per-file-ignores` for a matching file is not detected for that file at all, so a `# house-lint: ignore[...]` pragma naming it there suppresses nothing and, when `HSL901` runs, is reported like a pragma naming a rule the selection leaves out, unless it names a project rule. `HSL900` can never appear in a `per-file-ignores` value.
 
 `per-file-ignores` patterns are matched against each file's resolved location under the root, not the spelling used to reach it. Naming `src/../tests/a.py`, or a path reached through a symlinked directory, matches the same patterns as `tests/a.py` would. Findings still report the path as typed.
 
@@ -76,8 +76,8 @@ Applied after the base selection and `extend-select`/`extend-ignore` resolve, pe
 4. Without either option, the command searches upward from the current directory. At each directory level, it checks `house-lint.toml` → `.house-lint.toml` → `pyproject.toml` (with `[tool.house-lint]`), in that order, and stops at the first directory where any of the three is recognized. The walk also stops at the first ancestor containing `.git`, after checking that directory itself for a recognized config first. This means a config that only exists further up an outer, unrelated ancestor tree is never picked up for a nested repository that has none of its own. If nothing is recognized by the time the walk stops (at a `.git` boundary or the filesystem root), it uses the nearest ancestor containing `.git` or any `pyproject.toml`; otherwise it uses the current directory.
 
 When more than one recognized config source exists at the winning directory level (e.g. both `house-lint.toml` and `pyproject.toml` with `[tool.house-lint]`), the shadowed file(s) are named in default output — appended to the `config:` line in text output, or under a `shadowed_config` key (also outside the `check` output's `schema_version: 3` contract) in JSON output. This is not gated behind `--debug`.
-5. The base selection is configured `select` minus configured `ignore`, or a CLI `--select` wholesale override when given.
-6. `extend-select`/`extend-ignore` (config and CLI, unioned together) layer additively on top of that base, regardless of whether the base came from config or `--select`. `extend-ignore` removes rules from the whole base, not just from `extend-select` — `select = ["HSL001"]` with `extend-ignore = ["HSL001"]` drops HSL001 entirely, it isn't limited to canceling out `extend-select` additions.
+5. The base selection is configured `select` minus configured `ignore`, or a CLI `--select` wholesale override when given. A CLI `--select` replaces every configured selection key, `extend-select` and `extend-ignore` included, as Ruff's does, so `--select HSL102` runs `HSL102` (and `HSL900`) even when the config extends the selection with `HSL901`.
+6. `extend-select`/`extend-ignore` (config and CLI, unioned together; only the CLI ones under a CLI `--select`) layer additively on top of that base. `extend-ignore` removes rules from the whole base, not just from `extend-select` — `select = ["HSL001"]` with `extend-ignore = ["HSL001"]` drops HSL001 entirely, it isn't limited to canceling out `extend-select` additions.
 7. CLI `--ignore` is applied last and always wins over everything above. `HSL900` is always added.
 
 ## File selection

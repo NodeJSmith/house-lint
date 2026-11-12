@@ -38,11 +38,36 @@ A project rule compares files, so one issue it finds can occur in several places
 - Two pragmas that both reach one occurrence both suppress it. It counts once, and nothing is reported.
 - A suppressed occurrence still counts toward a rule's own thresholds, such as `HSL104`'s `min_occurrences`.
 - With explicit paths, only occurrences in the named files are reported, so only their pragmas are checked and counted as suppressed.
-- A pragma naming a project rule is never reported as unused, by design. Finding stale ones would mean re-reading every file with such a pragma after the rule runs; Pylint likewise leaves `duplicate-code` out of its unused-suppression check.
+- `HSL901` never reports a pragma naming a project rule, by design: not as unused or redundant, and not when the run leaves the rule out. Finding stale ones would mean re-reading every file with such a pragma after the rule runs, and a project rule often runs in its own hook, as `HSL104` does before a push. Pylint likewise leaves `duplicate-code` out of its unused-suppression check.
 - Only pragmas in Python files are read. An occurrence in a file of another language, or in a Python file that doesn't parse, can't be suppressed.
 
-## HSL900 diagnostics
+## Overlapping pragmas
 
-`HSL900` reports every malformed pragma and each invalid listed ID. It reports when a pragma has no IDs, invalid/duplicate IDs, an invalid action or reason, wrong placement, an unknown or disabled ID, an ID whose rule doesn't handle Python files, an unused ID, or a duplicate/conflicting claim on the same rule/finding. For project rules, it checks the pragma itself but reports neither unused IDs nor overlapping claims. Conflicts fail closed: the original finding remains visible and every conflicting pragma is diagnosed.
+Two pragmas overlap when they name the same rule and reach the same finding. An `ignore-file[HSL002]` plus a trailing `ignore[HSL002]` on a lazy import overlap, and so do a trailing `ignore` and an `ignore-next` for the same statement when that statement has a finding; with no finding, each is just unused. Every overlapping pragma suppresses what it owns, so the finding stays hidden and counts once.
 
-Text that resembles a pragma inside a string or docstring is not a suppression. `HSL900` itself cannot be selected, ignored, or suppressed.
+When `HSL901` runs, it credits each finding to one of the pragmas suppressing it, as Ruff, ESLint, and Pylint do: the one reaching the most findings, then the broadest (file before `ignore-next` before `ignore`), then the earliest. Overlapping pragmas nest, so in practice the broadest wins: an `ignore-file` reaches everything a statement pragma for the same rule does, and an `ignore-next` everything a trailing `ignore` on its statement does. A pragma credited with none of the findings it suppresses is reported as `redundant suppression for X`. Deleting every pragma it reports, or the one ID it names on a pragma that lists several, never changes what is suppressed.
+
+## HSL900: broken pragmas
+
+`HSL900` reports a pragma house-lint can't use: malformed syntax, no IDs, invalid or duplicate IDs, an invalid action or reason, wrong placement, an unknown ID, or an ID whose rule doesn't handle Python files. A broken pragma suppresses nothing.
+
+Text that resembles a pragma inside a string or docstring is not a suppression. `HSL900` always runs: it cannot be selected, ignored, named in `per-file-ignores`, or suppressed, because a pragma that could silence it could hide its own invalidity.
+
+## HSL901: stale pragmas
+
+`HSL901` is opt-in, like Ruff's `RUF100` and Pylint's `useless-suppression`. It reports a pragma that does nothing:
+
+- `unused suppression for X`: rule X ran on the file and the pragma claimed none of its findings.
+- `unused suppression for disabled rule X`: rule X doesn't run on this file, because the selection leaves it out or `per-file-ignores` drops it here. Such a pragma is never accepted, so it suppresses nothing whether or not `HSL901` runs. A pragma naming a project rule is never reported (see above).
+- `redundant suppression for X`: it suppresses findings, but each is credited to an overlapping pragma (see above).
+
+With `HSL901` off, stale pragmas go unreported, so a run selecting one rule, such as `house-lint check --select HSL102`, passes over pragmas for every other rule. To keep stale pragmas from piling up, add it to the project's config:
+
+```toml
+[tool.house-lint]
+extend-select = ["HSL901"]
+```
+
+A CLI `--select` replaces the config's selection, `extend-select` included, so a per-rule run still leaves `HSL901` out. `--select HSL901` alone runs no other rule, so it reports every pragma naming another Python file rule as naming a disabled one. Pragmas naming a project rule are still exempt.
+
+`HSL901` is an ordinary rule: `ignore`, `per-file-ignores`, and the CLI flags can turn it off, and a pragma can suppress its reports. `ignore-file[HSL901]` suppresses every `HSL901` report in its file. A statement pragma listing `HSL901` suppresses the reports on every pragma owning the same statement, itself included, so `value = 1  # house-lint: ignore[HSL002, HSL901] - kept for a migration` keeps an unused `HSL002` pragma quietly. A pragma naming `HSL901` is never itself reported: not as unused or redundant, and not while `HSL901` is off, when it suppresses nothing because there is nothing to suppress.
