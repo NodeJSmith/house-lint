@@ -32,8 +32,7 @@ from house_lint.rule_catalog import (
 _ID = re.compile(r"HSL[0-9]{3}\Z")
 _PRAGMA = re.compile(r"#\s*house-lint:\s*(ignore-next|ignore-file|ignore)\[([^]]*)\] - (.+)\Z")
 _MIN_REASON_ALNUM_CHARS = 3
-# Among overlapping pragmas, the broadest survives: rank 0 first. A file pragma's claims contain a
-# statement pragma's, and an `ignore-next`'s contain a trailing `ignore`'s on the same statement.
+# Among overlapping pragmas owning the same candidates, the broadest is kept: rank 0 first.
 _SCOPE_RANK = {"ignore-file": 0, "ignore-next": 1, "ignore": 2}
 
 _Owner: TypeAlias = StatementKey | str
@@ -424,17 +423,15 @@ def _unused_and_redundant_reports(
 
 
 def _redundant_claims(claims: list[_Claim]) -> set[int]:
-    """Return every overlapping claim but the survivor of each overlap.
+    """Return each overlapping claim whose candidates another, kept claim already owns.
 
-    Claims overlap when they share a target and rule, or claim one candidate. Overlapping claims
-    for one rule nest (`_owns`): an `ignore-file` owns every candidate of its rule; an `ignore-next`
-    owns its statement's candidates plus comment findings in its window, a superset of a trailing
-    `ignore`'s on that statement; and of two pragmas sharing a target, the earlier's window holds
-    the later's. Statement pragmas on different statements share no candidate, since each candidate
-    has one owner. So each group's survivor (broadest scope, then earliest) owns everything the
-    others do, a claim redundant in one group can't be the only owner of a candidate in another,
-    and deleting every redundant claim never changes what is suppressed.
-    `test_deleting_every_redundant_pragma_leaves_the_suppressed_set_unchanged` pins that.
+    Claims overlap when they share a target and rule, or claim one candidate. In each overlap
+    group the claim owning the most candidates survives, and a claim is redundant only when its
+    candidates are a subset of the survivor's. Survivors are picked by one strict total order
+    (`_survival_key`), so following "redundant because of" from any flagged claim reaches a kept
+    one that owns all its candidates, and deleting every redundant claim never changes what is
+    suppressed, whatever `_owns` decides. With today's actions overlapping claims nest, so every
+    claim in a group but the survivor is flagged.
     """
     by_target: dict[tuple[_Owner, str, str], list[int]] = defaultdict(list)
     by_candidate: dict[int, list[int]] = defaultdict(list)
@@ -446,14 +443,24 @@ def _redundant_claims(claims: list[_Claim]) -> set[int]:
     for indexes in (*by_target.values(), *by_candidate.values()):
         if len(indexes) < 2:
             continue
-        survivor = min(indexes, key=lambda index: _survival_rank(claims[index].pragma))
-        redundant.update(index for index in indexes if index != survivor)
+        survivor = min(indexes, key=lambda index: _survival_key(claims[index]))
+        kept = set(claims[survivor].candidates)
+        redundant.update(
+            index
+            for index in indexes
+            if index != survivor and kept.issuperset(claims[index].candidates)
+        )
     return redundant
 
 
-def _survival_rank(pragma: _Pragma) -> tuple[int, tuple[int, int]]:
-    """Order overlapping pragmas: broadest scope first, then earliest in the file."""
-    return _SCOPE_RANK[pragma.action], pragma.token.start
+def _survival_key(claim: _Claim) -> tuple[int, int, tuple[int, int]]:
+    """Order overlapping claims: most candidates first, then broadest scope, then earliest.
+
+    Scope and position only break ties in candidate count. Keeping any tied claim is safe, since
+    `_redundant_claims` flags a claim only when its candidates are a subset of the kept claim's.
+    Among claims owning the same candidates, the broadest scope is kept, then the earliest.
+    """
+    return -len(claim.candidates), _SCOPE_RANK[claim.pragma.action], claim.pragma.token.start
 
 
 def _unsuppressed_stale_reports(

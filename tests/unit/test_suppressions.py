@@ -1,3 +1,6 @@
+import re
+import tokenize
+
 import pytest
 from _source_helpers import PYTHON_ONLY
 
@@ -10,7 +13,14 @@ from house_lint.rules.lazy_imports import detect as detect_lazy_imports
 from house_lint.rules.llm_cruft import detect as detect_llm_cruft
 from house_lint.rules.spec_tokens import HSL101Options, TokenFamily
 from house_lint.rules.spec_tokens import detect as detect_spec_tokens
-from house_lint.suppressions import SuppressionResult, apply_suppressions, scan_pragmas
+from house_lint.suppressions import (
+    SuppressionResult,
+    _Claim,
+    _Pragma,
+    _redundant_claims,
+    apply_suppressions,
+    scan_pragmas,
+)
 
 PARITY_RULE = "HSL198"
 WITH_HSL901 = {"HSL001", "HSL002", "HSL900", "HSL901"}
@@ -520,8 +530,27 @@ def test_hsl901_reports_all_but_the_broadest_earliest_overlapping_pragma(
             "# ------\n"
             "value = 1\n"
         ),
+        (
+            "# house-lint: ignore-file[HSL002] - lazy module\n"
+            "def load() -> None:\n"
+            "    import first  # house-lint: ignore[HSL002, HSL001] - lazy by design\n"
+        ),
+        (
+            "# house-lint: ignore-next[HSL001] - decorative divider\n"
+            "# ------\n"
+            "# house-lint: ignore-next[HSL001] - decorative divider\n"
+            "@decorator\n"
+            "def build() -> None:\n"
+            "    pass\n"
+        ),
     ],
-    ids=["file-and-statements", "stacked-statement-pragmas", "ignore-next-window"],
+    ids=[
+        "file-and-statements",
+        "stacked-statement-pragmas",
+        "ignore-next-window",
+        "multi-id-pragma",
+        "decorated-def-windows",
+    ],
 )
 def test_deleting_every_redundant_pragma_leaves_the_suppressed_set_unchanged(
     parse_sample, content: str
@@ -533,12 +562,12 @@ def test_deleting_every_redundant_pragma_leaves_the_suppressed_set_unchanged(
 
     before = scan(content)
     redundant = {
-        finding.line
+        (finding.line, finding.message.removeprefix("redundant suppression for "))
         for finding in before.findings
         if finding.message.startswith("redundant suppression")
     }
     assert redundant, "each sample must contain an overlap"
-    after = scan(_without_pragmas_on(content, redundant))
+    after = scan(_without_ids(content, redundant))
 
     assert after.suppressed_count == before.suppressed_count
     assert [f for f in after.findings if f.rule_id != "HSL901"] == [
@@ -609,18 +638,78 @@ def test_stale_reports_need_hsl901_to_run(parse_sample) -> None:
     ]
 
 
-def _without_pragmas_on(content: str, lines: set[int | None]) -> str:
-    """Delete the pragma on each listed line, keeping every line number in place.
+def test_suppressed_hsl901_reports_spend_no_diagnostic_budget(parse_sample) -> None:
+    source = parse_sample(
+        "# house-lint: ignore-file[HSL901] - pragmas kept for a migration\n"
+        "# house-lint: ignore-file[HSL103] - disabled rule\n"
+        "value = 1  # house-lint: ignore[HSL101] - disabled rule\n"
+        "other = 2  # house-lint: ignore[HSL102] - disabled rule\n",
+    )
 
-    A standalone pragma becomes a blank line, which `ignore-next` allows between itself and its
-    statement; a trailing pragma is cut from the code it follows.
+    result = apply_suppressions(source, (), WITH_HSL901, limit=1)
+
+    assert result.findings == ()
+
+
+def test_a_claim_is_redundant_only_when_the_kept_claim_owns_all_its_candidates(
+    parse_sample,
+) -> None:
+    source = parse_sample(
+        "# house-lint: ignore-file[HSL002] - lazy module\n"
+        "value = 1  # house-lint: ignore[HSL002] - lazy by design\n"
+        "other = 2  # house-lint: ignore[HSL002] - lazy by design\n",
+    )
+    file_pragma, first, second = [
+        _Pragma(action, ("HSL002",), token, None)
+        for action, token in zip(
+            ("ignore-file", "ignore", "ignore"),
+            (t for t in source.tokens if t.type == tokenize.COMMENT),
+            strict=True,
+        )
+    ]
+    # Overlapping claims that don't nest, which today's pragma actions can't produce: the
+    # file pragma would be kept by scope, but deleting the trailing ones would lose candidate 2.
+    claims = [
+        _Claim(file_pragma, "HSL002", ("file", "ignore-file"), (0, 1)),
+        _Claim(first, "HSL002", ("a", "ignore"), (1,)),
+        _Claim(second, "HSL002", ("b", "ignore"), (1, 2)),
+    ]
+
+    assert _redundant_claims(claims) == {1}
+
+    # A chain across two groups: `first` owns nothing and shares `second`'s target, so it's
+    # redundant to `second`, which is redundant to the file claim through candidate 2. Deleting
+    # both still leaves every candidate owned.
+    chain = [
+        _Claim(file_pragma, "HSL002", ("file", "ignore-file"), (2, 3)),
+        _Claim(first, "HSL002", ("a", "ignore"), ()),
+        _Claim(second, "HSL002", ("a", "ignore"), (2,)),
+    ]
+
+    assert _redundant_claims(chain) == {1, 2}
+
+
+def _without_ids(content: str, reports: set[tuple[int | None, str]]) -> str:
+    """Remove each reported rule ID from the pragma on its line, keeping line numbers in place.
+
+    A pragma left with no IDs is deleted: a standalone one becomes a blank line, which
+    `ignore-next` allows between itself and its statement; a trailing one is cut from its code.
     """
     kept = []
     for number, line in enumerate(content.splitlines(keepends=True), start=1):
-        if number not in lines:
+        rule_ids = {rule_id for report_line, rule_id in reports if report_line == number}
+        match = re.search(r"#\s*house-lint: [a-z-]+\[(?P<ids>[^]]*)\]", line)
+        if not rule_ids or match is None:
             kept.append(line)
+            continue
+        listed = [item.strip() for item in match["ids"].split(",")]
+        remaining = [item for item in listed if item not in rule_ids]
+        if remaining:
+            kept.append(
+                line[: match.start("ids")] + ", ".join(remaining) + line[match.end("ids") :]
+            )
         elif line.lstrip().startswith("#"):
             kept.append("\n")
         else:
-            kept.append(line[: line.index("  # house-lint:")] + "\n")
+            kept.append(line[: match.start()] + "\n")
     return "".join(kept)
