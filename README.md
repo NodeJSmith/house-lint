@@ -45,6 +45,7 @@ uv run house-lint check
 | `HSL102` | Off | Files longer than a configured line limit (default 800) |
 | `HSL103` | Off | Bound exception names outside an allowed policy (default `exc` or `*_exc`) |
 | `HSL104` | Off | Code copied three or more times across the project, found with jscpd (needs `house-lint[duplicates]`) |
+| `HSL105` | Off | Mypy-style `# type: ignore[code]` comments, whose codes Pyright disregards |
 | `HSL900` | Always | Malformed, misplaced, or invalid suppressions; cannot be disabled |
 | `HSL901` | Off | Stale suppressions: unused, redundant, or naming a rule that doesn't run on the file |
 

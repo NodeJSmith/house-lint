@@ -35,6 +35,7 @@ def test_rule_catalog_has_fixed_metadata_and_derived_selections() -> None:
         "HSL102",
         "HSL103",
         "HSL104",
+        "HSL105",
         "HSL900",
         "HSL901",
     )

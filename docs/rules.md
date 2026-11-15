@@ -1,6 +1,6 @@
 # Rules
 
-`house-lint` has fixed rule IDs. Four rules are enabled by default, five are opt-in, and `HSL900` is always enabled. `HSL1xx` are opt-in code-pattern rules; `HSL9xx` check suppression pragmas.
+`house-lint` has fixed rule IDs. Four rules are enabled by default, six are opt-in, and `HSL900` is always enabled. `HSL1xx` are opt-in code-pattern rules; `HSL9xx` check suppression pragmas.
 
 Finding messages are human-readable display text and may change. Machine consumers should identify findings by rule ID and location rather than message text.
 
@@ -14,6 +14,7 @@ Finding messages are human-readable display text and may change. Machine consume
 | `HSL102` | Opt-in | Flags a file when `len(text.splitlines())` is strictly greater than `max_lines`. |
 | `HSL103` | Opt-in | Flags `except … as name` bindings outside the configured exact/suffix policy. |
 | `HSL104` | Opt-in | Flags each copy of a block of code that appears at least three times across the project. Needs the `duplicates` extra. |
+| `HSL105` | Opt-in | Flags a mypy-style `# type: ignore[code]` comment, including one with empty brackets. A bare `# type: ignore` is left alone. |
 | `HSL900` | Always | Reports broken suppression pragmas. It cannot be selected, ignored, or suppressed. |
 | `HSL901` | Opt-in | Reports unused and redundant suppression pragmas, and pragmas naming a rule that doesn't run on the file. |
 
@@ -64,6 +65,12 @@ Flags code copied across the project, the kind a fixture, helper, or `parametriz
 - **Under [`--base`](new-code-gating.md).** Only the copies a PR added are reported. Each place at `HEAD` pairs with a place at the merge-base holding the same code, or, failing that, code that contains it or is contained in it, so a rename that makes jscpd match copies over different lines still passes. An old copy extended with more copied lines stays old.
 
 jscpd's own `jscpd:ignore` comments are not supported; use house-lint pragmas.
+
+### HSL105 — Bracketed type: ignore
+
+Flags a mypy-style `# type: ignore[code]` comment. Pyright disregards the codes in the brackets and silences every error on the line, so the codes make the comment look narrower than it is. Use `# pyright: ignore[rule]` to silence one Pyright rule. A bare `# type: ignore` is left alone; Ruff's `PGH003` flags that one if you want it gone too.
+
+It matches where Pyright looks: right after any `#` in a comment, so `# noqa: E501  # type: ignore[x]` counts, with any spacing and whatever follows the bracket, even an empty `[]`. Pyright honors a `type: ignore` after any `#`, so a comment like `# never write # type: ignore[x]` is flagged too. Strings, docstrings, and comment text without a `#` right before `type:` aren't flagged. A suppression pragma has to be a whole comment, so it can't share the line with the `type: ignore`; put `# house-lint: ignore-next[HSL105] - reason` on the line above.
 
 ### HSL901 — Stale suppressions
 
