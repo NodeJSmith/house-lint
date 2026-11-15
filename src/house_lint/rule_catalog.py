@@ -25,6 +25,7 @@ from house_lint.rules import (
     llm_cruft,
     spec_tokens,
     type_checking_position,
+    type_ignore,
 )
 from house_lint.rules.duplicate_code import HSL104Options
 from house_lint.rules.exception_names import HSL103Options
@@ -225,6 +226,13 @@ FILE_RULES: Mapping[str, FileRule[Any]] = rules_by_id(
             exception_names.detect,
             HSL103Options,
         ),
+        file_rule(
+            "HSL105",
+            "Bracketed type: ignore",
+            "Mypy-style type: ignore comments with error codes",
+            "opt-in",
+            type_ignore.detect,
+        ),
     )
 )
 
@@ -244,23 +252,26 @@ PROJECT_RULES: Mapping[str, ProjectRule[Any]] = rules_by_id(
 )
 
 RULES: Mapping[str, Rule] = rules_by_id(
-    (
-        *FILE_RULES.values(),
-        *PROJECT_RULES.values(),
-        Rule(
-            "HSL900",
-            "Suppression diagnostics",
-            "Invalid suppression pragmas",
-            "always",
-            languages=frozenset(),
+    sorted(
+        (
+            *FILE_RULES.values(),
+            *PROJECT_RULES.values(),
+            Rule(
+                "HSL900",
+                "Suppression diagnostics",
+                "Invalid suppression pragmas",
+                "always",
+                languages=frozenset(),
+            ),
+            Rule(
+                STALE_SUPPRESSION_RULE_ID,
+                "Stale suppressions",
+                "Unused and redundant suppression pragmas",
+                "opt-in",
+                languages=_FILE_RULE_LANGUAGES,
+            ),
         ),
-        Rule(
-            STALE_SUPPRESSION_RULE_ID,
-            "Stale suppressions",
-            "Unused and redundant suppression pragmas",
-            "opt-in",
-            languages=_FILE_RULE_LANGUAGES,
-        ),
+        key=lambda row: row.id,
     )
 )
 

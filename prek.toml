@@ -71,6 +71,8 @@ name = 'Ban "type: ignore" comments (use pyright suppressions instead)'
 language = "pygrep"
 types = ["python"]
 entry = "# type: ignore"
+# HSL105's tests have to contain the comments it flags.
+exclude = "^tests/unit/rules/test_type_ignore\\.py$"
 
 [[repos.hooks]]
 id = "no-future-annotations"

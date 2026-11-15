@@ -57,6 +57,7 @@ def test_console_and_module_have_equivalent_rule_listing(repository: Path) -> No
         "HSL102",
         "HSL103",
         "HSL104",
+        "HSL105",
         "HSL900",
         "HSL901",
     ]
@@ -73,6 +74,7 @@ def test_console_and_module_have_equivalent_rule_listing(repository: Path) -> No
         "HSL102",
         "HSL103",
         "HSL104",
+        "HSL105",
         "HSL900",
         "HSL901",
     ]
