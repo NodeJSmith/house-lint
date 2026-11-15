@@ -2,6 +2,12 @@
 
 All notable changes to `house-lint` are documented here.
 
+## [0.7.0](https://github.com/NodeJSmith/house-lint/compare/v0.6.0...v0.7.0) (2026-11-15)
+
+### Features
+
+- **New opt-in rule `HSL105` flags mypy-style `# type: ignore[code]` comments** (#97). Pyright ignores the codes in the brackets and silences every error on the line, so `# type: ignore[assignment]` looks narrower than it is; use `# pyright: ignore[rule]` instead. It matches where Pyright looks, after any `#` in a comment (`# noqa: E501  # type: ignore[x]` counts) and including an empty `[]`, and never flags strings or docstrings. A bare `# type: ignore` is left alone; select Ruff's `PGH003` to flag that too. To suppress it, put `ignore-next[HSL105]` on the line above, since a pragma can't share the line. Enable with `extend-select = ["HSL105"]`.
+
 ## [0.6.0](https://github.com/NodeJSmith/house-lint/compare/v0.5.0...v0.6.0) (2026-11-12)
 
 ### Breaking Changes
