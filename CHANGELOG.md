@@ -2,6 +2,13 @@
 
 All notable changes to `house-lint` are documented here.
 
+## [0.7.0](https://github.com/NodeJSmith/house-lint/compare/v0.6.0...v0.7.0) (2026-11-15)
+
+
+### Features
+
+* add HSL105 opt-in rule for bracketed type: ignore comments ([#97](https://github.com/NodeJSmith/house-lint/issues/97)) ([7292e53](https://github.com/NodeJSmith/house-lint/commit/7292e53824097c4bd71db7ce405f357f194200b8))
+
 ## [0.6.0](https://github.com/NodeJSmith/house-lint/compare/v0.5.0...v0.6.0) (2026-11-12)
 
 ### Breaking Changes
