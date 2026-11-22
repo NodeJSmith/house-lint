@@ -2,6 +2,13 @@
 
 All notable changes to `house-lint` are documented here.
 
+## [0.7.1](https://github.com/NodeJSmith/house-lint/compare/v0.7.0...v0.7.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **ci:** wait longer and refetch the index in the release smoke test ([#101](https://github.com/NodeJSmith/house-lint/issues/101)) ([80af741](https://github.com/NodeJSmith/house-lint/commit/80af741604dca69ca5141f78b67d51bd89cf5076))
+
 ## [0.7.0](https://github.com/NodeJSmith/house-lint/compare/v0.6.0...v0.7.0) (2026-11-15)
 
 ### Features
