@@ -289,13 +289,13 @@ jobs:
               run: |
                   set -euo pipefail
                   version="${TAG_NAME#v}"
-                  for attempt in 1 2 3 4 5; do
-                      if uvx --from "house-lint==${version}" house-lint rules --format json; then
+                  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+                      if uvx --refresh-package house-lint --from "house-lint==${version}" house-lint rules --format json; then
                           exit 0
                       fi
-                      if [[ "$attempt" -lt 5 ]]; then
-                          echo "Package not available yet; retrying in 15 seconds"
-                          sleep 15
+                      if [[ "$attempt" -lt 10 ]]; then
+                          echo "Package not available yet; retrying in 30 seconds"
+                          sleep 30
                       fi
                   done
                   exit 1
